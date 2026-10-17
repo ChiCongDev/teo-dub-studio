@@ -1,0 +1,15 @@
+<section class="card fb-content"><h2>Đăng theo kế hoạch AI</h2>
+<p class="form-note">Chọn Page ở trên. Desktop chờ giờ rồi mới gọi AI bằng tài khoản Codex; web chỉ truyền cấu hình. Chat liên kết là nguồn chiến lược, lượt phân tích độc lập không tự gửi vào chat đó.</p>
+<form id="fb-ai-form">
+<label>Nguồn chiến dịch (chọn nhiều bằng Ctrl / Shift)<select id="fb-ai-campaigns" multiple size="4"></select></label>
+<div class="two-fields"><label>Model<select id="fb-ai-model"><option>gpt-5.6-luna</option><option selected>gpt-5.6-terra</option><option>gpt-5.6-sol</option><option>gpt-6-luna</option><option>gpt-6-sol</option><option>gpt-6.1-sol</option><option>gpt-6-astra</option></select></label><label>Mức suy luận<select id="fb-ai-effort"><option value="low">Thấp</option><option value="medium">Vừa</option><option value="high">Cao</option></select></label></div>
+<div class="two-fields"><label>Ngày kế hoạch<input id="fb-ai-days" type="number" min="1" max="7" value="7"></label><label>Lặp sau (ngày, 0 = một lần)<input id="fb-ai-interval" type="number" min="0" max="30" value="7"></label></div>
+<div class="two-fields"><label>Video/ngày<input id="fb-ai-videos" type="number" min="0" max="4" value="2"></label><label>Bài chữ/tuần<input id="fb-ai-texts" type="number" min="0" max="7" value="3"></label></div>
+<label>Gọi AI lần đầu (giờ Việt Nam UTC+7)<input id="fb-ai-due" type="datetime-local" required></label>
+<label>Mục tiêu / yêu cầu<textarea id="fb-ai-goal" maxlength="2000" rows="3">Phát triển nội dung hữu ích; phân tích kết quả và điều chỉnh lịch để thử nghiệm.</textarea></label>
+<label class="check"><input id="fb-ai-enabled" type="checkbox"><span>Bật lịch gọi AI đã cấu hình (tối đa một lượt/Page/ngày)</span></label>
+<label class="check"><input id="fb-ai-auto" type="checkbox"><span>Cho phép Tèo tự bật lịch đăng nội dung AI viết cho đúng Page, nguồn và số bài ở trên. AI tự chọn giờ; mẫu caption/hashtag lấy từ lịch Page.</span></label>
+<div class="fb-actions"><button id="fb-ai-save" class="primary" disabled>Lưu / hẹn giờ AI</button><button id="fb-ai-pause" type="button" class="secondary" disabled>Tạm dừng AI</button></div>
+</form><p id="fb-ai-status" class="form-note" role="status">Mở bản desktop mới để đồng bộ nguồn chiến dịch.</p>
+<p class="form-note">Giữ Tèo và máy chạy, không ngủ. Thiếu số liệu view/reach sẽ ghi chưa biết. Tạm dừng AI không hủy lịch bài đã bật. Facebook yêu cầu xác minh hoặc mở video/Reels nhiều bước chưa hỗ trợ thì dừng để kiểm tra, không đăng lại.</p>
+<details><summary>Lịch sử AI ↔ Tèo</summary><pre id="fb-ai-history" class="fb-content-preview">Chưa có thao tác AI.</pre></details></section>

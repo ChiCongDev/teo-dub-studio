@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-heading"><div><span class="eyebrow">QUẢN TRỊ</span><h1>Model AI cho đội ngũ</h1><p class="muted">Anh chọn model dùng chung để kiểm soát chi phí xử lý.</p></div></div>
+<section class="card settings-card">
+<h2>Cấu hình áp dụng cho công việc mới</h2>
+<p class="muted">Nhân viên sử dụng model đã lưu tại đây. Giọng đọc, tốc độ, âm lượng và phụ đề được nhớ riêng theo từng tài khoản.</p>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}">
+{% for key,items in choices.items() %}<label>{{ model_names[key] }}<select name="{{ key }}">{% for value,label in items.items() %}<option value="{{ value }}"{% if value==models[key] %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>{% endfor %}
+<p class="form-note">Công việc đã gửi giữ cấu hình tại thời điểm gửi để tiếp tục đúng phiên.</p>
+<button class="primary" type="submit">Lưu model AI cho đội ngũ</button>
+</form></section>
+{% endblock %}

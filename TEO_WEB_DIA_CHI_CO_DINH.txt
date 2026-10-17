@@ -1,0 +1,61 @@
+TÈO WEB — ĐỊA CHỈ CỐ ĐỊNH
+
+Đã có cửa sổ cấu hình địa chỉ trong Tèo. Máy này vẫn xử lý video.
+Địa chỉ chỉ được cấp sau khi có tên miền hoặc tài khoản dịch vụ thật.
+Không cần tệp JSON từ người dùng và không nhập thông tin thẻ vào Tèo.
+
+MỞ CẤU HÌNH
+Trên Desktop, mở “Cai dia chi Teo Web.cmd”.
+Hoặc trong tab “Công việc web & thống kê”, bấm “Địa chỉ cố định…”.
+Nếu Tèo đang mở từ trước bản cập nhật, mở lại cửa sổ Tèo khi phiên desktop nghỉ.
+
+CÁCH 1 — TÊN MIỀN RIÊNG QUA CLOUDFLARE
+Phù hợp để nhiều nhân viên dùng thường xuyên.
+1. Có một tên miền thuộc quyền quản lý của anh, đã thêm vào Cloudflare.
+   Có thể dùng một nhánh của tên miền đang có, ví dụ teo.tencongty.com.
+   Nếu đang dùng tên miền cho website/email, kiểm tra giữ đúng bản ghi hiện tại
+   trước khi chuyển quản lý DNS; không xóa bản ghi của các dịch vụ đang dùng.
+2. Đăng nhập https://dash.cloudflare.com/.
+3. Vào Networking → Tunnels, tạo tunnel cho Tèo và chọn Windows.
+4. Lấy riêng Tunnel token được Cloudflare cấp; không cần cài thêm service Windows.
+   Bộ kết nối cloudflared chính thức đã có trong Tèo và được Tèo quản lý.
+5. Thêm Published application route cho tên miền muốn dùng.
+   Service URL cần đúng: http://127.0.0.1:8765
+   HTTPS của nhân viên do Cloudflare cung cấp; địa chỉ trên máy dùng HTTP loopback.
+6. Trong cấu hình Tèo, chọn “Tên miền riêng · Cloudflare”.
+   Nhập link HTTPS thật của tên miền và dán riêng mã Tunnel token vào ô mã.
+7. Bấm “Lưu cấu hình”, sau đó “Áp dụng khi web nghỉ”.
+8. Mở trang quản trị trên máy. Khi hiện “Địa chỉ cố định · đang hoạt động”,
+   thử đăng nhập bằng link đó trên một trình duyệt khác rồi gửi cho nhân viên.
+
+Hướng dẫn chính thức: https://developers.cloudflare.com/tunnel/get-started/
+Tên miền có phí đăng ký/gia hạn tùy nhà cung cấp; Tèo không tự mua hoặc gia hạn.
+
+CÁCH 2 — ĐỊA CHỈ NGROK MIỄN PHÍ ĐỂ THỬ NHỎ
+1. Đăng ký/đăng nhập https://dashboard.ngrok.com/.
+2. Lấy địa chỉ dev domain được cấp tự động và Authtoken của tài khoản.
+   Địa chỉ miễn phí có dạng *.ngrok-free.dev hoặc *.ngrok-free.app.
+   Không tự đặt một tên chưa được ngrok cấp.
+3. Trong Tèo, chọn “Địa chỉ miễn phí · ngrok”, nhập link HTTPS đã được cấp
+   và dán Authtoken vào ô mã. Bộ kết nối ngrok chính thức đã được chuẩn bị.
+4. Lưu cấu hình, áp dụng khi web nghỉ và thử link trước khi gửi nhân viên.
+
+Gói miễn phí hiện giới hạn 1 GB dữ liệu tải ra và 20.000 HTTP requests/tháng.
+Web có tự làm mới hàng đợi nên các lượt làm mới cũng dùng hạn mức HTTP.
+Người mở trang lần đầu có thể cần bấm Visit Site của ngrok.
+Ngrok miễn phí không phù hợp để tải nhiều video thường xuyên.
+Hạn mức mới nhất: https://ngrok.com/docs/pricing-limits/free-plan-limits
+
+LƯU VÀ ÁP DỤNG
+“Lưu cấu hình” chỉ lưu lựa chọn, giữ phiên và link đang chạy.
+“Áp dụng khi web nghỉ” kiểm tra cả hàng đợi web và khóa xử lý desktop.
+Nếu còn công việc chờ/chạy, Tèo giữ cấu hình mới để áp dụng sau và không đóng phiên.
+Khi đã nghỉ, chỉ máy chủ web của Tèo được mở lại; tài khoản/lịch sử/MP4/SRT giữ nguyên.
+Mã kết nối được Windows mã hóa trên tài khoản này. Không gửi mã kết nối qua chat.
+Nếu chỉ thay địa chỉ, để trống ô mã để giữ kết nối đã lưu của cùng dịch vụ.
+
+LẦN MỞ SAU
+Mở “Mo Teo Web.cmd” như trước. Tèo đọc cấu hình cố định và dùng lại cùng địa chỉ.
+Nếu DNS/mạng/mã kết nối lỗi, Tèo báo chưa kết nối và thử lại; không tự đổi sang link tạm.
+Địa chỉ cố định không làm máy tiếp tục chạy khi tắt máy hoặc mất mạng.
+Nếu muốn quay về thử nghiệm cũ, chọn “Quay về link thử tạm thời”, lưu và áp dụng lúc web nghỉ.

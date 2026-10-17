@@ -1,0 +1,73 @@
+TÈO WEB — TRIỂN KHAI TRÊN PIPIDEAL.COM
+
+Địa chỉ cố định cho nhân viên: https://teo.pipideal.com
+Tên miền vẫn đăng ký và gia hạn tại Namecheap.
+Máy tính này tiếp tục xử lý video; Google Drive tiếp tục đồng bộ thành phẩm.
+
+TRẠNG THÁI
+Đã triển khai và kiểm tra thành công ngày 06/10/2026.
+Cloudflare báo tunnel Healthy, một kết nối từ máy này.
+Web báo “Địa chỉ cố định · đang hoạt động”.
+Đã đăng nhập quản trị và thấy đủ 3 việc hoàn thành, 1 việc đã dừng.
+Đã tải thử MP4 và SRT có sẵn qua tên miền; nội dung khớp bản thành phẩm trên máy.
+Chưa đăng nhập thì không đọc được danh sách việc hoặc tải video.
+Không chạy thêm video hoặc gọi AI để kiểm tra tên miền.
+
+DÙNG HẰNG NGÀY
+Tài khoản quản trị hiện tại: admin (đã đổi theo yêu cầu chủ máy ngày 07/10/2026).
+Mật khẩu do chủ máy chỉ định; tài liệu này không lưu mật khẩu.
+1. Mở https://teo.pipideal.com để quản trị và theo dõi công việc.
+2. Vào “Nhân viên” để cấp tài khoản riêng cho từng người.
+   Gửi link trên cùng tài khoản của người đó; giữ tài khoản quản trị riêng.
+3. Nhân viên dán link video, chọn cấu hình và gửi vào hàng đợi.
+   Máy này xử lý theo thứ tự; nhân viên tải video và phụ đề khi hoàn thành.
+4. Giữ máy bật, có mạng và Tèo Web đang chạy.
+   Sau khi khởi động lại máy, mở “Mo Teo Web.cmd” trong thư mục Tèo.
+   Web tự dùng lại địa chỉ cố định đã lưu, không cần tạo tunnel lại.
+   Đã sửa khởi động ngày 07/10/2026: web chạy nền độc lập với cửa sổ mở nó.
+   Không cần giữ cửa sổ khởi động hoặc Codex để duy trì web.
+   Khi máy tắt/ngủ thì web vẫn ngừng; sau khi mở máy, mở lại “Mo Teo Web.cmd”.
+
+GOOGLE DRIVE
+Tèo vẫn chép thành phẩm vào thư mục Drive đã chọn trên máy.
+Google Drive cho máy tính tiếp tục đồng bộ lên tài khoản hiện tại.
+“Đã chép vào thư mục Drive” là trạng thái trên máy, chưa xác nhận đồng bộ cloud.
+
+MODEL AI VÀ LỰA CHỌN RIÊNG
+Quản trị viên mở mục “Model AI” để lưu cấu hình chung cho công việc mới.
+Cấu hình model do quản trị viên chọn được giữ lại sau khi mở web lại.
+Nhân viên sử dụng cấu hình này; máy chủ kiểm tra model khi nhận yêu cầu.
+Công việc đã gửi giữ cấu hình của phiên đó khi tiếp tục.
+Giọng đọc, tốc độ, kiểu đọc, âm lượng, phụ đề và Drive tự nhớ riêng theo tài khoản.
+Đợi dòng “Đã nhớ lựa chọn riêng cho tài khoản này” để xác nhận lưu thành công.
+Lựa chọn được lấy lại khi đăng nhập từ trình duyệt hoặc máy khác.
+Nhân viên đang mở phiên bản cũ tải lại trang để nhận các thay đổi.
+
+CẤU HÌNH ĐÃ LƯU
+Tên miền đăng ký/gia hạn tại Namecheap; DNS hiện quản lý tại Cloudflare.
+Nameservers: amir.ns.cloudflare.com / maleah.ns.cloudflare.com.
+Gói Cloudflare: Free; không mua gói hay cài dịch vụ khởi động Windows.
+Tunnel: Teo Video Automation.
+Published application route: teo.pipideal.com → http://127.0.0.1:8765.
+Mã kết nối đã được Windows mã hóa cho tài khoản Windows này.
+Không cần nhập tệp JSON hoặc gửi mã kết nối qua chat.
+
+LƯU Ý VỀ EMAIL
+Chuyển tiếp email miễn phí Namecheap chỉ dùng với BasicDNS/PremiumDNS/FreeDNS.
+Sao chép các bản ghi MX sang Cloudflare không bảo đảm giữ được dịch vụ này.
+Đã kiểm tra trong tài khoản Namecheap trước khi chuyển: không có Email Redirect
+hoặc địa chỉ catch-all đã cấu hình. Nếu sau này cần email @pipideal.com,
+thiết lập dịch vụ email tương thích với DNS Cloudflare.
+
+BẢN GHI WEBSITE HIỆN CÓ
+pipideal.com và www.pipideal.com đang trả về IP 103.70.12.59.
+Hai bản ghi này giữ nguyên đích và đặt DNS only tại Cloudflare.
+Nhánh teo.pipideal.com dùng tunnel riêng cho Tèo.
+
+TÀI LIỆU CHÍNH THỨC
+Cloudflare DNS: https://developers.cloudflare.com/dns/zone-setups/full-setup/setup/
+Cloudflare Tunnel: https://developers.cloudflare.com/tunnel/get-started/
+Namecheap Email Forwarding: https://www.namecheap.com/support/knowledgebase/article.aspx/308/2214/how-to-set-up-free-email-forwarding/
+
+Địa chỉ cố định giữ nguyên qua các lần mở web. Máy cần bật, có mạng và Tèo Web đang chạy
+để nhân viên sử dụng và máy xử lý video.

@@ -1,0 +1,20 @@
+{
+  "source": "C:\\Users\\chungpc\\Desktop\\Dự Án CODEX\\Shopee Affiliate\\Teo Dub Studio",
+  "destination": "C:\\Users\\chungpc\\Desktop\\Teo Dub Studio",
+  "file_count_before": 24700,
+  "file_count_after_move": 24700,
+  "bytes_before": 6958864909,
+  "bytes_after_move": 6958864909,
+  "python": "C:\\Users\\chungpc\\Desktop\\Teo Dub Studio\\.venv\\Scripts\\python.exe",
+  "regenerated_launchers": 38,
+  "historical_work_records": "preserved unchanged; not for resume",
+  "active_gui_data": "LocalAppData/TeoDubStudio unchanged",
+  "tests_passed": 118,
+  "offline_tts": "passed: Mai Anh 7.52 seconds, 48 kHz",
+  "models_redownloaded": false,
+  "console_launchers_verified": [
+    "pip",
+    "playwright",
+    "yt-dlp"
+  ]
+}

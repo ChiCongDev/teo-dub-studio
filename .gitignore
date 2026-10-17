@@ -1,0 +1,15 @@
+.venv/
+.venv-web/
+tools/cloudflared.exe
+tools/ngrok.exe
+tools/web-data-root.txt
+Data/
+work/
+models/
+dist*/
+build*/
+__pycache__/
+*.pyc
+*.spec
+# Private excerpts from this user's previous CapCut narration, with provenance.
+assets/voice-references/

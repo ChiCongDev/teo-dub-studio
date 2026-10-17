@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="vi">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="{{ csrf }}"><title>{% block title %}Tèo · Video online{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static',filename='portal.css') }}"></head>
+<body>
+<header class="topbar"><a class="brand" href="/" aria-label="Tèo Video online"><span class="brand-icon">T</span><span>Tèo <small>VIDEO ONLINE</small></span></a>
+{% if user %}<nav><a href="/">Video</a>{% if user.role=='admin' %}<a href="/facebook">Quản lý Page</a><a href="/team">Nhân viên</a><a href="/ai-settings">Model AI</a>{% endif %}<a href="/account">Đổi mật khẩu</a></nav><div class="identity"><span>{{ user.name }}</span><form action="/logout" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="text-button">Đăng xuất</button></form></div>{% else %}<span class="trial-tag">BẢN THỬ NGHIỆM</span>{% endif %}</header>
+<main class="page">{% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="notice {{ category }}" role="status">{{ message }}</div>{% endfor %}{% endwith %}{% block content %}{% endblock %}</main>
+<footer>Tèo Video Automation <span>·</span> Bản thử nghiệm dành cho nội bộ</footer>
+{% block scripts %}{% endblock %}
+</body></html>

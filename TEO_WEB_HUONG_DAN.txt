@@ -1,0 +1,78 @@
+TÈO VIDEO ONLINE — BẢN THỬ
+
+QUẢN LÝ PAGE — DESKTOP XỬ LÝ, WEB GỬI LỆNH (07/10/2026)
+Mở lại Tèo desktop khi phiên đang nghỉ. Trong Quản lý Page, thêm/chọn tài khoản,
+bấm Đăng nhập / Mở Facebook và đăng nhập trong Chrome trên máy xử lý.
+Mỗi tài khoản có một hồ sơ Chrome riêng, giữ phiên cho lần mở sau.
+Bấm Load Page của tài khoản, hoặc lưu link/tên/Page ID nếu chưa đọc được danh sách.
+Chọn Page → Quản lý Page / Bài viết → nhập lời, chọn video → Lưu bản nháp
+→ Xem trước / Chuẩn bị → đọc đúng Page và nội dung → Đăng bài đã duyệt.
+API Meta là lựa chọn riêng; cách đăng Chrome không cần khóa API.
+
+Trên web quản trị, mở Quản lý Page. Giữ desktop mở và bật Nhận lệnh quản lý Page
+từ web. Web gửi lệnh mở Chrome, lấy Page, lưu link, lưu bài chữ hoặc chọn video
+thành phẩm đã hoàn tất của tài khoản web, chuẩn bị rồi duyệt đăng.
+Chrome mở trên máy Tèo, không mở Facebook trên điện thoại/máy truy cập web.
+Không nhập mật khẩu Facebook vào web Tèo. Chỉ quản trị viên dùng được mục này.
+
+Hẹn giờ bài chữ: chọn bản nháp chữ đã lưu, chọn giờ Việt Nam UTC+7,
+đọc lại lời và Page rồi xác nhận cho phép tự đăng. Máy/desktop phải mở lúc đến giờ.
+Video chiến dịch vẫn xếp lịch bằng chuột phải Đăng video trên desktop.
+Mở lại không tự chạy lịch cũ; tạm dừng/tiếp tục trong Lịch đăng bài / video.
+Tắt nhận lệnh web chỉ ngừng nhận lệnh mới, không hủy lịch đã duyệt.
+
+Trạng thái từng lệnh tự cập nhật; khi mất kết nối web giữ dữ liệu cũ và chặn lệnh mới.
+Kết quả chưa rõ sẽ yêu cầu kiểm tra trên Page, không tự gửi lại để tránh đăng trùng.
+Form Reels/video nhiều bước chưa được hỗ trợ; Tèo báo để kiểm tra trực tiếp Chrome.
+Bản phát triển đã kiểm thử bằng dữ liệu tạm, chưa đăng nội dung thật lên Facebook.
+
+1. Trên máy xử lý, mở “Mo Teo Web.cmd”.
+2. Mở “Xem tai khoan Teo Web.cmd” trong thư mục Tèo Dub Studio để xem
+   tên đăng nhập và mật khẩu quản trị ban đầu, rồi đăng nhập trên web.
+3. Đổi mật khẩu trong mục “Đổi mật khẩu”.
+4. Mở mục “Nhân viên”, tạo tài khoản riêng cho từng người.
+5. Gửi link web hiện tại và tài khoản riêng cho nhân viên. Không gửi tài khoản quản trị.
+6. Nhân viên dán một link Douyin/TikTok, chọn cấu hình và gửi vào hàng đợi.
+7. Web cập nhật tiến độ tự động. Khi xong có “Tải video” và “Tải phụ đề”.
+8. Nếu bật Drive, Tèo chép MP4/SRT vào C:\Users\chungpc\Videos\Teo Drive.
+   Google Drive cho máy tính tiếp tục tải lên; web chưa xác nhận việc tải lên.
+
+Mỗi nhân viên chỉ xem video của mình. Quản trị viên xem toàn bộ.
+Máy xử lý một video mỗi lần; nếu Tèo trên máy đang bận thì web chờ.
+Dừng giữ các bước đã hoàn tất; Tiếp tục dùng cấu hình đã chốt.
+Bản thử dùng giọng preset và nhận link đơn. Xóa chữ gốc nay có ngay trên web:
+Dán link → Tải video để khoanh vùng → chờ tải xong trong hàng đợi → Khoanh vùng chữ gốc.
+Tua đến đoạn có chữ, dừng video và bấm Lấy khung hình; kéo trên ảnh để chọn vùng.
+Bấm Lưu vùng và bật xóa, chọn các thông số rồi Gửi lồng tiếng vào hàng đợi.
+Video đã tải được dùng lại; GPU xóa vùng chữ trước khi chèn Sub Việt.
+Vùng được lưu riêng theo video; mở lại Khoanh vùng chữ gốc để dùng vùng đã lưu.
+Đổi link phải chọn vùng của video mới. Chữ ngoài vùng sẽ còn, nền có thể nhòe.
+Không tự dò tất cả chữ Trung. Sửa lời, giọng theo mẫu và chiến dịch vẫn ở bản desktop.
+Dịch dùng tài khoản Codex đang có trên máy; hạn mức hiện tại vẫn áp dụng.
+
+Máy tính cần bật, có mạng, Google Drive và Tèo Web đang chạy.
+Không cần mở cửa sổ Tèo desktop để xử lý yêu cầu web.
+Nếu chưa cấu hình địa chỉ cố định, link thử có thể đổi mỗi lần mở lại máy chủ.
+Muốn giữ một link, mở “Cai dia chi Teo Web.cmd” trên Desktop.
+Xem TEO_WEB_DIA_CHI_CO_DINH.txt để gắn tên miền hoặc địa chỉ dịch vụ đã được cấp.
+Link mới nhất hiển thị trên trang quản trị; cũng lưu trong tệp LINK_WEB.txt
+cùng thư mục dữ liệu web.
+Địa chỉ luôn dùng được trên máy này: http://127.0.0.1:8765/
+
+CẬP NHẬT
+Trên máy xử lý, mở lại Tèo Dub Studio khi phiên desktop đang nghỉ.
+Tab “Công việc web & thống kê” theo dõi toàn bộ công việc gửi qua web,
+tự làm mới mỗi 3 giây. Lọc ngày gửi và nhân viên để xem tổng số, số chờ,
+đang chạy, hoàn tất, cần nghe duyệt, lỗi và số đã dừng.
+Chọn một dòng để xem chi tiết, mở thành phẩm hoặc hồ sơ/nhật ký.
+Bộ lọc trạng thái chỉ lọc danh sách; thống kê theo ngày gửi và nhân viên.
+“Mở web trên máy” mở portal, “Sao chép link web” sao chép link đã lưu.
+Đóng Tèo desktop không tắt máy chủ web; tab này chỉ theo dõi.
+
+Nhắn yêu cầu cập nhật trong cuộc trò chuyện Codex hiện tại.
+Khi cập nhật có thay phần web đang chạy, đợi hàng đợi nghỉ để khởi động lại.
+Tài khoản/hàng đợi nằm riêng trong thư mục dữ liệu web. Trên máy này Windows
+ánh xạ thư mục đó vào AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\
+LocalCache\Local\TeoDubWeb. Tèo đã lưu đúng nơi này để lần mở sau dùng lại.
+Không xóa thư mục dữ liệu khi nâng cấp hoặc các thành phẩm đã hoàn tất.
+Chưa có cơ chế tự tải/nâng cấp. Địa chỉ cố định được thiết lập trong cửa sổ cấu hình trên máy.

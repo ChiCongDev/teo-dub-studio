@@ -1,0 +1,33 @@
+LƯU VIDEO TÈO QUA GOOGLE DRIVE — KHÔNG CẦN JSON
+
+1. Cài Google Drive cho máy tính.
+   Bộ cài chính thức đã tải trên máy:
+   C:\Users\chungpc\Desktop\Dự Án CODEX\Shopee Affiliate\work\drive-folder-setup\GoogleDriveSetup.exe
+   Hoặc tải tại https://www.google.com/drive/download/
+
+2. Mở Google Drive và tự đăng nhập Gmail đang có 5 TB.
+   Không cần đăng ký Google Cloud 90 ngày hoặc nhập thẻ cho cách này.
+
+3. Trong Google Drive, vào cài đặt/thêm thư mục trên máy để đồng bộ với Google Drive.
+   Chọn thư mục đã chuẩn bị:
+   C:\Users\chungpc\Videos\Teo Drive
+   Chọn đồng bộ với Google Drive, không chỉ sao lưu ảnh vào Google Photos.
+
+4. Khi Tèo đang nghỉ, đóng và mở lại để thấy nút mới.
+   Video đơn hoặc Chiến dịch -> Chọn thư mục Drive…
+   Chọn C:\Users\chungpc\Videos\Teo Drive.
+   Đánh dấu đã bật đồng bộ, bật tự chép thành phẩm rồi Lưu lựa chọn.
+
+5. Chạy video hoặc tạo chiến dịch mới.
+   Tèo xuất và kiểm tra trên máy, giữ bản xuất, rồi chép MP4/SRT vào thư mục đồng bộ.
+   Mỗi phiên có thư mục riêng. Nếu chép lỗi, mở Drive/kiểm tra dung lượng rồi Tiếp tục;
+   phần dịch, giọng và video đã hoàn tất được dùng lại.
+
+“Đã chép · kiểm tra Drive” nghĩa là bản chép trên máy đã xong.
+Xem biểu tượng ứng dụng Google Drive để biết việc tải lên đã hoàn tất chưa.
+Tèo chưa tự tạo link chia sẻ theo cách này. Có thể chia sẻ thư mục/video từ Drive sau khi đồng bộ.
+Lựa chọn mới không đổi các phiên/chiến dịch cũ.
+
+Hiện đã kiểm thử phần Tèo; chưa xác nhận tải lên tài khoản thật vì Drive chưa được cài/đăng nhập.
+Lệnh cài tự động bị hệ thống xét duyệt chặn với lý do “blocked by policy”; bộ cài chỉ được tải
+và xác minh chữ ký Google LLC, chưa được chạy. Anh cần tự mở bộ cài ở bước 1.
