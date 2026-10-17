@@ -13,3 +13,8 @@ __pycache__/
 *.spec
 # Private excerpts from this user's previous CapCut narration, with provenance.
 assets/voice-references/
+
+# Node runtime (83 MB, re-download from nodejs.org; needed for yt-dlp EJS)
+tools/node-runtime/
+# GPU inpaint environment (7 GB)
+.venv-inpaint/
