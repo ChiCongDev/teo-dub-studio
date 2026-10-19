@@ -46,6 +46,7 @@ Other venvs: `.venv-inpaint` (STTN GPU inpaint), `.venv-web` (Flask).
 | Page publishing | `page_schedule*` (store, recovery, removal, new attempt), `facebook_web_post` (publisher), `page_browser_reconcile`, `page_publish_settings`, `page_activity`, `page_status` |
 | AI planning | `page_ai*` `page_content_*` `codex_chat` |
 | Channel autopilot | `channel_autopilot*` — Douyin channel → campaigns → Page AI sources (review mode only); see `SPEC-channel-autopilot.md` |
+| Fixed posting times | `page_ai.fixed_slots` + panel fields: owner picks first time/gap, AI writes captions only (validated) |
 | Caption review | `plan_review_ui` + review API in `page_content_plan` (`reviews` table, revision plans) |
 | Meta Graph API (stalled) | `meta_page_api` |
 | Runtime | `app` `restart` `page_command_bridge` `web_*` `common` `models` `ai_models` |

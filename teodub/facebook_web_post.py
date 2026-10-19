@@ -34,7 +34,11 @@ POST_SETTINGS_NAMES = re.compile(r'^(Post settings|Cài đặt bài viết)$', r
 PHOTO_NAMES = re.compile(r'^(Photo/video|Photos/videos|Ảnh/video|Ảnh/Video|Ảnh hoặc video)$', re.I)
 SWITCH_NAMES = re.compile(r'^(Switch now|Chuyển ngay)$', re.I)
 EXPAND_NAMES = re.compile(r'^(See more|Xem thêm)$', re.I)
-CALL_PROMPT_NAMES = re.compile(r'^(Trò chuyện trực tiếp với mọi người|Talk directly to people)$', re.I)
+CALL_PROMPT_NAMES = re.compile(
+    r'^(Trò chuyện trực tiếp với mọi người|Talk directly to people|Speak with people directly)$', re.I)
+CALL_PROMPT_TEXT = re.compile(r'Gọi ngay|Call now', re.I)
+# Facebook shows this prompt right after Publish and waits for "Not now" before posting.
+CALL_PROMPT_WAIT_SECONDS = 12
 LATER_NAMES = re.compile(r'^(Lúc khác|Not now|Maybe later)$', re.I)
 NOTIFICATION_NAMES = re.compile(r'^(Thông báo|Notifications)(?:,.*)?$', re.I)
 OPEN_NAMES = re.compile(r"^(Create post|Create a post|Tạo bài viết|Bạn đang nghĩ gì(?: thế)?\??|.+ ơi, bạn đang nghĩ gì thế\??|What's on your mind(?:, .+)?\??)$", re.I)
@@ -614,6 +618,36 @@ class BrowserPagePublisher:
 
     def _result_checks_guard(self):
         return result_checks_guard(self.store.accounts.directory.parent)
+
+    def _dismiss_call_prompt(self, tab, cancel, finished, progress, *, seconds):
+        """Press only "Not now" on Facebook's "add a Call Now button" prompt.
+
+        Best effort and bounded: it never clicks Publish, Add Button or anything outside that
+        one dialog, and a failure here must not change the recorded one-click submission.
+        """
+        deadline = time.monotonic()+seconds if seconds else None  # One look needs no clock.
+        while True:
+            self._cancel(cancel, finished)
+            try:
+                prompts = tab.get_by_role('dialog', name=CALL_PROMPT_NAMES)
+                visible = [prompts.nth(i) for i in range(prompts.count()) if prompts.nth(i).is_visible()]
+                if len(visible) == 1 and CALL_PROMPT_TEXT.search(visible[0].inner_text()):
+                    later = visible[0].get_by_role('button', name=LATER_NAMES)
+                    buttons = [later.nth(i) for i in range(later.count()) if later.nth(i).is_visible()]
+                    if len(buttons) == 1:
+                        self._cancel(cancel, finished)
+                        buttons[0].click(timeout=5000)
+                        if progress:
+                            progress('Đã bỏ qua gợi ý thêm nút gọi điện của Facebook (Not now).')
+                        return True
+            except Exception:
+                pass  # The page may be navigating; observe again until the deadline.
+            if deadline is None or time.monotonic() >= deadline:
+                return False
+            try:
+                tab.wait_for_timeout(500)
+            except Exception:
+                time.sleep(0.5)
 
     def _pause_result_verification(self, account_id, page_key, post_id):
         """Keep the one-click record without claiming a Facebook publication."""
@@ -1539,7 +1573,11 @@ class BrowserPagePublisher:
                     # was replaced. Observe the result; NEVER repeat this click.
                 self.store.transition(account_id, page_key, post_id, 'processing',
                     'Đã bấm Đăng một lần; chưa có bằng chứng bài đã đăng.', expected={'submitting'})
+                # Facebook holds the post behind this prompt until it is dismissed; this never re-clicks Publish.
+                # With result checks on, the observer below keeps looking for it inside its own deadline;
+                # only the paused path has no observer, so it alone waits here.
                 if not self._result_checks_enabled():
+                    self._dismiss_call_prompt(tab, cancel, finished, progress, seconds=CALL_PROMPT_WAIT_SECONDS)
                     return self._pause_result_verification(account_id, page_key, post_id)
                 if progress:
                     progress('Đã bấm Đăng; Tèo đang chờ Facebook xử lý và tự xác nhận kết quả…')
@@ -1681,17 +1719,7 @@ class BrowserPagePublisher:
                 if auth.get('auth') or auth.get('blocked'):
                     raise ValueError('Facebook yêu cầu đăng nhập/xác minh sau khi bấm Đăng; kết quả chưa rõ.')
                 if not dismissed_call_prompt:
-                    prompts = tab.get_by_role('dialog', name=CALL_PROMPT_NAMES)
-                    visible_prompts = [prompts.nth(i) for i in range(prompts.count()) if prompts.nth(i).is_visible()]
-                    if len(visible_prompts) == 1:
-                        prompt = visible_prompts[0]
-                        if 'Gọi ngay' in prompt.inner_text() or 'Call now' in prompt.inner_text():
-                            later = _one_visible(prompt.get_by_role('button', name=LATER_NAMES), 'nút bỏ qua gợi ý gọi điện')
-                            self._cancel(cancel, finished)
-                            later.click(timeout=5000)
-                            dismissed_call_prompt = True
-                            if progress:
-                                progress('Đã bỏ qua gợi ý thêm nút gọi điện; đang chờ link bài đăng…')
+                    dismissed_call_prompt = self._dismiss_call_prompt(tab, cancel, finished, progress, seconds=0)
                 observed = tab.evaluate(RESULT_SCRIPT)
                 evidence = (self._publication_evidence(observed, baseline, target, post['browser_review'])
                             if trusted_origin else None)

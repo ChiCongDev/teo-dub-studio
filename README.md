@@ -1,5 +1,23 @@
 # Tèo Dub Studio
 
+## Sửa lỗi bài không đăng vì hộp thoại "Speak With People Directly" — 17/10/2026
+
+Sau khi bấm Đăng Reel, Facebook có thể hiện hộp thoại **Speak With People Directly** (gợi ý thêm nút "Call Now") và **giữ bài lại cho đến khi bấm "Not now"**. Trước đây Tèo chỉ bấm "Not now" khi đang theo dõi kết quả, và chỉ nhận ra tên hộp thoại cũ (Talk directly to people); khi kiểm tra kết quả bị tắt, hộp thoại bị bỏ lại và bài không được đăng (16:15 và 16:20 ngày 17/10, trang Reels không có bài mới).
+
+Nay ngay sau lần bấm Đăng duy nhất, Tèo bấm **chỉ nút "Not now"** của đúng hộp thoại này (khi kiểm tra kết quả tắt thì chờ tối đa 12 giây để hộp thoại hiện ra; khi bật thì bước theo dõi kết quả tự bấm) (nhận cả "Speak With People Directly", "Talk directly to people" và bản tiếng Việt; chữ "Call Now"/"Gọi ngay" không phân biệt hoa thường). Tèo **không bấm Add Button, không bấm Đăng lại**, và không mở tab kết quả khi kiểm tra đang tắt. Hộp thoại khác hoặc có nhiều hộp thoại cùng lúc thì không bị bấm. Nếu không có hộp thoại, bài vẫn chạy như cũ (khi kiểm tra tắt, thêm tối đa 12 giây giữ ô đăng). Đã kiểm thử **1.329/1.329** (toàn bộ nhóm đăng bài, Facebook, lịch, AI, chiến dịch).
+
+Hai bài 16:15/16:20 đã ở trạng thái **Đã gửi — chưa xác minh**; Tèo không tự gửi lại. Kiểm tra Page → Reels; bài không lên thì tạo lịch mới (Bỏ lượt cũ và tạo lịch mới…) sau khi nạp bản sửa bằng **Khởi động lại, giữ công việc**. Đã kiểm thử bằng trang Facebook giả ngoại tuyến; **chưa chứng minh trên Facebook thật**.
+
+## Tự đặt giờ đăng, AI chỉ viết caption — 17/10/2026
+
+Trong **Quản lý Page → chọn Page → Thiết lập → Nhịp nội dung & giờ gọi AI**, tick **Tôi tự đặt giờ đăng, AI chỉ viết caption**, rồi nhập **Giờ bài đầu mỗi ngày (HH:MM)** và **Cách nhau (phút)**. Số bài mỗi ngày là ô **Video mỗi ngày**. Ví dụ giờ đầu 12:00, cách nhau 450 phút, 2 video/ngày: mỗi ngày đăng lúc 12:00 và 19:30. Dòng chữ bên dưới hiện luôn các giờ sẽ dùng.
+
+Khi AI chạy, Tèo gửi cho AI danh sách giờ của bạn và yêu cầu **chỉ viết caption**. Nếu AI chọn giờ khác, thêm giờ, đặt hai video cùng một giờ hoặc viết bài chữ thì kế hoạch bị từ chối và không bật lịch. Giờ đã qua hoặc cách lịch có sẵn dưới 30 phút được bỏ qua; nếu không còn giờ trống, Tèo không gọi AI (không tốn hạn mức). Các bài của một ngày phải nằm trong cùng ngày (giờ đầu + khoảng cách × số bài < 24:00). Giờ cố định chỉ dùng cho video; bài chữ mỗi tuần phải bằng 0.
+
+Để **không cần duyệt**, tick thêm **Tự bật lịch đăng sau khi Tèo kiểm tra kế hoạch**: Tèo bật lịch đúng các giờ bạn đã đặt với caption AI viết, không có bước đọc lại. Bỏ tick để duyệt ở tab **Duyệt caption** như trước. Ô giờ cố định để trống thì AI tự chọn giờ như cũ.
+
+Chưa kiểm chứng đăng thật: Tèo vẫn chưa tự xác nhận được bài đã lên Facebook. Hãy mở Facebook xem bài đầu tiên trước khi để chạy tiếp. Bấm **Khởi động lại, giữ công việc** để nạp. Đã kiểm thử bằng dữ liệu tạm; không gọi AI hoặc đăng Facebook thật.
+
 ## Duyệt caption cho mọi Page — 16/10/2026
 
 Tab mới **Duyệt caption** (tab cuối) gom mọi bài AI đề xuất **chưa duyệt** của tất cả Page về một chỗ, gồm bài từ Nguồn kênh, từ lượt AI theo giờ và từ chat Codex. Lọc theo Page ở ô **Page** phía trên.
