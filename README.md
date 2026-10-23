@@ -1,5 +1,123 @@
 # Tèo Dub Studio
 
+## Ghi chú hỏng của Codex không còn làm dừng cả video — 22/10/2026 (chiều)
+
+Video 15 dừng vì Codex trả kèm bản dịch một **ghi chú nghe duyệt** gắn sai số câu ("Ghi chú bản dịch Codex không khớp câu nguồn."). Ghi chú chỉ để bạn nghe lại, không phải lời dịch. Nay Tèo **bỏ những ghi chú hỏng** (gắn câu ngoài nhóm, trùng câu, rỗng; ghi chú quá dài thì cắt ngắn), ghi vào nhật ký "Bỏ N ghi chú…", và vẫn dùng bản dịch. Không tốn thêm lượt Codex. Lời dịch vẫn được kiểm tra chặt như trước; bản dịch đã lưu vẫn kiểm tra chặt.
+
+## Khung che Sub gốc luôn nằm giữa; không còn nhầm đồ vật trên bàn là phụ đề — 22/10/2026 (chiều)
+
+- **Luôn căn giữa:** chữ Việt và khung luôn nằm chính giữa khung hình. Khi phụ đề gốc rộng hơn chữ Việt, khung nới đều cả hai bên để che hết.
+- **Bộ dò phụ đề gốc chính xác hơn:** chỉ nhận **nét chữ có viền tối ở hai bên** (đặc trưng của phụ đề chữ trắng viền đen). Trong cảnh máy quay đứng yên, cạnh ô bàn caro, gói snack, cốc, mép đĩa nằm cùng hàng với phụ đề không còn bị gộp vào vùng che (đây là lý do video 10 — núi lửa Bromo — có khung rộng và lệch trái).
+- Đo trên 7 video thật: hàng phụ đề Tèo học được không đổi; ở video 10, 90% số câu chỉ lệch khỏi giữa tối đa 13 điểm ảnh (trước 88), số câu có khung rộng hơn 1,5 lần chữ giảm từ 30% xuống 18%. Đã soát 48 khung hình: không lộ chữ Trung.
+- Giới hạn còn lại: vật bóng loáng có vệt sáng mảnh (vành nồi inox) vẫn có thể bị nhầm là nét chữ; khi đó khung nằm giữa nhưng rộng hơn. Khi phụ đề gốc là một câu dài mà chữ Việt ngắn, khung vẫn phải rộng bằng phụ đề gốc.
+
+## Khung che Sub gốc: một khung gọn, chữ Việt to theo chữ gốc — 22/10/2026
+
+Trước đây khi bật "Khung che Sub gốc", mỗi câu có **hai khung trắng chồng lên nhau** (khung ôm chữ Việt + khung che chữ Trung). Chỗ hai khung lệch nhau thành hình bậc thang "lồi lõm"; câu 2 dòng thì mỗi dòng một khung. Nay:
+
+- Mỗi câu chỉ có **một khung chữ nhật góc vuông**, **chữ Việt nằm chính giữa**, khung **vừa đủ**: to bằng chữ Việt, hoặc bằng phụ đề gốc nếu phụ đề gốc to hơn. Câu bình thường nằm cùng một độ cao suốt video; chỉ câu có phụ đề gốc to hoặc lệch thì khung bám theo phụ đề đó.
+- **Chữ Việt to theo chữ gốc, theo từng video:** Tèo đo cỡ chữ gốc của video và đặt chữ Việt cao bằng chữ gốc, **cùng một cỡ cho mọi câu**, không nhỏ hơn cỡ bạn chọn, tối đa gấp 1,5. Thử trên 6 video: kênh ăn uống lên cỡ 20, phim tóm tắt cỡ 17, các video du lịch giữ cỡ 16. Cỡ chữ trong cài đặt không đổi.
+- **Lề trong khung** giảm từ 1/4 xuống **1/6** chiều cao dòng, khung sát chữ hơn.
+- Bộ dò phụ đề gốc chỉ tính phần nằm trên **hàng phụ đề** của video: vật sáng dính sát phụ đề (vành nồi inox, mép bánh, tay, túi nilon…) không còn làm khung phình ra. Trên 6 video thật (3.129 câu): số câu khung bị kéo dài quá dòng phụ đề giảm từ 22–48% xuống 0–9%; đã soát bằng mắt 84 khung hình, không câu nào lộ chữ Trung do thay đổi này.
+
+Giới hạn còn lại: câu mà Tèo không nhận ra phụ đề gốc (rất hiếm, ví dụ phụ đề 2 dòng nằm thấp hơn thường lệ trên nền trắng) vẫn có thể lộ một phần như trước. Không phóng to chữ Việt riêng từng câu, vì vùng "chữ to" trong một câu nhiều khi là đĩa trắng, túi nilon bị nhận nhầm. Video đã dựng hoặc đã đăng không tự đổi.
+
+## Máy ngủ dậy vẫn dựng tiếp; câu Codex không dịch được thì hỏi lại riêng câu đó — 22/10/2026
+
+**Máy tính bị cho Ngủ giữa lúc làm (video 10, 21/10):** trước đây Tèo tính cả thời gian máy ngủ vào giới hạn thời gian, nên máy vừa tỉnh là Tèo tưởng bị treo và dừng (video 10 chỉ còn 12 giây là xong bước trộn âm thanh), rồi báo lỗi khó hiểu "WinError 32". Nay giới hạn thời gian của **bước dựng video, bước xóa Sub (GPU) và bước chỉnh nhịp giọng** chỉ tính lúc máy thức: máy tỉnh dậy là chạy tiếp. Khi dọn thư mục tạm mà Windows còn giữ tệp, Tèo chờ và thử xóa lại vài giây; không được thì để lại thư mục nhưng **báo đúng lỗi thật**. Khi dựng lại một video lỗi, Tèo tự xóa thư mục tạm còn sót của chính video đó, và nếu thư mục thành phẩm cũ chỉ còn rác tạm thì video dựng lại **giữ đúng tên cũ** (không thành "_lan-2").
+
+Lưu ý: muốn Tèo chạy qua đêm thì **đừng bấm Ngủ (Sleep)** — chỉ tắt màn hình hoặc khóa máy (Windows + L). Lúc máy ngủ, Tèo không làm gì và cũng không đăng bài được.
+
+**Codex trả câu rỗng hoặc còn chữ Trung (video 8 câu 556, video 11 câu 457):** thường do nhận dạng giọng nói nghe nhầm thành chữ vô nghĩa. Trước đây cả video dừng trước bước tạo giọng. Nay nếu trong một nhóm dịch **chỉ có tối đa 3 câu** bị hỏng, Tèo **giữ các câu tốt và tự hỏi lại Codex đúng 1 lần, chỉ cho mấy câu đó** (kèm ghi chú "câu có thể bị nghe nhầm, dịch theo ngữ cảnh, không để chữ Trung"); câu hỏi lại được ghi vào **Ghi-chu-ban-dich.txt** để nghe duyệt. Hỏi lại vẫn hỏng, hoặc hỏng hơn 3 câu, thì dừng như trước, chờ bạn bấm Thử lại. Mỗi lần hỏi lại tốn thêm một lượt Codex (ít hơn dịch lại cả nhóm 300 câu).
+
+## Tự động đăng: video xong muộn vẫn đăng bù trong ngày — 21/10/2026
+
+Trước đây "Video mỗi ngày 10 · Giờ bài đầu 09:30 · Cách nhau 5 phút" nghĩa là đúng 10 giờ cố định (09:30 … 10:15); video xong sau 10:15 phải sang 09:30 hôm sau dù hôm đó mới đăng 2–3 bài. Nay nhịp **09:30 + 5 phút** chạy **tới hết ngày**: nếu đã qua các giờ đầu mà **hôm nay chưa đủ 10 bài**, video xong được xếp vào mốc kế tiếp của nhịp đó ngay trong ngày (ví dụ xong 12:33 → đăng 12:40). Đủ 10 bài thì sang 09:30 hôm sau; không bao giờ đăng trước giờ bài đầu; quá 23:55 thì sang hôm sau. Lịch đã hẹn trước đó không tự đổi (muốn đổi: Tạm dừng → đổi giờ → Bật).
+
+## Khung che thông minh: ôm sát Sub Việt, tự nới vừa đủ che phụ đề gốc — 21/10/2026
+
+Thay cho dải trắng rộng 92%: khi bật "Khung che Sub gốc", mỗi câu Việt nằm trên **khung ôm sát chữ** (rộng bằng chữ + lề nhỏ, cao bằng số dòng). Trước khi dựng, Tèo **tự tìm phụ đề gốc (chữ Trung) trong hình** ở đúng những lúc câu Việt hiện và **chỉ phủ thêm vừa đủ** chỗ chữ Trung đó (chữ Trung dài hơn thì khung nới ra, 2 dòng thì cao 2 dòng).
+
+- Cách tìm: chữ phụ đề sáng, có viền tối và **đứng yên** trong khi nền chuyển động; Tèo học **vùng phụ đề riêng của từng video** từ các câu chắc chắn để loại nhầm (áo, vành nồi, cạnh cửa…). Câu nào không thấy rõ thì dùng **khung điển hình** của video đó để không bao giờ lộ chữ; video không có phụ đề gốc thì chỉ có khung ôm chữ Việt.
+- Đã thử trên 5 video thật của 4 kênh (du lịch chữ nhỏ, tóm tắt phim chữ trắng/vàng trên nền đen, ăn uống chữ to viền dày, chợ chữ viền mỏng): mọi câu mẫu đều được che; quét thêm khoảng **0,07–0,1 giây mỗi câu** (video 41 phút ≈ 1,5–2 phút), không cần cài thêm gì, không dùng GPU.
+- Có thể **thừa một chút trắng** ở chỗ Tèo không chắc; khi phụ đề gốc lệch giữa hay cao hơn chữ Việt, phần trắng có thể thành hình chữ L (ít trắng nhất). Nếu vì lý do gì không đọc được hình, Tèo quay về **dải rộng** để vẫn che chắc.
+- Không che **tiêu đề** đặt ở chỗ khác trong hình (không phải phụ đề).
+
+Cùng đợt: **chiến dịch chờ nguồn tải nay luôn tự chạy lại** (lúc nguồn tạm dừng sớm nhất có lại, hoặc sau 30 phút nếu các nguồn chỉ hỏng riêng với video đó), và nếu đang ở lượt "Thử lại video lỗi" thì chạy tiếp đúng lượt đó.
+
+## Tải quá chậm thì chuyển nguồn sớm — 21/10/2026
+
+Trước đây nếu đường tải chậm (ví dụ video 9: khoảng 0,45 MB/giây, cả video mất gần 40 phút), Tèo cứ chờ cho tới khi đường tải đứt. Nay trong lúc tải, Tèo đo tốc độ trung bình của **phút gần nhất** (bỏ qua phút đầu vì máy chủ hay khởi động chậm). Nếu với tốc độ đó **phần còn lại cần hơn 15 phút** (hoặc, khi không biết dung lượng, tốc độ dưới 300 KB/giây), Tèo bỏ đường này và **chuyển sang nguồn kế tiếp** ("Đường tải quá chậm (khoảng … MB/giây; phần còn lại cần khoảng … phút); chuyển sang nguồn khác.").
+
+- **Nguồn cuối cùng không bao giờ bị bỏ vì chậm**: khi mạng chậm chung, video vẫn tải xong thay vì thất bại.
+- Chậm chỉ là chuyện của đường tải đó, nên Tèo **không đánh dấu trang là hỏng**; video sau vẫn thử lại trang đó.
+- Áp dụng cho Douyin trực tiếp, SaveTik, Social Video Download, AnySave. Viện Phần Mềm tải qua trình duyệt nên chưa đo được tốc độ.
+
+## Khung che Sub gốc: dải nền đặc dưới phụ đề Việt — 21/10/2026
+
+Khi ghi Sub Việt vào hình, phụ đề Việt hay đè lên phụ đề Trung có sẵn trong video, rất rối mắt. Nay có tùy chọn **"Khung che Sub gốc"** (tab Video đơn, ngay dưới hàng "Ghi Sub Việt trực tiếp vào hình"):
+
+- **Không khung** (mặc định, như cũ) · **Khung trắng · chữ đen** · **Khung đen · chữ trắng**.
+- Khi bật: mỗi câu Việt nằm trên một **dải nền đặc rộng khoảng 92% chiều ngang**, cao vừa đúng số dòng của câu (câu dài 2–3 dòng thì dải cao lên), đặt đúng chỗ phụ đề hiện nay (sát đáy), nên **che kín** dòng chữ Trung ở đó. Màu chữ do khung quyết định (ô "Màu chữ" tự khóa); độ đậm và cỡ chữ giữ như bạn chọn.
+- Dải **chỉ hiện khi có câu Việt**; các câu cách nhau dưới 1 giây dùng chung một dải liền (không nhấp nháy).
+- Chạy ngay khi dựng video, **không cần GPU, không làm chậm**. Video đã xuất/đã đăng giữ nguyên.
+- Với chiến dịch: chọn khung ở tab Video đơn rồi bấm **"Lấy cấu hình từ tab Video đơn"** để các video chưa làm xong dùng kiểu mới; chiến dịch tạo mới sẽ lưu sẵn lựa chọn này.
+- Giới hạn: khung nằm sát đáy. Video nào đặt phụ đề gốc cao hơn (hay gặp ở video dọc) thì khung không che tới; khi cần sẽ thêm ô chỉnh độ cao.
+
+## Nguồn tải mới đứng đầu: "Douyin trực tiếp" (không cần đăng nhập) — 21/10/2026
+
+Tèo giờ lấy video **trực tiếp từ chính trang video Douyin** trước, rồi mới tới 4 trang tải cũ. Thứ tự mới: **Douyin trực tiếp → SaveTik → Viện Phần Mềm → Social Video Download → AnySave** (tiến trình hiện "Nguồn 1/5…").
+
+- **Cách làm:** Tèo mở trang video bằng trình duyệt riêng tạm thời (ẩn), **không đăng nhập, không đọc cookie, không dùng hồ sơ Chrome nào**, đọc thông tin video mà chính trang Douyin nhận về, chọn bản hình tốt nhất (cao nhất, bitrate lớn nhất, dưới giới hạn 2 GB) rồi tải từ máy chủ video công khai của Douyin bằng đúng bước tải và kiểm tra hình/tiếng như các nguồn khác. Mỗi video chỉ mở trang một lần, không tự thử lại.
+- **Chất lượng:** đã chạy thật: 1920×1080, 30 khung hình/giây, H.264, có tiếng; thường **tốt hơn** bản các trang tải trả về (có video SaveTik trả 866×576 hoặc HEVC nén thấp). Bản tốt hơn nên file **nặng hơn** (ví dụ video 9 phút khoảng 250 MB, video 41 phút khoảng 1 GB).
+- **Khi Douyin từ chối một video** (một số video Douyin không cho xem khi chưa đăng nhập, khoảng 8/13 lượt thử thành công): Tèo chuyển ngay sang SaveTik… trong khoảng 10 giây; video sau vẫn thử Douyin trước. Nếu Douyin hiện trang xác minh (captcha), Tèo **không tự giải**, tạm bỏ nguồn này 1 giờ và dùng các trang khác.
+- **Khi Douyin từ chối và các trang khác đều đang hỏng:** video chờ ("Chờ nguồn tải…") và tự chạy lại khi có trang dùng lại được, như bản 20/10.
+
+Lồng tiếng, caption, xếp giờ, đăng bài không đổi. Cần **Khởi động lại, giữ công việc** để dùng; video lỗi cũ bấm **Thử lại video lỗi**. Lưu ý: đừng bật VPN khi chạy (Douyin hạn chế truy cập từ nước ngoài; Facebook có thể coi đăng nhập từ nước ngoài là lạ).
+
+## Tải video khi các trang tải miễn phí hỏng: nhớ trang hỏng, chờ nguồn, tự chạy lại — 20/10/2026
+
+Trước đây mỗi video đều phải thử lần lượt 4 trang tải bên ngoài; khi SaveTik và Viện Phần Mềm không trả kết quả, Social Video Download bảo trì Douyin và AnySave hết lượt trong ngày thì **mỗi video mất khoảng 3 phút rồi báo lỗi đỏ**, và cả danh sách bị đánh lỗi hàng loạt. Nay:
+
+1. **Tèo nhớ trang nào đang hỏng** (file `download-provider-health.json` trong thư mục dữ liệu, dùng chung cho mọi tiến trình): hết lượt trong ngày (theo giờ trang báo, tối đa 24 giờ), bảo trì hoặc xác minh/giới hạn (1 giờ), không phản hồi (30 phút), lỗi kết nối (20 phút). Video kế tiếp **bỏ qua** trang đó (không gửi thêm yêu cầu nào tới trang) và dùng ngay trang còn tốt. Trang tải thành công thì được xóa khỏi danh sách hỏng. Lỗi riêng của một video (không thấy video, MP4 hỏng) không làm trang bị đánh dấu.
+2. **Không còn lỗi đỏ hàng loạt:** khi cả 4 trang đều chưa dùng được, video nhận trạng thái **"Đã dừng" với thông báo "Chờ nguồn tải: … Tèo thử lại sau HH:MM"**, chiến dịch **tạm dừng** (các video sau giữ nguyên "Chờ xử lý") thay vì đốt hết danh sách.
+3. **Tự chạy lại:** tab Chiến dịch hàng loạt đang mở chiến dịch đó sẽ **tự chạy tiếp khi đến giờ** trang sớm nhất dùng lại được (kiểm tra mỗi phút, chỉ với chiến dịch tự tạm dừng vì chờ nguồn tải). Các lý do tạm dừng khác (hết hạn mức Codex, bấm Dừng…) không bao giờ tự chạy lại.
+
+Không đổi gì ở khâu lồng tiếng, caption, xếp giờ, đăng bài; file video tải về vẫn là bản gốc từ trang tải nên chất lượng không đổi. Chưa thêm trang tải thứ năm: chưa tìm được cách tải trực tiếp từ Douyin (yt-dlp bị 403 dù có cookie mới). Video đang lỗi từ trước vẫn cần bấm **Thử lại video lỗi** một lần sau khi khởi động lại Tèo.
+
+## Sửa lỗi "Không xác định duy nhất tên Page (0 mục)" khi tên Page khác chữ hoa/thường — 20/10/2026
+
+Bài 14:25 của Page "du lịch toàn cầu" dừng ở bước chuẩn bị (chưa bấm Đăng) vì Tèo lưu tên chữ thường còn Facebook hiển thị "Du lịch toàn cầu"; Tèo tìm tên Page bằng so khớp phân biệt hoa/thường nên báo 0 mục. Nay hai chỗ tìm tên Page (nút đầu trang và tiêu đề Page) **không phân biệt hoa/thường** nhưng vẫn phải khớp **toàn bộ** tên, vẫn đúng URL Page và đúng một mục nhìn thấy được. Tên khác (ví dụ thêm chữ) vẫn bị từ chối. Cửa sổ Page cũng tự cập nhật số video nguồn mỗi khoảng 10 giây.
+
+Sau khi cập nhật: Khởi động lại Tèo, bấm **Xếp lại lịch lỗi…** cho bài đang "Cần kiểm tra" hoặc để Tèo xếp bài kế tiếp. Chưa thử trên Facebook thật.
+
+## Tự động từ chiến dịch: lồng tiếng xong → AI viết caption → tự duyệt → tự đăng — 19/10/2026
+
+Trong **Quản lý Page → chọn Page → Thiết lập → Nhịp nội dung & giờ gọi AI** có thêm **một ô tick**: **Tự động từ chiến dịch: video lồng tiếng xong → AI viết caption → tự duyệt → tự đăng**. Mặc định **tắt**, bật riêng cho từng Page.
+
+**Cách dùng**
+1. Chọn **Nguồn video** (chiến dịch) cho Page.
+2. Đặt **Video mỗi ngày** (số bài tối đa mỗi ngày do bạn tự đặt, không có giới hạn nào ngoài ngưỡng an toàn 1.000), **Giờ bài đầu mỗi ngày (HH:MM)** và **Cách nhau (phút)**, **tùy ý bạn từ 1 đến 1440 phút**, Tèo không áp mức tối thiểu nào ở chế độ này. Ví dụ 11:20, cách nhau 45, 3 bài/ngày: 11:20, 12:05, 12:50; cách nhau 5 phút thì 10:00, 10:05, 10:10… Số bài lớn có thể chạy qua nửa đêm.
+3. Tick ô **Tự động từ chiến dịch…** rồi bấm **Lưu thiết lập & hẹn giờ**.
+
+**Tèo làm gì sau đó:** mỗi 5 phút Tèo xem Page có video mới lồng tiếng xong (có phụ đề) chưa dùng không. Có thì **gom tất cả video mới thành một lượt AI** (một lần gọi Codex cho cả đợt), AI viết caption riêng cho từng video, Tèo **tự duyệt và bật lịch**: mỗi video được xếp vào **giờ trống kế tiếp** trên lưới giờ của bạn (bỏ qua giờ còn cách lúc AI chạy dưới **3 phút**, giờ trùng đúng phút với một lịch có sẵn và ngày đã đủ số bài). Đến giờ Tèo đăng. Không giới hạn số lượt AI mỗi ngày ở chế độ này, nhưng mỗi lượt vẫn tốn hạn mức Codex. Nếu một giờ trôi qua trong lúc AI đang viết (còn chưa tới 90 giây khi AI trả lời), Tèo **bỏ riêng bài đó, vẫn bật lịch các bài còn lại**, và video bị bỏ ở lại hàng chờ cho lượt sau. **Bài đã xóa hoặc đã hủy không tính vào số bài mỗi ngày** và không chặn giờ ở chế độ này, nên giờ bạn đặt luôn được tính từ **hôm nay** (chỉ khi hết giờ trong lưới của hôm nay mới sang ngày kế tiếp); bài đang bật, tạm dừng, đã gửi hoặc đã đăng vẫn chiếm một suất trong ngày.
+
+**Xóa bài khỏi danh sách trả video về hàng chờ:** bài chưa từng chuẩn bị/gửi mà bạn bỏ khỏi **Lịch đăng** (nút **Xóa video**) thì video được giải phóng và lượt AI tự động kế tiếp sẽ xếp lại (viết caption mới); bài có thể đã gửi thì vẫn giữ chỗ để không đăng trùng. Lưu ý: Tèo đăng **từng bài một cho mỗi tài khoản** (tải video lên mất vài phút), nên các bài cách nhau quá ngắn sẽ xếp hàng và có thể đăng trễ hơn giờ đặt; bài đăng dồn dập cũng dễ bị Meta coi là spam.
+
+**Xem lại:** tab **Duyệt caption** có mục **Đã tự duyệt** liệt kê bài, giờ, caption và trạng thái; chọn bài rồi bấm **Tạm dừng bài đã chọn** để chặn. Tab **Lịch đăng** vẫn hiện từng lịch. Muốn tắt hẳn, bỏ tick ô trên và Lưu (bài đã bật lịch không bị gỡ, tạm dừng riêng ở Lịch đăng).
+
+**Tự dừng khi có chuyện:** AI lỗi hoặc hết hạn mức, AI trả giờ/caption sai quy tắc, Tèo bị tắt giữa lượt: Tèo **tắt chế độ tự động của Page đó** (các thiết lập khác giữ nguyên), ghi lý do ở **Lịch sử AI** và không tự thử lại. Muốn chạy tiếp thì tick lại ô và Lưu. Video chưa có phụ đề hoặc đã lỗi bị bỏ qua. Mỗi video chỉ đăng một lần trên một Page.
+
+**Không đọc caption trước khi đăng:** caption sai vẫn lên Page. Tèo vẫn **chưa tự xác nhận được bài đã lên Facebook**, nên hãy mở Page xem bài đầu tiên. Nên bắt đầu với 1 Page và 1–2 bài mỗi ngày. Video chỉ lồng tiếng lại có thể bị Meta giảm hiển thị hoặc chặn bản quyền. Giữ Tèo mở và máy không ngủ. **Nguồn kênh tự động** vẫn đưa video vào Page này như thường (Page ở chế độ này không bị từ chối).
+
+Bấm **Khởi động lại, giữ công việc** để nạp. Đã kiểm thử bằng dữ liệu tạm và AI giả lập; **chưa chạy với AI hoặc Facebook thật**.
+
+## Tạm ẩn các ô lịch AI trong màn hình Thiết lập của Page — 19/10/2026
+
+Theo yêu cầu, trong **Quản lý Page → Thiết lập → Nhịp nội dung & giờ gọi AI** đã **tạm ẩn**: **Bài chữ mỗi tuần**, dòng ghi chú kế hoạch, ô **Tôi tự đặt giờ đăng, AI chỉ viết caption** và **Tự bật lịch đăng sau khi Tèo kiểm tra kế hoạch**. Sáng 19/10 hai ô **Bật lịch gọi AI** và **Gọi AI tiếp theo (UTC+7) / Lặp sau** từng được hiện lại để thử, rồi theo yêu cầu **ẩn lại**; lượt AI của Page **du lịch toàn cầu** (hẹn 10:40) đã được **tắt** (giữ nguyên các thiết lập khác). Vì các ô này ẩn nên Page mới **không có cách bật AI từ giao diện**, và tab Duyệt caption chỉ có bài khi AI đã chạy; muốn dùng lại AI, đổi `HIDE_AI_SCHEDULE_CONTROLS` về `False` trong `teodub/page_ai_ui.py` (và ô **Bật lịch gọi AI** sẽ hiện), hoặc tạo bài thủ công ở **Lịch đăng → Thêm bài đăng…**. Vẫn hiện: **Video mỗi ngày**, **Giờ bài đầu mỗi ngày**, **Cách nhau (phút)**, nguồn video, mục tiêu, Tùy chọn AI, **Lưu thiết lập & hẹn giờ**, **Tạm dừng AI** và mọi tab khác.
+
+Chỉ ẩn giao diện, không xóa mã hay dữ liệu: các giá trị đã lưu của từng Page (bật/tắt AI, giờ gọi AI kế tiếp, lặp, bài chữ, tự bật lịch, giờ cố định) **giữ nguyên** khi bấm Lưu, kể cả giờ gọi AI không bị đổi. Page mới lưu thì **AI tự chạy tắt**, bài chữ bằng 0 và không tự bật lịch đăng; muốn dùng AI viết caption thì dùng nút/tab hiện có, hoặc nhờ bật lại các ô (đổi `HIDE_AI_SCHEDULE_CONTROLS` về `False` trong `teodub/page_ai_ui.py`). Bấm **Khởi động lại, giữ công việc** để áp dụng. Các Page đã bật AI từ trước (ví dụ Minh châu sneaker) không bị đụng; dừng riêng bằng **Tạm dừng AI**.
+
 ## Sửa lỗi bài không đăng vì hộp thoại "Speak With People Directly" — 17/10/2026
 
 Sau khi bấm Đăng Reel, Facebook có thể hiện hộp thoại **Speak With People Directly** (gợi ý thêm nút "Call Now") và **giữ bài lại cho đến khi bấm "Not now"**. Trước đây Tèo chỉ bấm "Not now" khi đang theo dõi kết quả, và chỉ nhận ra tên hộp thoại cũ (Talk directly to people); khi kiểm tra kết quả bị tắt, hộp thoại bị bỏ lại và bài không được đăng (16:15 và 16:20 ngày 17/10, trang Reels không có bài mới).

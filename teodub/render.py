@@ -3,23 +3,30 @@
 The source is read only. Vietnamese captions are either a selectable MP4 track
 or visibly burned into the picture, and one sidecar SRT is always preserved.
 """
+from contextlib import contextmanager
 from fractions import Fraction
 import math
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import time
 import wave
 
-from teodub.common import atomic_json, check_cancel, hash_file
+from teodub.common import AwakeTime, Cancelled, atomic_json, check_cancel, hash_file
 from teodub.audio_mix import validate_audio_mix
+from teodub.caption_layout import layout as layout_captions, matched_size, write_captions
+from teodub.subtitle_band import band_events
 from teodub.subtitle_style import ass_force_style, validate_subtitle_style
 
 RATE = 48000
 GAP_FRAMES = 4800
 CJK = re.compile(r'[\u3400-\u9fff\uf900-\ufaff\U00020000-\U000323af]')
+WORK_PREFIX = '.render-work-'
+# Windows (antivirus, a just-stopped encoder, waking from sleep) can hold a file for a few seconds.
+CLEANUP_WAITS = (.2, .5, 1, 2, 3)
 
 
 def _notify(progress, message, percent=None):
@@ -168,14 +175,14 @@ def _run_ffmpeg(command, directory, duration, cancel, progress):
     with log.open('wb') as error:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=error, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        started = time.monotonic()
+        awake = AwakeTime(time.monotonic())
         timeout = min(14400, max(300, duration*20))
         last = 0.
         try:
             while process.poll() is None:
                 check_cancel(cancel)
                 now = time.monotonic()
-                if now-started > timeout:
+                if awake.update(now) > timeout:
                     raise ValueError('Dựng video quá thời gian chờ. Bản xuất chưa được công bố.')
                 if now-last >= .5:
                     try:
@@ -433,6 +440,28 @@ def _verify(source, video, expected, cues, probes, subtitle_mode, cancel, progre
     return report
 
 
+def _caption_boxes(picture, start_s, cues, effective_speed, width, height, options, cancel, progress):
+    """One box per burned line that also hides the video's own caption; the wide band if the picture cannot be read."""
+    from teodub.caption_cover import cover_boxes
+    _notify(progress, 'Đang tìm phụ đề gốc trong hình để che vừa đủ…', 18)
+    # The picture plays at 1/effective_speed, so output time t shows the source at start_s + t*effective_speed.
+    intervals = [(start_s+cue['start_ms']/1000*effective_speed, start_s+cue['end_ms']/1000*effective_speed)
+                 for cue in cues]
+    size, weight = options['subtitle_size'], options['subtitle_weight']
+    try:
+        regions, report = cover_boxes(picture, intervals, check=lambda: check_cancel(cancel),
+            progress=lambda share: _notify(progress, f'Đang tìm phụ đề gốc trong hình: {share*100:.0f}%', 18+share))
+    except Cancelled:
+        raise
+    except Exception as exc:  # A picture that cannot be analysed must not leave the original captions bare.
+        regions = [(band['x'], band['y'], band['x']+band['w'], band['y']+band['h'])
+                   for band in band_events(cues, width, height, size, weight)]
+        report = dict(fallback='wide_band', error=str(exc)[:300])
+    # Big own captions get big Vietnamese text, the same size for every line of the video (owner 22/10).
+    report = dict(report, layout='one_box', text_size=matched_size(size, report.get('caption_rows'), height))
+    return layout_captions(cues, regions, report.get('caption_rows'), report['text_size'], weight, width, height), report
+
+
 def _publish(source, target):
     if Path(target).exists():
         raise FileExistsError('Tệp thành phẩm đã tồn tại; không ghi đè.')
@@ -443,9 +472,61 @@ def _publish(source, target):
         Path(source).unlink()
 
 
+def _remove_tree(path):
+    """Delete a work folder, waiting briefly for files Windows still holds. Never raises."""
+    for wait in (*CLEANUP_WAITS, None):
+        try:
+            shutil.rmtree(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if wait is None:
+                return False
+            time.sleep(wait)
+
+
+@contextmanager
+def _work_directory(output):
+    """Temporary render files inside the result folder.
+
+    Cleanup must not replace the render's own error: on 21/10 a locked file turned
+    "quá thời gian chờ" into WinError 32. A folder that stays locked is left for
+    clear_leftover_work on the next render of the same video.
+    """
+    work = Path(tempfile.mkdtemp(prefix=WORK_PREFIX, dir=output))
+    try:
+        yield work
+    finally:
+        _remove_tree(work)
+
+
+def clear_leftover_work(folder):
+    """Remove what a failed render left in this job's own result folder.
+
+    Only Tèo's temporary work folders go; the result folder itself is removed only when
+    nothing else is in it, so a retry keeps the video's name. Published or unknown
+    files are never touched.
+    """
+    folder = Path(folder)
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if (entry.name.startswith(WORK_PREFIX) and entry.is_dir()
+                and not entry.is_symlink() and not entry.is_junction()):
+            _remove_tree(entry)
+    try:
+        folder.rmdir()
+    except OSError:
+        pass
+
+
 def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gain=.1, voice_gain=1.0,
                  gap_ms=100, burn_subtitles=False, subtitle_color='white',
-                 subtitle_weight='bold', subtitle_size=13, cleaned_picture=None, cancel=None, progress=None):
+                 subtitle_weight='bold', subtitle_size=13, subtitle_box='none', cleaned_picture=None, cancel=None,
+                 progress=None):
     """Render one fresh result directory and return absolute artifact paths."""
     import imageio_ffmpeg
     check_cancel(cancel)
@@ -458,7 +539,8 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
         raise ValueError('Khoảng nghỉ giữa các câu phải từ 80 đến 1000 mili giây.')
     subtitle_options = validate_subtitle_style(dict(
         burn_subtitles=burn_subtitles, subtitle_color=subtitle_color,
-        subtitle_weight=subtitle_weight, subtitle_size=subtitle_size))
+        subtitle_weight=subtitle_weight, subtitle_size=subtitle_size, subtitle_box=subtitle_box))
+    box = subtitle_options.get('subtitle_box', 'none')
     gap_frames = round(gap_ms*RATE/1000)
     if not cues or len(cues) != len(clips):
         raise ValueError('Phải có đủ một tệp giọng cho từng câu phụ đề.')
@@ -488,8 +570,7 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
     output.mkdir(parents=True, exist_ok=False)
     destinations = dict(video=output/f'{output.name}.mp4', subtitles=output/f'{output.name}.srt',
                         plan=output/'render-plan.json', quality=output/'quality.json')
-    with tempfile.TemporaryDirectory(prefix='.render-work-', dir=output) as temporary:
-        work = Path(temporary)
+    with _work_directory(output) as work:
         placements, probes, final_cues = [], [], []
         cursor = -gap_frames
         for index, (cue, clip) in enumerate(zip(clean_cues, clips), 1):
@@ -524,12 +605,23 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
                    f'fps={fps.numerator}/{fps.denominator},pad=ceil(iw/2)*2:ceil(ih/2)*2,'
                    f'tpad=stop_mode=clone:stop_duration={duration:.9f},trim=duration={duration:.9f},format=yuv420p')
         subtitle_mode = 'burned_ass' if subtitle_options['burn_subtitles'] else 'soft_mov_text'
-        if subtitle_options['burn_subtitles']:
+        cover = None
+        if subtitle_options['burn_subtitles'] and box == 'none':
             escaped = str(subtitles.resolve()).replace('\\', '/').replace(':', '\\:').replace("'", "\\'")
             style = ass_force_style(subtitle_options['subtitle_color'], subtitle_options['subtitle_weight'],
                                     subtitle_options['subtitle_size'])
             picture += (f",subtitles=filename='{escaped}':original_size={width}x{height}:"
                         f"force_style='{style}'[v]")
+        elif subtitle_options['burn_subtitles']:
+            # One rectangle per line (owner 22/10): the Vietnamese caption in its middle, sitting on the video's own
+            # caption rows and just large enough to hide the caption shown there. Text and box come from one script.
+            picture_start = (picture_info if cleaned_picture else info)['start_s']
+            placed, cover = _caption_boxes(picture_source, picture_start, final_cues, effective_speed,
+                                           width, height, subtitle_options, cancel, progress)
+            captions = work/'captions.ass'
+            write_captions(captions, placed, cover['text_size'], subtitle_options['subtitle_weight'], box, width, height)
+            escaped = str(captions.resolve()).replace('\\', '/').replace(':', '\\:').replace("'", "\\'")
+            picture += f",subtitles=filename='{escaped}':original_size={width}x{height}[v]"
         else:
             picture += '[v]'
         if info['has_audio']:
@@ -574,9 +666,10 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
                     original_gain=original_gain, voice_gain=voice_gain, gap_ms=gap_ms, sample_rate=RATE,
                     source_embedded_text_removed=False, subtitle_clean=cleaned_picture,
                     source_text_removal_scope=('selected_rectangle_only' if cleaned_picture else 'none'),
-                    subtitle_mode=subtitle_mode,
+                    subtitle_mode=subtitle_mode, **({} if cover is None else {'caption_cover': cover}),
                     subtitle_style=(dict(color=subtitle_options['subtitle_color'],
-                                         weight=subtitle_options['subtitle_weight'], size=subtitle_options['subtitle_size'])
+                                         weight=subtitle_options['subtitle_weight'], size=subtitle_options['subtitle_size'],
+                                         **({} if box == 'none' else {'box': box}))
                                     if subtitle_options['burn_subtitles'] else None),
                     cues=final_cues, clips=[{k: v for k, v in item.items() if k != 'normalized'} for item in placements])
         quality.update(source_sha256=source_hash, video_sha256=hash_file(video), subtitles_sha256=hash_file(subtitles))

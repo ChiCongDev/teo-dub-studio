@@ -194,6 +194,68 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(result['message'], 'Đã hết hạn mức Codex')
         self.assertEqual(result['items'][1]['status'], 'pending')
 
+    def test_no_usable_download_source_waits_instead_of_failing_the_list(self):
+        calls = []
+        def waiting(path, stop):
+            calls.append(path)
+            return dict(status='failed', message='Chờ nguồn tải: cả 4 trang tải đều chưa dùng được lúc này. Tèo thử lại sau 02:10 21/10.')
+        with patch.object(campaign, '_source_retry_at', return_value=12345.0):
+            result = campaign.run_campaign(self.directory, runner=waiting)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result['status'], 'paused')
+        self.assertEqual(result['resume_after'], 12345.0)
+        self.assertEqual(result['items'][0]['status'], 'cancelled')
+        self.assertTrue(result['items'][0]['message'].startswith('Chờ nguồn tải'))
+        self.assertEqual(result['items'][1]['status'], 'pending')
+        self.assertEqual(campaign.totals(result)['failed'], 0)
+        self.assertEqual(campaign.totals(result)['waiting'], 2)
+
+    def test_a_waiting_video_runs_again_on_the_next_start_and_the_wait_mark_is_cleared(self):
+        with patch.object(campaign, '_source_retry_at', return_value=12345.0):
+            campaign.run_campaign(self.directory, runner=lambda path, stop: dict(
+                status='failed', message='Chờ nguồn tải: thử lại sau 02:10 21/10.'))
+        result = campaign.run_campaign(self.directory, runner=self.runner)
+        self.assertEqual(self.calls, ['0001', '0002'])
+        self.assertEqual(result['status'], 'completed')
+        self.assertNotIn('resume_after', result)
+
+    def test_automatic_restart_is_due_only_for_a_source_wait_whose_time_has_come(self):
+        due = lambda manifest, now: campaign.auto_resume_due(manifest, now)
+        self.assertTrue(due(dict(status='paused', resume_after=100.0), 100.0))
+        self.assertFalse(due(dict(status='paused', resume_after=100.0), 99.0))
+        self.assertFalse(due(dict(status='paused'), 1e12))
+        self.assertFalse(due(dict(status='running', resume_after=1.0), 1e12))
+        self.assertFalse(due(dict(status='paused', resume_after='soon'), 1e12))
+        self.assertFalse(due(dict(status='paused', resume_after=1.0, archived_at='x'), 1e12))
+        self.assertFalse(due(dict(status='paused', resume_after=float('nan')), 1e12))
+
+    def test_other_pauses_are_never_restarted_automatically(self):
+        result = campaign.run_campaign(self.directory, runner=lambda path, stop: dict(
+            status='failed', message='Đã hết hạn mức Codex'))
+        self.assertNotIn('resume_after', result)
+        self.assertFalse(campaign.auto_resume_due(result, 1e12))
+
+    def test_the_wait_ends_when_the_first_paused_service_returns_or_after_half_an_hour(self):
+        from teodub.downloaders import provider_health
+        with patch.object(provider_health, 'default_path', return_value=self.root/'health.json'):
+            # Nothing paused as a whole (each service failed only for that video): try again in 30 minutes.
+            self.assertEqual(campaign._source_retry_at(now=1000.), 1000.+campaign.WAIT_FALLBACK_S)
+            health = provider_health.ProviderHealth()
+            health.record_failure('socialvideo', 'maintenance', now=1000.)
+            health.record_failure('anysave', 'daily_quota', '5h', now=1000.)
+            self.assertEqual(campaign._source_retry_at(now=1001.), 1000.+3600)
+
+    def test_a_wait_during_a_retry_pass_is_resumed_as_a_retry_pass(self):
+        waiting = lambda path, stop: dict(status='failed', message='Chờ nguồn tải: thử lại sau 13:50 21/10.')
+        with patch.object(campaign, '_source_retry_at', return_value=12345.0):
+            plain = campaign.run_campaign(self.directory, runner=waiting)
+            self.assertIs(plain['resume_retry_failed'], False)
+            retried = campaign.run_campaign(self.directory, retry_failed=True, runner=waiting)
+        self.assertIs(retried['resume_retry_failed'], True)
+        self.assertEqual(retried['resume_after'], 12345.0)
+        finished = campaign.run_campaign(self.directory, runner=self.runner)
+        self.assertNotIn('resume_retry_failed', finished)
+
     def test_cancelled_and_crashed_running_items_are_resumable(self):
         manifest = campaign.read_json(self.directory/'campaign.json')
         manifest['items'][0]['status'] = 'running'

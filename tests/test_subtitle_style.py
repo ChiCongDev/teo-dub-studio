@@ -1,6 +1,6 @@
 import unittest
 
-from teodub.subtitle_style import ass_force_style, validate_subtitle_style
+from teodub.subtitle_style import ass_box_style, ass_force_style, validate_subtitle_style
 
 
 class SubtitleStyleTests(unittest.TestCase):
@@ -26,6 +26,29 @@ class SubtitleStyleTests(unittest.TestCase):
             validate_subtitle_style({'subtitle_color': 'red'})
         with self.assertRaises(ValueError):
             validate_subtitle_style({'subtitle_weight': 'extra-bold'})
+
+    def test_the_box_is_kept_only_for_burned_captions_and_absent_means_none(self):
+        self.assertNotIn('subtitle_box', validate_subtitle_style({'burn_subtitles': True}))
+        self.assertNotIn('subtitle_box', validate_subtitle_style({'burn_subtitles': True, 'subtitle_box': 'none'}))
+        self.assertNotIn('subtitle_box', validate_subtitle_style({'burn_subtitles': False, 'subtitle_box': 'white'}))
+        for box in ('white', 'black'):
+            self.assertEqual(validate_subtitle_style({'burn_subtitles': True, 'subtitle_box': box})['subtitle_box'], box)
+        for box in ('red', '', None, 1, 'White'):
+            with self.subTest(box=box), self.assertRaises(ValueError):
+                validate_subtitle_style({'burn_subtitles': True, 'subtitle_box': box})
+
+    def test_boxed_caption_is_an_opaque_box_in_the_band_colour_at_the_usual_place(self):
+        white = ass_box_style('white', 'bold', 16).split(',')
+        for part in ('BorderStyle=3', 'PrimaryColour=&H00000000', 'OutlineColour=&H00FFFFFF', 'BackColour=&H00FFFFFF',
+                     'FontSize=16', 'Bold=-1', 'Shadow=0', 'Alignment=2', 'MarginL=22', 'MarginR=22', 'MarginV=18',
+                     'Outline=4'):
+            self.assertIn(part, white)
+        black = ass_box_style('black', 'regular', 13).split(',')
+        for part in ('PrimaryColour=&H00FFFFFF', 'OutlineColour=&H00000000', 'Bold=0', 'Outline=3.25'):
+            self.assertIn(part, black)
+        for box in ('none', 'red'):
+            with self.subTest(box=box), self.assertRaises(ValueError):
+                ass_box_style(box, 'bold')
 
     def test_font_size_validation_and_filter(self):
         for size in (8, 13, 20, 36, '24'):

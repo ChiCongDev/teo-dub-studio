@@ -1,6 +1,9 @@
 """One public Douyin link through public downloader UIs in a private browser."""
 import os
+from collections import deque
+from datetime import datetime
 import http.client
+import math
 from pathlib import Path
 import re
 import ssl
@@ -12,6 +15,11 @@ from teodub.downloaders.download_errors import ProviderUnavailable, classify_any
 from teodub.downloaders.download_provider_registry import PROVIDERS
 
 PROVIDER_URL = 'https://any-save.com/douyin'
+# A transfer whose rest would take far too long at its current speed hands the video to the next source.
+SLOW_GRACE_S = 60          # The first minute is never judged: video servers often start slowly.
+SLOW_WINDOW_S = 60         # The speed is the average over the last minute.
+SLOW_REMAINING_S = 15*60   # Switch when the rest would still need longer than this...
+SLOW_FLOOR_BPS = 300*1024  # ...or, when the size is unknown, while the speed stays below this.
 
 
 def is_public_media_url(url):
@@ -60,8 +68,36 @@ class SafeMediaRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def download_media(url, target, check, progress, max_bytes):
-    """Stream only observed CDN links; never forward browser cookies or credentials."""
+def _check_speed(window, started, count, total):
+    """Stop a transfer that would still take far too long; called only while another source can take over."""
+    now = time.monotonic()
+    window.append((now, count))
+    while len(window) > 1 and window[1][0] <= now-SLOW_WINDOW_S:
+        window.popleft()
+    since, done = window[0]
+    if now-started < SLOW_GRACE_S or now-since < SLOW_WINDOW_S:
+        return
+    rate = (count-done)/(now-since)
+    speed = f'{rate/1048576:.2f}'.replace('.', ',')
+    if total:
+        remaining = (total-count)/rate if rate > 0 else math.inf
+        if remaining <= SLOW_REMAINING_S:
+            return
+        wait = f'; phần còn lại cần khoảng {math.ceil(remaining/60)} phút' if math.isfinite(remaining) else ''
+    elif rate >= SLOW_FLOOR_BPS:
+        return
+    else:
+        wait = ''
+    raise MediaTransferError(f'Đường tải quá chậm (khoảng {speed} MB/giây{wait}); chuyển sang nguồn khác.',
+                             reason='too_slow')
+
+
+def download_media(url, target, check, progress, max_bytes, *, may_switch=False):
+    """Stream only observed CDN links; never forward browser cookies or credentials.
+
+    With may_switch, a transfer that would still take far too long stops early (reason too_slow) so the next
+    source can try; the last source is always allowed to finish however slow it is.
+    """
     target = Path(target)
     if target.exists():
         raise FileExistsError('Video đích đã tồn tại; không ghi đè.')
@@ -91,6 +127,8 @@ def download_media(url, target, check, progress, max_bytes):
             if total > max_bytes:
                 raise ValueError('Video vượt giới hạn tải 2 GB của bản này.')
             count = 0
+            started = time.monotonic()
+            window = deque([(started, 0)])
             with part.open('xb') as output:
                 owned_part = True
                 while True:
@@ -105,6 +143,8 @@ def download_media(url, target, check, progress, max_bytes):
                         raise ValueError('Video vượt giới hạn tải 2 GB của bản này.')
                     output.write(chunk)
                     progress(dict(status='downloading', downloaded_bytes=count, total_bytes=total))
+                    if may_switch:
+                        _check_speed(window, started, count, total)
             check()
             if not count or (total and count != total):
                 raise MediaTransferError('Tải bị gián đoạn; chưa nhận đủ video.')
@@ -202,6 +242,10 @@ def _close_browser_object(handle):
 
 
 def _resolve_provider(provider, page, context, url, check, emit):
+    if provider == 'douyin':
+        from teodub.downloaders.douyin_direct import resolve_douyin
+        from teodub.downloaders.video_download import MAX_BYTES
+        return resolve_douyin(page, url, check, emit, is_public_media_url, max_bytes=MAX_BYTES)
     if provider == 'savetik':
         from teodub.downloaders.savetik_download import resolve_savetik
         return resolve_savetik(page, url, check, emit, is_public_media_url)
@@ -216,7 +260,28 @@ def _resolve_provider(provider, page, context, url, check, emit):
     raise ValueError('Nguồn tải chưa được hỗ trợ: '+provider)
 
 
-def resolve_providers(context, url, folder, check, emit, *, progress=None, validate=None):
+def _all_unavailable(health, failures):
+    """The ending for "no source can take this video now": a waiting state with a retry time, not a per-video failure.
+
+    Sources that failed for this video only (Douyin refused it, a site could not read the link) cannot help by
+    waiting, so the video waits for the sources that are paused as a whole (quota, maintenance, no answer).
+    """
+    from teodub.downloaders.provider_health import PAUSES
+    video_only = {item['provider'] for item in failures
+                  if item.get('status') == 'failed' and item.get('reason') not in PAUSES}
+    retry_at = health.earliest_retry([service.id for service in PROVIDERS if service.id not in video_only])
+    if retry_at is None:
+        return None
+    when = datetime.fromtimestamp(retry_at).strftime('%H:%M %d/%m')
+    exc = ProviderUnavailable(f'Chờ nguồn tải: chưa nguồn tải nào lấy được video này lúc này '
+                              f'(hết lượt, bảo trì, không phản hồi hoặc từ chối video). Tèo thử lại sau {when}.',
+                              provider='all', reason='all_unavailable')
+    exc.retry_at = retry_at
+    exc.attempts = failures
+    return exc
+
+
+def resolve_providers(context, url, folder, check, emit, *, progress=None, validate=None, health=None):
     """Try each service once, through verified transfer when progress is supplied.
 
     The default remains resolver-only for callers that only need the URL.
@@ -233,6 +298,14 @@ def resolve_providers(context, url, folder, check, emit, *, progress=None, valid
     for index, service in enumerate(PROVIDERS, start=1):
         provider = service.id
         check()
+        state = health.unavailable(provider) if health is not None else None
+        if state is not None:
+            when = datetime.fromtimestamp(state[0]).strftime('%H:%M')
+            failures.append(dict(provider=provider, stage='skipped', status='skipped', reason=state[1]))
+            emit(f'Bỏ qua {service.name}: đang không dùng được, thử lại sau {when}.',
+                 provider=provider, provider_name=service.name, provider_index=index,
+                 provider_count=len(PROVIDERS), stage='skipped')
+            continue
         page = None
         candidate = None
         owned_candidate = False
@@ -267,7 +340,10 @@ def resolve_providers(context, url, folder, check, emit, *, progress=None, valid
                     from teodub.downloaders.vienphanmem_download import transfer_vienphanmem
                     transfer_vienphanmem(page, candidate, check, provider_progress, MAX_BYTES)
                 else:
-                    download_media(media_url, candidate, check, provider_progress, MAX_BYTES)
+                    # A slow transfer may be dropped only while a later, not paused source can take over.
+                    may_switch = any(health is None or health.unavailable(later.id) is None
+                                     for later in PROVIDERS[index:])
+                    download_media(media_url, candidate, check, provider_progress, MAX_BYTES, may_switch=may_switch)
                 owned_candidate = True
                 check()
                 if validate is not None:
@@ -283,6 +359,8 @@ def resolve_providers(context, url, folder, check, emit, *, progress=None, valid
             else:
                 status = 'resolved'
             info['provider_attempts'] = failures + [dict(provider=provider, status=status)]
+            if health is not None:
+                health.record_success(provider)
             return info
         except (ProviderUnavailable, MediaTransferError, Error) as exc:
             check()
@@ -297,8 +375,12 @@ def resolve_providers(context, url, folder, check, emit, *, progress=None, valid
             exc.provider = provider
             failures.append(dict(provider=provider, stage=stage, status='failed', reason=exc.reason, message=str(exc)))
             provider_emit(str(exc), reason=exc.reason)
+            if health is not None:
+                health.record_failure(provider, exc.reason, exc.retry_after_text)
             if exc.reason in ('verification_required', 'rate_limited') or index == len(PROVIDERS):
                 # Respect explicit verification/rate restrictions; never loop.
+                if health is not None and exc.reason not in ('verification_required', 'rate_limited'):
+                    exc = _all_unavailable(health, failures) or exc
                 exc.attempts = failures
                 raise exc
             following = PROVIDERS[index]
@@ -313,6 +395,12 @@ def resolve_providers(context, url, folder, check, emit, *, progress=None, valid
                     pass
             if page is not None:
                 _close_browser_object(page)
+    # Reached only when the last service was skipped, so nothing else could end the attempt.
+    ending = _all_unavailable(health, failures) if health is not None else None
+    if ending is None:
+        ending = ProviderUnavailable('Chưa tải được video từ các trang tải.', provider='all', reason='provider_error')
+        ending.attempts = failures
+    raise ending
 
 
 def download_via_browser(url, folder, check, progress, emit, validate=None):
@@ -335,8 +423,9 @@ def download_via_browser(url, folder, check, progress, emit, validate=None):
         context = None
         try:
             context = browser.new_context(accept_downloads=True, locale='en-US')
+            from teodub.downloaders.provider_health import ProviderHealth
             info = resolve_providers(context, url, folder, check, emit,
-                                     progress=progress, validate=validate)
+                                     progress=progress, validate=validate, health=ProviderHealth())
         finally:
             if context is not None:
                 _close_browser_object(context)

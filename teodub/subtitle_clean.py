@@ -6,7 +6,7 @@ import subprocess
 import time
 import uuid
 
-from teodub.common import atomic_json, check_cancel, hash_file
+from teodub.common import AwakeTime, atomic_json, check_cancel, hash_file
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = ROOT/'models/inpaint/sttn.pth'
@@ -93,20 +93,21 @@ def clean_video(source, config, directory, *, cancel=None, progress=None):
         with log.open('w', encoding='utf-8') as error:
             process = subprocess.Popen([str(PYTHON), '-X', 'utf8', '-B', '-m', 'teodub.inpaint_worker', str(request.resolve())],
                 cwd=ROOT, stdout=error, stderr=error, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            previous, changed = None, time.monotonic()
+            previous, unchanged = None, AwakeTime(time.monotonic())
             while process.poll() is None:
                 check_cancel(cancel)
                 try:
                     update = json.loads(status.read_text(encoding='utf-8'))
                 except (OSError, ValueError):
                     update = None
+                now = time.monotonic()
                 if update != previous:
-                    changed = time.monotonic()
+                    unchanged = AwakeTime(now)
                     previous = update
                     if progress and update:
                         progress(f'GPU đang xóa chữ: {update.get("frames", 0)} khung hình ({update.get("percent", 0):.0f}%).',
                                  percent=update.get('percent', 0))
-                if time.monotonic()-changed > 300:
+                if unchanged.update(now) > 300:
                     raise ValueError('GPU không cập nhật sau 5 phút. Đã dừng an toàn; có thể tiếp tục phiên.')
                 time.sleep(.2)
         if process.returncode:

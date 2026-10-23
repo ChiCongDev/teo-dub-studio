@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
+import time
 import tkinter as tk
 from tkinter import ttk
 
@@ -9,6 +10,12 @@ from teodub.ai_models import TRANSLATION_MODELS, REASONING_LEVELS
 from teodub.campaign import read_json
 from teodub.page_ai import PageAIStore, LABELS
 from teodub.page_schedule import LOCAL_TIME, PageScheduleStore, parse_time, display_time
+
+
+# Owner request (19/10/2026): temporarily hide the AI schedule/text/auto controls. The variables, stored values
+# and code stay; set to False to show them again.
+SOURCE_REFRESH_POLLS = 5  # The source counts are re-read every 5 polls (about 10 seconds).
+HIDE_AI_SCHEDULE_CONTROLS = True
 
 
 class PageAIPanel(ttk.Frame):
@@ -26,9 +33,11 @@ class PageAIPanel(ttk.Frame):
         self.effort=tk.StringVar(self,REASONING_LEVELS['low'])
         self.days=tk.IntVar(self,7)
         self.videos=tk.IntVar(self,2)
-        self.texts=tk.IntVar(self,3)
+        self.texts=tk.IntVar(self,0 if HIDE_AI_SCHEDULE_CONTROLS else 3)
         self.interval=tk.IntVar(self,7)
         self.slots_on=tk.BooleanVar(self,False)
+        self.auto_campaign=tk.BooleanVar(self,False)
+        self.loaded_auto=False
         self.slot_start=tk.StringVar(self,'12:00')
         self.slot_gap=tk.StringVar(self,'450')
         tomorrow=(datetime.now(LOCAL_TIME)+timedelta(days=1)).replace(hour=6,minute=0)
@@ -47,12 +56,13 @@ class PageAIPanel(ttk.Frame):
         self.wrap_labels=[]
         self.rows={}
         self.signature=None
+        self.polls=0
         self.build()
         self.load()
         self.update_summaries()
         for variable in (self.days,self.videos,self.texts,self.interval,self.auto):
             variable.trace_add('write',self.update_summaries)
-        for variable in (self.slots_on,self.slot_start,self.slot_gap):
+        for variable in (self.slots_on,self.slot_start,self.slot_gap,self.auto_campaign):
             variable.trace_add('write',self.update_summaries)
         self.refresh()
         self.bind('<Destroy>',self.destroyed,add='+')
@@ -142,19 +152,22 @@ class PageAIPanel(ttk.Frame):
         cadence_card.pack(fill='x',pady=(0,8))
         line=ttk.Frame(cadence_card)
         line.pack(fill='x')
-        for label,var,low,high in [('Video mỗi ngày',self.videos,0,4),('Bài chữ mỗi tuần',self.texts,0,7)]:
+        for label,var,low,high in [('Video mỗi ngày',self.videos,0,1000),('Bài chữ mỗi tuần',self.texts,0,7)]:
+            if HIDE_AI_SCHEDULE_CONTROLS and var is self.texts:
+                continue
             ttk.Label(line,text=label).pack(side='left',padx=(0,4))
             ttk.Spinbox(line,textvariable=var,from_=low,to=high,width=4).pack(side='left',padx=(0,15))
-        line=ttk.Frame(cadence_card)
-        line.pack(fill='x',pady=(7,3))
-        ttk.Label(line,text='Gọi AI tiếp theo (UTC+7)').pack(side='left')
-        ttk.Entry(line,textvariable=self.due,width=19).pack(side='left',padx=6)
-        ttk.Label(line,text='Lặp sau').pack(side='left')
-        ttk.Spinbox(line,textvariable=self.interval,from_=0,to=30,width=4).pack(side='left',padx=4)
-        ttk.Label(line,text='ngày · 0 = một lần').pack(side='left')
-        self.note(cadence_card,text='Nhập giờ theo dạng YYYY-MM-DD HH:MM.').pack(anchor='w',fill='x')
-        self.note(cadence_card,textvariable=self.plan_summary).pack(anchor='w',fill='x',pady=(3,5))
-        ttk.Checkbutton(cadence_card,text='Tôi tự đặt giờ đăng, AI chỉ viết caption',variable=self.slots_on).pack(anchor='w')
+        if not HIDE_AI_SCHEDULE_CONTROLS:
+            line=ttk.Frame(cadence_card)
+            line.pack(fill='x',pady=(7,3))
+            ttk.Label(line,text='Gọi AI tiếp theo (UTC+7)').pack(side='left')
+            ttk.Entry(line,textvariable=self.due,width=19).pack(side='left',padx=6)
+            ttk.Label(line,text='Lặp sau').pack(side='left')
+            ttk.Spinbox(line,textvariable=self.interval,from_=0,to=30,width=4).pack(side='left',padx=4)
+            ttk.Label(line,text='ngày · 0 = một lần').pack(side='left')
+            self.note(cadence_card,text='Nhập giờ theo dạng YYYY-MM-DD HH:MM.').pack(anchor='w',fill='x')
+            self.note(cadence_card,textvariable=self.plan_summary).pack(anchor='w',fill='x',pady=(3,5))
+            ttk.Checkbutton(cadence_card,text='Tôi tự đặt giờ đăng, AI chỉ viết caption',variable=self.slots_on).pack(anchor='w')
         line=ttk.Frame(cadence_card)
         line.pack(fill='x',pady=(3,0))
         ttk.Label(line,text='Giờ bài đầu mỗi ngày (HH:MM)').pack(side='left')
@@ -162,10 +175,15 @@ class PageAIPanel(ttk.Frame):
         ttk.Label(line,text='Cách nhau (phút)').pack(side='left')
         ttk.Entry(line,textvariable=self.slot_gap,width=6).pack(side='left',padx=6)
         self.note(cadence_card,textvariable=self.slots_summary).pack(anchor='w',fill='x',pady=(3,5))
-        ttk.Checkbutton(cadence_card,text='Bật lịch gọi AI',variable=self.enabled).pack(anchor='w')
-        self.note(cadence_card,text='Đến giờ hẹn mới dùng hạn mức AI để phân tích và lập kế hoạch.').pack(anchor='w',fill='x',pady=(0,5))
-        ttk.Checkbutton(cadence_card,text='Tự bật lịch đăng sau khi Tèo kiểm tra kế hoạch',variable=self.auto).pack(anchor='w')
-        self.note(cadence_card,textvariable=self.publish_summary).pack(anchor='w',fill='x')
+        ttk.Checkbutton(cadence_card,text='Tự động từ chiến dịch: video lồng tiếng xong → AI viết caption → tự duyệt → tự đăng',
+                        variable=self.auto_campaign).pack(anchor='w')
+        self.note(cadence_card,text='Dùng Video mỗi ngày (không giới hạn), Giờ bài đầu và Cách nhau ở trên. Video nào xong thì được '
+                  'xếp vào giờ trống kế tiếp, không cần bạn duyệt. Giữ Tèo mở; lỗi AI hoặc giờ sai sẽ tự dừng chế độ này.').pack(anchor='w',fill='x',pady=(0,5))
+        if not HIDE_AI_SCHEDULE_CONTROLS:
+            ttk.Checkbutton(cadence_card,text='Bật lịch gọi AI',variable=self.enabled).pack(anchor='w')
+            self.note(cadence_card,text='Đến giờ hẹn mới dùng hạn mức AI để phân tích và lập kế hoạch.').pack(anchor='w',fill='x',pady=(0,5))
+            ttk.Checkbutton(cadence_card,text='Tự bật lịch đăng sau khi Tèo kiểm tra kế hoạch',variable=self.auto).pack(anchor='w')
+            self.note(cadence_card,textvariable=self.publish_summary).pack(anchor='w',fill='x')
 
         self.advanced_button=ttk.Button(config,text='▸ Tùy chọn AI',command=self.toggle_advanced)
         self.advanced_button.pack(anchor='w',pady=(0,5))
@@ -261,14 +279,23 @@ class PageAIPanel(ttk.Frame):
         self.publish_summary.set('Bật: kế hoạch hợp lệ được bật lịch đăng cho đúng Page này.' if self.auto.get() else
             'Tắt: kế hoạch được lưu để bạn xem và duyệt trước khi bật lịch đăng.')
 
+    def next_run(self):
+        """The AI's next run. While the schedule controls are hidden the saved time is kept as is."""
+        if not HIDE_AI_SCHEDULE_CONTROLS:
+            return parse_time(self.due.get())
+        saved=self.store.policy(self.account,self.page)
+        if saved and saved['next_at']>time.time()+60:
+            return saved['next_at']
+        return time.time()+86400
+
     def slot_values(self):
         """Owner-chosen times as (HH:MM, minutes), or None when the AI picks the times."""
-        if not self.slots_on.get():
+        if not (self.slots_on.get() or self.auto_campaign.get()):
             return None
         try:
             gap=int(self.slot_gap.get().strip())
         except ValueError:
-            raise ValueError('Khoảng cách giữa các bài là số phút, từ 30 đến 1440.') from None
+            raise ValueError('Khoảng cách giữa các bài là số phút (chế độ tự động từ 1, chế độ giờ cố định từ 30; tối đa 1440).') from None
         return self.slot_start.get().strip(),gap
 
     def describe_slots(self):
@@ -278,13 +305,18 @@ class PageAIPanel(ttk.Frame):
                 return 'AI tự chọn giờ đăng. Bật ô trên nếu bạn muốn tự đặt giờ.'
             hour,minute=map(int,values[0].split(':'))
             count=max(self.videos.get(),1)
+            auto=self.auto_campaign.get()
             times=[(hour*60+minute+index*values[1]) for index in range(count)]
-            if not all(0<=value<1440 for value in times) or not 30<=values[1]<=1440:
+            if not (1 if auto else 30)<=values[1]<=1440 or not 0<=hour<24 or not 0<=minute<60 or (not auto and not all(value<1440 for value in times)):
                 raise ValueError
-            text=', '.join(f'{value//60:02d}:{value%60:02d}' for value in times)
+            text=', '.join(f'{value//60%24:02d}:{value%60:02d}' for value in times[:8])+(f' … ({count} bài/ngày)' if count>8 else '')
+            if auto:
+                return (f'Tự động: mỗi ngày tối đa {count} bài, lúc {text}. Video xong được xếp vào giờ trống kế tiếp; '
+                        f'đã qua các giờ này mà hôm nay chưa đủ {count} bài thì đăng bù theo nhịp {values[1]} phút '
+                        'tới hết ngày, không đăng trước giờ bài đầu.')
             return f'Mỗi ngày đăng lúc: {text}. AI chỉ viết caption; bài ngoài các giờ này bị từ chối.'
         except (ValueError, tk.TclError):
-            return 'Giờ chưa hợp lệ: nhập HH:MM, khoảng cách 30–1440 phút, các bài phải nằm trong cùng một ngày.'
+            return 'Giờ chưa hợp lệ: nhập HH:MM, khoảng cách bất kỳ từ 1 đến 1440 phút (chế độ giờ cố định từ 30 phút và các bài phải nằm trong cùng một ngày).'
 
     def build_history(self):
         history=self.history_frame
@@ -424,6 +456,8 @@ class PageAIPanel(ttk.Frame):
         self.effort.set(REASONING_LEVELS[config['effort']])
         for var,key in [(self.days,'days'),(self.videos,'videos_per_day'),(self.texts,'texts_per_week'),(self.interval,'interval_days')]:
             var.set(config[key])
+        self.auto_campaign.set(bool(config.get('auto_campaign')))
+        self.loaded_auto=bool(config.get('auto_campaign'))
         self.slots_on.set('slot_start' in config)
         if 'slot_start' in config:
             self.slot_start.set(config['slot_start'])
@@ -443,7 +477,11 @@ class PageAIPanel(ttk.Frame):
             slots=self.slot_values()
             if slots is not None:
                 config.update(slot_start=slots[0],slot_gap=slots[1])
-            self.store.save(self.account,self.page,config,parse_time(self.due.get()),self.enabled.get())
+            if self.auto_campaign.get():
+                config.update(auto_campaign=True,auto_publish=True,texts_per_week=0)
+            elif self.loaded_auto:
+                config.update(auto_publish=False)
+            self.store.save(self.account,self.page,config,self.next_run(),self.enabled.get())
             self.status.set('Đã lưu. '+('Đến giờ mới gửi dữ liệu tới AI.' if self.enabled.get() else 'Lịch AI đang tắt.'))
             self.refresh()
         except (ValueError, StopIteration, tk.TclError) as exc:
@@ -502,6 +540,9 @@ class PageAIPanel(ttk.Frame):
         self.timer=None
         if not self.closed:
             try:
+                self.polls+=1
+                if self.polls%SOURCE_REFRESH_POLLS==0:
+                    self.load_sources()  # Videos finish while this window stays open.
                 self.refresh()
             except (ValueError,OSError) as exc:
                 self.status.set(str(exc))

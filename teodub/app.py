@@ -18,7 +18,7 @@ from teodub.common import atomic_json, hash_file
 from teodub.speech_plan import STYLES, validate_style
 from teodub.speech_audio import VOICE_SPEEDS, validate_voice_speed
 from teodub.ai_models import CHOICES, LEGACY_MODELS, NEW_MODELS, validate_models, local_voices as model_voices
-from teodub.subtitle_style import SUBTITLE_COLORS, SUBTITLE_WEIGHTS, validate_subtitle_style
+from teodub.subtitle_style import SUBTITLE_BOXES, SUBTITLE_COLORS, SUBTITLE_WEIGHTS, validate_subtitle_style
 from teodub.wording import format_rule_text, parse_rule_text, rewrite_text, validate_wording
 from teodub.adam_voice import LABEL as ADAM_VOICE
 from teodub.audio_mix import validate_audio_mix, validate_percent
@@ -126,6 +126,7 @@ class Studio(ttk.Frame):
             'subtitle_color': tk.StringVar(master, value='white'),
             'subtitle_weight': tk.StringVar(master, value='bold'),
             'subtitle_size': tk.StringVar(master, value='13'),
+            'subtitle_box': tk.StringVar(master, value='none'),
             'wording_enabled': tk.BooleanVar(master, value=False),
             'wording_rules': tk.StringVar(master, value='bán => báng'),
             'drive_enabled': tk.BooleanVar(master, value=False),
@@ -135,6 +136,7 @@ class Studio(ttk.Frame):
         self.style_label = tk.StringVar(master, value=STYLES['conversation']['label'])
         self.subtitle_color_label = tk.StringVar(master, value=SUBTITLE_COLORS['white']['label'])
         self.subtitle_weight_label = tk.StringVar(master, value=SUBTITLE_WEIGHTS['bold']['label'])
+        self.subtitle_box_label = tk.StringVar(master, value=SUBTITLE_BOXES['none']['label'])
         self.voice_help = tk.StringVar(master)
         self.model_summary = tk.StringVar(master)
         self.wording_summary = tk.StringVar(master)
@@ -146,6 +148,7 @@ class Studio(ttk.Frame):
         for key in ('voice_provider', 'voice', 'reference_audio', 'reading_style', 'voice_speed', *CHOICES):
             self.fields[key].trace_add('write', self.profile_changed)
         self.fields['burn_subtitles'].trace_add('write', self.subtitle_changed)
+        self.fields['subtitle_box'].trace_add('write', self.subtitle_changed)
         for key in ('wording_enabled', 'wording_rules'):
             self.fields[key].trace_add('write', self.update_wording_summary)
         self.update_wording_summary()
@@ -287,15 +290,25 @@ class Studio(ttk.Frame):
         self.subtitle_size_picker.pack(side='left')
         ttk.Label(subtitle_row, text='(mặc định 13)').pack(side='left', padx=(5, 0))
         ttk.Label(subtitle_row, textvariable=self.wording_summary).pack(side='right', padx=(12, 0))
+        box_row = ttk.Frame(options)
+        box_row.grid(row=12, column=0, columnspan=3, sticky='ew', pady=(6, 0))
+        ttk.Label(box_row, text='Khung che Sub gốc').pack(side='left', padx=(0, 7))
+        self.subtitle_box_picker = ttk.Combobox(
+            box_row, textvariable=self.subtitle_box_label,
+            values=[item['label'] for item in SUBTITLE_BOXES.values()], state='readonly', width=22)
+        self.subtitle_box_picker.pack(side='left')
+        self.subtitle_box_picker.bind('<<ComboboxSelected>>', self.choose_subtitle_box)
+        ttk.Label(box_row, text='Khung ôm sát Sub Việt và tự nới vừa đủ để che phụ đề gốc của video ở từng câu; '
+                  'màu chữ theo khung.').pack(side='left', padx=(10, 0))
         ttk.Label(options, wraplength=990, text='Âm lượng trên áp dụng khi xuất video; Nghe thử giọng giữ mức mẫu 100%. Lời đọc nối tiếp, không đè nhau. '
                   'Tốc độ giọng nhân thêm vào nhịp của Kiểu đọc và giữ nguyên cao độ. '
                   'Lồng tiếng và xuất video dùng SRT đã chọn; Tự động toàn bộ dịch lời mới. Từ ngữ chỉ thay lời khi bạn bật. '
                   'Có thể ghi Sub Việt vào hình với màu và độ đậm đã chọn; luôn xuất thêm một SRT Việt. '
                   'Lưu vùng xóa Sub gốc cho từng video, rồi tick áp dụng trước khi lồng tiếng.').grid(
-                      row=12, column=0, columnspan=3, sticky='w', pady=(6, 0))
+                      row=13, column=0, columnspan=3, sticky='w', pady=(6, 0))
 
         drive_row = ttk.Frame(options)
-        drive_row.grid(row=13, column=0, columnspan=3, sticky='ew', pady=(7, 0))
+        drive_row.grid(row=14, column=0, columnspan=3, sticky='ew', pady=(7, 0))
         self.drive_check = ttk.Checkbutton(drive_row, text='Tự lưu video thành phẩm lên Google Drive',
                                            variable=self.fields['drive_enabled'])
         self.drive_check.pack(side='left')
@@ -712,6 +725,12 @@ class Studio(ttk.Frame):
         if value:
             self.fields['subtitle_weight'].set(value)
 
+    def choose_subtitle_box(self, _event=None):
+        value = next((key for key, item in SUBTITLE_BOXES.items()
+                      if item['label'] == self.subtitle_box_label.get()), None)
+        if value:
+            self.fields['subtitle_box'].set(value)
+
     def subtitle_changed(self, *_args):
         self.update_subtitle_controls()
         self.refresh_buttons()
@@ -768,9 +787,13 @@ class Studio(ttk.Frame):
         weight = self.fields['subtitle_weight'].get()
         self.subtitle_color_label.set(SUBTITLE_COLORS.get(color, {}).get('label', color))
         self.subtitle_weight_label.set(SUBTITLE_WEIGHTS.get(weight, {}).get('label', weight))
+        box = self.fields['subtitle_box'].get()
+        self.subtitle_box_label.set(SUBTITLE_BOXES.get(box, {}).get('label', box))
         busy = self.process is not None or self.closing or self.login_pending
         state = 'readonly' if self.fields['burn_subtitles'].get() and not busy else 'disabled'
-        self.subtitle_color_picker.configure(state=state)
+        self.subtitle_box_picker.configure(state=state)
+        # With a box the box decides the text colour, so the colour choice does not apply.
+        self.subtitle_color_picker.configure(state=state if box == 'none' else 'disabled')
         self.subtitle_weight_picker.configure(state=state)
         self.subtitle_size_picker.configure(state='normal' if state == 'readonly' else 'disabled')
 
@@ -891,7 +914,8 @@ class Studio(ttk.Frame):
         if mode == 'full' and subtitles and (not Path(subtitles).is_file() or Path(subtitles).suffix.lower() != '.srt'):
             raise ValueError('Tệp SRT Việt không tồn tại hoặc không đúng định dạng.')
         subtitle_options = validate_subtitle_style({key: self.fields[key].get() for key in
-                                                    ('burn_subtitles', 'subtitle_color', 'subtitle_weight', 'subtitle_size')})
+                                                    ('burn_subtitles', 'subtitle_color', 'subtitle_weight', 'subtitle_size',
+                                                     'subtitle_box')})
         directory = (self.jobs_dir/uuid.uuid4().hex).resolve()
         audio_options = self.audio_mix_selection() if mode == 'full' else validate_audio_mix({})
         clean_options = {'subtitle_clean': self.clean_selection(require_bound=True)} if mode == 'full' else {}
@@ -1337,6 +1361,7 @@ class Studio(ttk.Frame):
         subtitle_options = validate_subtitle_style(config)
         for key, value in subtitle_options.items():
             self.fields[key].set(value)
+        self.fields['subtitle_box'].set(subtitle_options.get('subtitle_box', 'none'))  # Absent in jobs without a box.
         self.update_subtitle_controls()
         if config.get('mode') == 'preview':
             return

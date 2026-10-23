@@ -21,7 +21,7 @@ DONE = {'completed', 'review_required'}
 CONFIG_KEYS = ('voice_provider', 'voice', 'reference_audio', 'reference_sha256',
                'reading_style', 'voice_speed', 'speed', 'original_gain', 'voice_gain',
                'asr_model', 'translation_model', 'translation_effort', 'tts_model',
-               'burn_subtitles', 'subtitle_color', 'subtitle_weight', 'subtitle_size', 'wording',
+               'burn_subtitles', 'subtitle_color', 'subtitle_weight', 'subtitle_size', 'subtitle_box', 'wording',
                'drive_upload', 'drive_data_dir', 'subtitle_clean')
 
 
@@ -32,6 +32,31 @@ def should_process(item, *, retry_failed=False):
 
 def read_json(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
+
+
+WAITING_SOURCE = 'Chờ nguồn tải'
+WAIT_FALLBACK_S = 30*60  # With no download service paused as a whole, the waiting video is tried again after this.
+
+
+def _source_retry_at(now=None):
+    """When to try a waiting video again: the first moment one of the paused download services is usable again.
+
+    Services that failed only for that video are not paused, so they cannot say when; the video then simply waits
+    WAIT_FALLBACK_S.
+    """
+    from teodub.downloaders.download_provider_registry import PROVIDERS
+    from teodub.downloaders.provider_health import ProviderHealth
+    now = time.time() if now is None else now
+    health = ProviderHealth()
+    paused = [state[0] for state in (health.unavailable(service.id, now) for service in PROVIDERS) if state]
+    return min(paused) if paused else now+WAIT_FALLBACK_S
+
+
+def auto_resume_due(manifest, now):
+    """A campaign paused only because no download service worked, once the wait is over."""
+    after = manifest.get('resume_after')
+    return (manifest.get('status') == 'paused' and not manifest.get('archived_at')
+            and type(after) in (int, float) and math.isfinite(after) and after <= now)
 
 
 def parse_links(text):
@@ -257,6 +282,8 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
         stop = _StopRequests(local_stop, Path(external_stop)) if external_stop is not None else local_stop
         manifest['status'] = 'running'
         manifest.pop('message', None)
+        manifest.pop('resume_after', None)
+        manifest.pop('resume_retry_failed', None)
         atomic_json(directory/'campaign.json', manifest)
         atomic_json(directory/'campaign-runtime.json', dict(future_settings=1))
         try:
@@ -319,6 +346,10 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 item.update(status=result['status'], message=str(result.get('message') or ''), outputs=result.get('outputs', {}))
                 if result.get('google_drive') is not None:
                     item['google_drive'] = result['google_drive']
+                # No download service is usable: not this video's fault, so no red error; wait and try it again.
+                waiting_source = item['status'] == 'failed' and item['message'].startswith(WAITING_SOURCE)
+                if waiting_source:
+                    item['status'] = 'cancelled'
                 if item['status'] == 'failed' and not item['message']:
                     item['message'] = 'Video xử lý thất bại; chưa có nguyên nhân được ghi. Mở chi tiết để kiểm tra nhật ký.'
                 elif item['status'] == 'cancelled' and not item['message']:
@@ -327,6 +358,10 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 atomic_json(directory/'campaign.json', manifest)
                 # Pause on interruptions or account limits instead of failing the entire channel.
                 text = item['message'].lower()
+                if waiting_source:
+                    manifest['resume_after'] = _source_retry_at()
+                    # A wait during "Thử lại video lỗi" resumes as that same pass, so later failed videos are not skipped.
+                    manifest['resume_retry_failed'] = bool(retry_failed)
                 if item['status'] == 'cancelled' or (item['status'] == 'failed' and any(
                     value in text for value in ('hạn mức', 'quota', 'usage limit', 'rate limit', 'đăng nhập', 'login', 'credits'))):
                     manifest['status'] = 'paused'

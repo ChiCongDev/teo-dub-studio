@@ -527,6 +527,11 @@ def _same_video_preview(actual, expected, *, transition=False):
         and abs(current.get('duration', 0)-original['duration']) < .05)
 
 
+def _shown_name(name):
+    """The whole accessible name, any letter case: Facebook may capitalise a Page name saved in lower case."""
+    return re.compile(r'^\s*' + r'\s+'.join(map(re.escape, str(name).split())) + r'\s*$', re.I)
+
+
 def _page_id(url):
     parsed = urlsplit(url)
     if parsed.hostname not in _HOSTS:
@@ -571,7 +576,8 @@ def _page_main(tab, target):
     """
     # Current Page headers use a named button; feed authors can repeat headings.
     # Use only a unique non-feed header button on the exact numeric Page URL.
-    buttons = tab.get_by_role('main').get_by_role('button', name=target['name'], exact=True)
+    shown = _shown_name(target['name'])
+    buttons = tab.get_by_role('main').get_by_role('button', name=shown)
     headers = [buttons.nth(i) for i in range(buttons.count()) if buttons.nth(i).is_visible()
                and buttons.nth(i).evaluate('e => !e.closest("[role=article],article,[role=dialog],[role=navigation],nav,aside,[role=complementary]")')]
     if _page_id(tab.url) == target['page_id'] and headers:
@@ -579,7 +585,7 @@ def _page_main(tab, target):
             raise ValueError('Không xác định duy nhất tên Page trong đầu trang; chưa mở hộp bài viết.')
         return _one_visible(headers[0].locator('xpath=ancestor::*[self::main or @role="main"][1]'),
                             'vùng đầu trang mang tên Page')
-    heading = _one_visible(tab.get_by_role('main').get_by_role('heading', name=target['name'], exact=True),
+    heading = _one_visible(tab.get_by_role('main').get_by_role('heading', name=shown),
                            'tên Page trong nội dung chính')
     if _name(heading.inner_text()) != _name(target['name']):
         raise ValueError('Tên Page đang hiển thị khác bản nháp; chưa mở hộp bài viết.')

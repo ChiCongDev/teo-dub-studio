@@ -37,7 +37,7 @@ class PlanReviewTab(ttk.Frame):
         self.store = store or ContentPlanStore(studio.data_dir)
         self.spawn = spawn or (lambda work: threading.Thread(target=work, daemon=True, name='teo-review-stage').start())
         self.results = queue.Queue()
-        self.rows, self.pages = {}, {}
+        self.rows, self.pages, self.auto_rows = {}, {}, {}
         self.current = None
         self.busy = False
         self.ticks = 0
@@ -102,12 +102,25 @@ class PlanReviewTab(ttk.Frame):
         line.grid(row=6, column=0, columnspan=2, sticky='w', pady=(8, 0))
         ttk.Button(line, text='Lưu sửa', command=self.save_edit).pack(side='left')
         ttk.Button(line, text='Khôi phục bản AI', command=self.restore).pack(side='left', padx=6)
+        self.auto_box = ttk.LabelFrame(self, text='Đã tự duyệt (Tèo tự bật lịch cho các bài này)', padding=8)
+        self.auto_box.grid(row=4, column=0, columnspan=2, sticky='ew', pady=(10, 0))
+        self.auto_box.columnconfigure(0, weight=1)
+        self.auto_tree = ttk.Treeview(self.auto_box, columns=('page', 'time', 'caption', 'state'), show='headings',
+                                      selectmode='extended', height=5)
+        for key, label, width in (('page', 'Page', 140), ('time', 'Giờ đăng', 120), ('caption', 'Caption', 520), ('state', 'Trạng thái', 150)):
+            self.auto_tree.heading(key, text=label)
+            self.auto_tree.column(key, width=width, minwidth=60, stretch=key == 'caption')
+        self.auto_tree.grid(row=0, column=0, sticky='ew')
+        auto_scroll = ttk.Scrollbar(self.auto_box, orient='vertical', command=self.auto_tree.yview)
+        auto_scroll.grid(row=0, column=1, sticky='ns')
+        self.auto_tree.configure(yscrollcommand=auto_scroll.set)
+        ttk.Button(self.auto_box, text='Tạm dừng bài đã chọn', command=self.pause_auto).grid(row=1, column=0, sticky='w', pady=(6, 0))
         actions = ttk.Frame(self)
-        actions.grid(row=4, column=0, columnspan=2, sticky='w', pady=(10, 0))
+        actions.grid(row=5, column=0, columnspan=2, sticky='w', pady=(10, 0))
         self.approve_button = ttk.Button(actions, text='Duyệt & bật lịch bài đã chọn', command=self.approve)
         self.approve_button.pack(side='left')
         ttk.Button(actions, text='Bỏ bài đã chọn…', command=self.reject).pack(side='left', padx=6)
-        ttk.Label(self, textvariable=self.status, wraplength=1000).grid(row=5, column=0, columnspan=2, sticky='w', pady=(8, 0))
+        ttk.Label(self, textvariable=self.status, wraplength=1000).grid(row=6, column=0, columnspan=2, sticky='w', pady=(8, 0))
 
     # Data ---------------------------------------------------------------------------
     def load_pages(self):
@@ -149,6 +162,44 @@ class PlanReviewTab(ttk.Frame):
         self.counts.set(f'{waiting} bài chờ duyệt' + (f' · {len(rows)-waiting} cần xử lý' if len(rows) > waiting else ''))
         if self.current and self.current not in self.rows:
             self.show(None)
+        self.refresh_auto()
+
+    def refresh_auto(self):
+        from teodub.page_schedule import STATE_LABELS
+        try:
+            items = self.store.approved_ai_items()
+        except ValueError as exc:
+            self.status.set(str(exc))
+            return
+        self.auto_rows = {item['plan_id']+':'+item['item_id']: item for item in items}
+        selected = set(self.auto_tree.selection())
+        for ident in self.auto_tree.get_children():
+            if ident not in self.auto_rows:
+                self.auto_tree.delete(ident)
+        for index, (ident, item) in enumerate(self.auto_rows.items()):
+            values = (item['page_name'], local_text(item['due_at']), one_line(item['body'], 90),
+                      STATE_LABELS.get(item['state'], item['state']))
+            if self.auto_tree.exists(ident):
+                self.auto_tree.item(ident, values=values)
+                self.auto_tree.move(ident, '', index)
+            else:
+                self.auto_tree.insert('', index, iid=ident, values=values)
+        self.auto_tree.selection_set([ident for ident in selected if ident in self.auto_rows])
+
+    def pause_auto(self):
+        picked = [self.auto_rows[ident] for ident in self.auto_tree.selection() if ident in self.auto_rows]
+        if not picked:
+            self.status.set('Chọn bài trong mục Đã tự duyệt để tạm dừng.')
+            return
+        errors, paused = [], 0
+        for item in picked:
+            try:
+                self.get_scheduler().pause(item['schedule_id'])
+                paused += 1
+            except (ValueError, OSError) as exc:
+                errors.append(str(exc))
+        self.status.set(f'Đã tạm dừng {paused} bài.'+(' Không dừng được: '+' | '.join(errors[:2]) if errors else ''))
+        self.refresh_auto()
 
     def selected_rows(self):
         return [self.rows[ident] for ident in self.tree.selection() if ident in self.rows]

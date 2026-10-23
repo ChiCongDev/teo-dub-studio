@@ -191,22 +191,22 @@ class ProviderFallbackTests(unittest.TestCase):
         return browser_download.resolve_providers(self.context, URL, self.folder, lambda: None,
             lambda *_a, **_k: None, **kwargs)
 
-    def test_four_providers_remain_ordered_and_each_attempted_once(self):
+    def test_douyins_own_page_comes_first_then_the_four_sites_each_attempted_once(self):
         ids = [p.id for p in PROVIDERS]
-        self.assertEqual(ids, ['savetik', 'vienphanmem', 'socialvideo', 'anysave'])
-        errors = [ProviderUnavailable('unavailable', provider=p, reason='provider_error') for p in ids[:3]]
+        self.assertEqual(ids, ['douyin', 'savetik', 'vienphanmem', 'socialvideo', 'anysave'])
+        errors = [ProviderUnavailable('unavailable', provider=p, reason='provider_error') for p in ids[:4]]
         with patch.object(browser_download, '_resolve_provider', side_effect=errors+[dict(media_url='https://example.invalid/video')]) as resolver, \
                 patch.object(browser_download, 'save_provider_failure'):
             result = self.resolve()
         self.assertEqual([call.args[0] for call in resolver.call_args_list], ids)
         self.assertEqual(result['provider'], 'anysave')
-        self.assertEqual(len(result['provider_attempts']), 4)
+        self.assertEqual(len(result['provider_attempts']), 5)
 
     def test_first_success_prevents_other_provider_submissions(self):
         with patch.object(browser_download, '_resolve_provider', return_value=dict(media_url='fixture')) as resolver:
             result = self.resolve()
         resolver.assert_called_once()
-        self.assertEqual(result['provider'], 'savetik')
+        self.assertEqual(result['provider'], 'douyin')
 
     def test_cancellation_and_verification_challenges_never_fall_back(self):
         for error in (Cancelled('stop'), ProviderUnavailable('verify', provider='savetik', reason='verification_required'),
@@ -218,14 +218,14 @@ class ProviderFallbackTests(unittest.TestCase):
                 resolver.assert_called_once()
 
     def test_invalid_first_media_advances_before_publication_and_cleans_only_owned_candidate(self):
-        def transfer(_url, target, *_args): target.write_bytes(BODY)
+        def transfer(_url, target, *_args, **_kwargs): target.write_bytes(BODY)
         with patch.object(browser_download, '_resolve_provider', return_value=dict(media_url='fixture')), \
                 patch.object(browser_download, 'download_media', side_effect=transfer), \
                 patch('teodub.downloaders.vienphanmem_download.transfer_vienphanmem', side_effect=transfer), \
                 patch.object(browser_download, 'save_provider_failure'):
             validate = Mock(side_effect=[browser_download.MediaTransferError('bad data'), dict(sha256='verified')])
             result = self.resolve(progress=Mock(), validate=validate)
-        self.assertEqual(result['provider'], 'vienphanmem')
+        self.assertEqual(result['provider'], 'savetik')
         self.assertEqual(validate.call_count, 2)
         self.assertEqual((self.folder/'video.mp4').read_bytes(), BODY)
         self.assertFalse(list((self.folder/'attempts').rglob('video.mp4')))

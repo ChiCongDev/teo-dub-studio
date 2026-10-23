@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch
 from teodub.app import CAPCUT_VOICES, MAX_LOG_LINES, READING_STYLES, REFERENCE_VOICE, SPEEDS, VOICES, VOICE_SPEED_LABELS, Studio, worker_command
 from teodub.common import atomic_json, hash_file
 from teodub.speech_plan import STYLES
-from teodub.subtitle_style import SUBTITLE_COLORS, SUBTITLE_WEIGHTS
+from teodub.subtitle_style import SUBTITLE_BOXES, SUBTITLE_COLORS, SUBTITLE_WEIGHTS
 from teodub.wording import validate_wording
 
 
@@ -546,6 +546,32 @@ class StudioTests(unittest.TestCase):
         saved = json.loads((Path(config['directory'])/'config.json').read_text(encoding='utf-8'))
         self.assertEqual(saved['subtitle_color'], 'yellow')
         self.assertEqual(str(self.studio.subtitle_color_picker['state']), 'disabled')
+
+    def test_caption_box_is_selectable_decides_the_text_colour_and_reaches_the_job(self):
+        self.assertEqual(self.studio.fields['subtitle_box'].get(), 'none')
+        self.assertEqual(str(self.studio.subtitle_box_picker['state']), 'disabled')
+        self.studio.fields['burn_subtitles'].set(True)
+        self.assertEqual(str(self.studio.subtitle_box_picker['state']), 'readonly')
+        self.assertEqual(str(self.studio.subtitle_color_picker['state']), 'readonly')
+        self.studio.subtitle_box_label.set(SUBTITLE_BOXES['white']['label'])
+        self.studio.choose_subtitle_box()
+        self.assertEqual(self.studio.fields['subtitle_box'].get(), 'white')
+        self.assertEqual(str(self.studio.subtitle_color_picker['state']), 'disabled')  # The box decides the text colour.
+        config = self.start()
+        self.assertEqual(config['subtitle_box'], 'white')
+        saved = json.loads((Path(config['directory'])/'config.json').read_text(encoding='utf-8'))
+        self.assertEqual(saved['subtitle_box'], 'white')
+        self.assertEqual(str(self.studio.subtitle_box_picker['state']), 'disabled')
+        old = dict(config)
+        old.pop('subtitle_box')
+        self.studio.fill_form(old)
+        self.assertEqual(self.studio.fields['subtitle_box'].get(), 'none')
+        self.assertEqual(self.studio.subtitle_box_label.get(), SUBTITLE_BOXES['none']['label'])
+
+    def test_no_box_keeps_job_configs_exactly_as_before(self):
+        self.studio.fields['burn_subtitles'].set(True)
+        config = self.start()
+        self.assertNotIn('subtitle_box', config)
 
     def test_subtitle_size_control_reaches_job_and_restores_default_for_old_jobs(self):
         self.assertEqual(self.studio.fields['subtitle_size'].get(), '13')

@@ -39,6 +39,11 @@ Other venvs: `.venv-inpaint` (STTN GPU inpaint), `.venv-web` (Flask).
 | Area | Modules |
 |---|---|
 | Dub pipeline | `pipeline` `download` `downloaders/` `asr` `asr_runtime` `codex_translation` `tts` `capcut_tts` `adam_voice` `speech_*` `srt` `subtitles` `subtitle_*` `audio_mix` `render` `inpaint_worker` `wording` |
+| Download sources | `downloaders/`: order `douyin_direct` (Douyin's own page, no login/cookies) → savetik → vienphanmem → socialvideo → anysave; `provider_health` remembers paused sources ("Chờ nguồn tải" + campaign auto-resume) |
+| Caption cover | `caption_cover` finds the video's own burned-in captions per cue: `_mask` = light strokes darker on BOTH sides within `STROKE_REACH` (not step edges of tables/plates), still for `PAIR_S`, learned caption rows; a line's region keeps only rows on those rows (+ dense runs within `ROW_TOLERANCE` or a whole second line); wide `subtitle_band` band only as fallback |
+| Burned caption box | `caption_layout` (owner 22/10): one rectangle per line, square corners, text centred (`\an5\pos`), box always centred horizontally (widens evenly to reach the own caption), vertically max(text, own caption) at the caption rows, `PADDING` 1/6 line, Vietnamese size per video = own caption height (`matched_size`, >= chosen, <= 1.5x); `render._caption_boxes` writes one `captions.ass`; `subtitle_style.SUBTITLE_BOXES` colours; option absent = none |
+| Sleep-safe local limits | `common.AwakeTime` (poll gap > `SLEEP_GAP_S` 60 s = sleep): render ffmpeg limit, inpaint stall, voice tempo; `render._work_directory` cleanup never hides the render error; `render.clear_leftover_work` before a re-render |
+| Translation line repair | `codex_translation._rejected_ids` + `_repair_lines`: ≤ `REPAIR_LIMIT` unusable lines → one follow-up (`REPAIR_NOTE`); batch record `repair: {ids, metadata}`; review note `REPAIR_REASON`. `_usable_notes`: invalid review notes in a fresh answer are left out (`notes_dropped`), saved results stay strict |
 | Campaigns (batch) | `campaign*` |
 | Voice/content learning | `voice_learning*` `voice_profiles` `video_content*` `learning_download` |
 | Drive | `google_drive*` `drive_*` |
@@ -47,6 +52,7 @@ Other venvs: `.venv-inpaint` (STTN GPU inpaint), `.venv-web` (Flask).
 | AI planning | `page_ai*` `page_content_*` `codex_chat` |
 | Channel autopilot | `channel_autopilot*` — Douyin channel → campaigns → Page AI sources (review mode only); see `SPEC-channel-autopilot.md` |
 | Fixed posting times | `page_ai.fixed_slots` + panel fields: owner picks first time/gap, AI writes captions only (validated) |
+| Auto mode from campaigns | `page_ai.auto_slots` + `PageAIController.auto_tick`; policy key `auto_campaign` (owner opt-in per Page: caption + auto-approve + auto-post) |
 | Caption review | `plan_review_ui` + review API in `page_content_plan` (`reviews` table, revision plans) |
 | Meta Graph API (stalled) | `meta_page_api` |
 | Runtime | `app` `restart` `page_command_bridge` `web_*` `common` `models` `ai_models` |
@@ -92,7 +98,10 @@ Other venvs: `.venv-inpaint` (STTN GPU inpaint), `.venv-web` (Flask).
 7. **No secrets handling**: never read cookies, passwords or SMS codes; never copy Chrome profiles;
    Page tokens stay DPAPI-encrypted under `credentials/`.
 8. **AI calls**: Codex CLI on the user's ChatGPT login (no paid API). No automatic model fallback or
-   retry; at most one AI run per Page per day. Whisper: no silent GPU→CPU fallback mid-job.
+   retry; at most one AI run per Page per day. One owner-approved exception (22/10): when at most
+   `codex_translation.REPAIR_LIMIT` (3) lines of a translation batch come back empty/too long/Chinese,
+   one follow-up request for only those lines; still unusable → stop as before. Whisper: no silent
+   GPU→CPU fallback mid-job.
 
 ## Reporting rules
 - Say "offline-tested" vs "live-verified" explicitly. Offline success never proves a real post.
@@ -118,6 +127,9 @@ Other venvs: `.venv-inpaint` (STTN GPU inpaint), `.venv-web` (Flask).
 | README/HANDOFF too large to load | Keep CLAUDE.md as the entry point; archive HANDOFF sections older than 14 days |
 
 ## Ask before doing
+- **Never edit `teodub/` while a job or campaign runs** (check the campaign status / `execution/worker.lock`).
+  Workers import modules lazily from disk, so one process can mix old and new code: on 21/10 an edit made
+  video 7 fail mid-render (`cannot import name 'SUBTITLE_BOXES'`). Ask the owner to press Dừng first, or wait.
 - Anything touching invariants 1–8, the publisher's submit path, or the safe restart flow.
 - Adding a dependency to any venv; changing a persisted state key or status API field.
 - Deleting or rewriting anything under the data root or `work/`.

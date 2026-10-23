@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import time
 
-from teodub.common import check_cancel, hash_file
+from teodub.common import AwakeTime, check_cancel, hash_file
 
 VOICE_SPEEDS = tuple(value/100 for value in range(80, 131, 5))
 
@@ -36,11 +36,11 @@ def apply_tempo(source, target, rate, *, cancel=None):
         with log.open('wb') as errors:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                        stderr=errors, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            deadline = time.monotonic()+120
+            awake = AwakeTime(time.monotonic())
             try:
                 while process.poll() is None:
                     check_cancel(cancel)
-                    if time.monotonic() > deadline:
+                    if awake.update(time.monotonic()) > 120:
                         raise ValueError('Chỉnh nhịp đọc quá thời gian chờ; chưa ghép vào video.')
                     time.sleep(.05)
                 if process.wait() != 0:

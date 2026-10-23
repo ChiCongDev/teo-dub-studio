@@ -24,6 +24,9 @@ MAX_CUES = 2000
 MAX_SOURCE_CHARS = 100000
 BATCH_CUES = 300
 BATCH_CHARS = 12000
+# Owner-approved 22/10: when only this many lines of a batch come back unusable,
+# ask Codex once more for just those lines instead of stopping the video.
+REPAIR_LIMIT = 3
 REQUEST_TIMEOUT = 600
 OUTPUT_LIMIT = 8 * 1024 * 1024
 CJK = re.compile(r'[\u3400-\u9fff\uf900-\ufaff\U00020000-\U000323af]')
@@ -342,6 +345,16 @@ PROMPT_INSTRUCTIONS = {
     PROMPT_VERSION: _PROMPT_V1 + '\n' + _VIETNAMESE_GUIDANCE,
 }
 
+# Added after the versioned instruction, only in the one follow-up request for rejected lines.
+REPAIR_NOTE = '''REPAIR REQUEST: an earlier answer for the requested cue IDs was rejected because the text was
+empty, too long, or still contained Chinese characters. Speech recognition probably misheard these cues.
+Translate each requested cue again from the surrounding transcript: choose the least speculative faithful
+reading, write short natural spoken Vietnamese with no Chinese characters, and flag every requested cue in
+review with a short Vietnamese explanation.
+'''
+REPAIR_REASON = ('Tèo đã hỏi lại Codex riêng câu này một lần vì lần đầu Codex trả câu rỗng, quá dài hoặc còn '
+                 'chữ Trung (có thể do nhận dạng giọng nói nghe nhầm). Hãy nghe kiểm tra.')
+
 
 def _supported_prompt_version(value):
     if not isinstance(value, str) or value not in PROMPT_INSTRUCTIONS:
@@ -349,15 +362,86 @@ def _supported_prompt_version(value):
     return value
 
 
-def _prompt(cues, ids, previous, *, prompt_version=None):
+def _prompt(cues, ids, previous, *, prompt_version=None, note=''):
     version = _supported_prompt_version(PROMPT_VERSION if prompt_version is None else prompt_version)
-    instruction = PROMPT_INSTRUCTIONS[version]
+    instruction = PROMPT_INSTRUCTIONS[version] + ('\n' + note if note else '')
     payload = {
         'entire_chinese_transcript': [{'id': i, 'text': c['text']} for i, c in enumerate(cues, 1)],
         'translate_only_ids': ids,
         'previous_vietnamese_context': previous[-80:],
     }
     return instruction + '\nTRANSCRIPT_DATA_JSON:\n' + json.dumps(payload, ensure_ascii=False)
+
+
+def _unusable(text):
+    return not text or len(text) > 1500 or CJK.search(text) or any(ord(c) < 32 for c in text)
+
+
+def _usable_notes(response, ids):
+    """A fresh answer with only the review notes that fit this batch, and how many were left out.
+
+    Notes are hints for the listener, not the translation: one for a line outside the batch, a second one for the
+    same line or an empty one is left out instead of stopping the video (owner 22/10, video 15); an overlong note is
+    shortened. Translations are still checked strictly, and saved results keep the strict check."""
+    if not isinstance(response, dict) or not isinstance(response.get('review'), list):
+        return response, 0
+    kept, seen = [], set()
+    for note in response['review']:
+        if (isinstance(note, dict) and set(note) == {'id', 'reason'} and type(note['id']) is int
+                and note['id'] in ids and note['id'] not in seen and isinstance(note['reason'], str)
+                and note['reason'].strip()):
+            kept.append({'id': note['id'], 'reason': note['reason'][:2000]})
+            seen.add(note['id'])
+    return dict(response, review=kept), len(response['review'])-len(kept)
+
+
+def _rejected_ids(response, ids):
+    """IDs whose text alone fails the checks of an otherwise valid answer; [] if anything else is wrong."""
+    try:
+        rows = response['translations']
+        bad = [row['id'] for row in rows if isinstance(row['text'], str) and _unusable(normalized_text(row['text']))]
+        if bad:
+            _validate_response(dict(response, translations=[dict(row, text='-') if row['id'] in bad else row
+                                                            for row in rows]), ids)
+        return bad
+    except (TypeError, KeyError, ValueError, AttributeError):
+        return []
+
+
+def _valid_repair(repair, ids):
+    return (isinstance(repair, dict) and set(repair) == {'ids', 'metadata'} and isinstance(repair['metadata'], dict)
+            and isinstance(repair['ids'], list) and 0 < len(repair['ids']) <= len(ids)
+            and all(type(i) is int and i in ids for i in repair['ids']))
+
+
+def _repair_lines(cues, ids, response, bad, previous, *, prompt_version, cancel=None, progress=None, options=None):
+    """The one follow-up request for lines Codex left empty, too long or in Chinese.
+
+    Usually speech recognition misheard the line (21/10: video 8 line 556, video 11 line 457).
+    The rest of the batch is kept. A follow-up that is still unusable stops the job as before.
+    """
+    _check(cancel)
+    if progress:
+        which = 'câu này' if len(bad) == 1 else 'các câu này'
+        progress(f'Codex trả câu {", ".join(map(str, bad))} rỗng, quá dài hoặc còn chữ Trung; '
+                 f'hỏi lại Codex một lần riêng {which}…')
+    kept = {row['id']: row['text'] for row in response['translations'] if row['id'] not in bad}
+    context = [*previous, *({'id': i, 'text': normalized_text(kept[i])} for i in ids if i in kept and i < bad[0])]
+    answer, metadata = _invoke_codex(_prompt(cues, bad, context, prompt_version=prompt_version, note=REPAIR_NOTE),
+                                     SCHEMA, cancel=cancel, progress=progress, **(options or {}))
+    _check(cancel)
+    answer, _dropped = _usable_notes(answer, bad)
+    try:
+        fixed, notes = _validate_response(answer, bad)
+    except ValueError as exc:
+        raise ValueError(f'{exc} Đã hỏi lại Codex một lần nhưng vẫn chưa được.') from None
+    texts = {row['id']: row['text'] for row in fixed}
+    reasons = {note['id']: note['reason'].strip() for note in notes}
+    review = [note for note in response['review'] if note['id'] not in texts]
+    review += [{'id': i, 'reason': ' '.join(filter(None, (REPAIR_REASON, reasons.get(i))))[:2000]} for i in bad]
+    review.sort(key=lambda note: note['id'])
+    translations = [{'id': row['id'], 'text': texts.get(row['id'], row['text'])} for row in response['translations']]
+    return {'translations': translations, 'review': review}, {'ids': bad, 'metadata': metadata}
 
 
 def _validate_response(response, ids):
@@ -372,7 +456,7 @@ def _validate_response(response, ids):
                 type(row['id']) is not int or row['id'] != expected or not isinstance(row['text'], str)):
             raise ValueError('Codex trả câu sai thứ tự; đã dừng trước tạo giọng.')
         text = normalized_text(row['text'])
-        if not text or len(text) > 1500 or CJK.search(text) or any(ord(c) < 32 for c in text):
+        if _unusable(text):
             raise ValueError(f'Bản dịch Codex câu {expected} rỗng, quá dài hoặc còn chữ Trung. Chưa tạo giọng.')
         result.append({'id': expected, 'text': text})
     if not isinstance(review, list) or len(review) > len(ids):
@@ -560,7 +644,8 @@ def translate_chinese_srt(chinese_path, output_path, *, cancel=None, progress=No
             if (not isinstance(record, dict) or record.get('source_sha256') != source_hash or
                     record.get('prompt_version') != prompt_version or
                     record.get('selection', legacy_selection) != selection or
-                    not isinstance(record.get('metadata'), dict)):
+                    not isinstance(record.get('metadata'), dict) or
+                    ('repair' in record and not _valid_repair(record['repair'], ids))):
                 raise ValueError('Kết quả dịch lưu tạm không khớp nguồn hoặc quy tắc dịch.')
             _validate_response(record.get('response'), ids)
             cached_records[index] = record
@@ -574,7 +659,7 @@ def translate_chinese_srt(chinese_path, output_path, *, cancel=None, progress=No
         completed = job / f'batch-{index}.json'
         if index in cached_records:
             record = cached_records[index]
-            response, metadata = record['response'], record['metadata']
+            response, metadata, repair = record['response'], record['metadata'], record.get('repair')
         else:
             _start_batch_attempt(job, index, ids, source_hash, prompt_version=prompt_version,
                                  resume_incomplete=resume_incomplete, cancel=cancel)
@@ -586,13 +671,25 @@ def translate_chinese_srt(chinese_path, output_path, *, cancel=None, progress=No
             response, metadata = _invoke_codex(_prompt(cues, ids, rows, prompt_version=prompt_version),
                                                SCHEMA, cancel=cancel, progress=progress, **options)
             _check(cancel)
+            response, dropped = _usable_notes(response, ids)
+            if dropped and progress:
+                progress(f'Bỏ {dropped} ghi chú không khớp câu của Codex (chỉ là ghi chú nghe duyệt); bản dịch vẫn dùng.')
+            repair = None
+            bad = _rejected_ids(response, ids)
+            if 0 < len(bad) <= REPAIR_LIMIT:
+                response, repair = _repair_lines(cues, ids, response, bad, rows, prompt_version=prompt_version,
+                                                 cancel=cancel, progress=progress, options=options)
             _validate_response(response, ids)
             _json(completed, {'source_sha256': source_hash, 'prompt_version': prompt_version,
-                              'response': response, 'metadata': metadata, **selected})
+                              'response': response, 'metadata': metadata,
+                              **({'repair': repair} if repair else {}),
+                              **({'notes_dropped': dropped} if dropped else {}), **selected})
         translated, warnings = _validate_response(response, ids)
         rows.extend(translated)
         review.extend(warnings)
         calls.append(metadata)
+        if repair:
+            calls.append(repair['metadata'])
     _check(cancel)
     if _hash(source) != source_hash:
         raise ValueError('Phụ đề Trung đã thay đổi trong lúc dịch. Không tạo giọng từ nguồn chưa khớp.')

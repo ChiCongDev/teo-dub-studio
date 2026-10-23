@@ -1,4 +1,5 @@
 """Synthetic, local FFmpeg integration tests; no accounts or user footage."""
+import itertools
 import json
 from pathlib import Path
 import subprocess
@@ -152,6 +153,63 @@ class RenderTests(unittest.TestCase):
                 frame = next(video.decode(video=0)).to_ndarray(format='rgb24')
             areas.append(int(np.sum(np.all(frame > 210, axis=2))))
         self.assertGreater(areas[1], areas[0]*1.5)
+
+    def own_caption_source(self):
+        """A moving picture with a long white (Chinese) caption with a black edge burned in for 3.4 seconds."""
+        own = self.directory/'own captions.srt'
+        own.write_text('1\n00:00:00,000 --> 00:00:03,400\n这里的东西真的很便宜啊我的朋友们\n\n', encoding='utf-8')
+        style = ('FontName=Microsoft YaHei,FontSize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,'
+                 'BorderStyle=1,Outline=1.5,Shadow=0,Bold=-1,Alignment=2,MarginV=14')
+        def burn(target, background):
+            escaped = str(own).replace('\\', '/').replace(':', '\\:')
+            subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-loglevel', 'error', '-n', '-f', 'lavfi',
+                            '-i', background, '-vf', f"subtitles=filename='{escaped}':original_size=640x360:force_style='{style}'",
+                            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(target)], check=True, capture_output=True, timeout=60)
+        source, truth = self.directory/'own caption.mp4', self.directory/'own caption alone.mp4'
+        burn(source, 'testsrc2=size=640x360:rate=25:duration=4.5')
+        burn(truth, 'color=c=black:s=640x360:r=25:d=4.5')
+        return source, truth
+
+    @staticmethod
+    def frames_of(path):
+        import av
+        with av.open(str(path)) as video:
+            return {frame.time: frame.to_ndarray(format='rgb24') for frame in video.decode(video=0)}
+
+    def test_boxed_captions_hide_the_videos_own_caption_snugly_and_only_while_spoken(self):
+        source, truth = self.own_caption_source()
+        cues = [dict(start_ms=0, end_ms=700, text='Rẻ thật.'), dict(start_ms=1100, end_ms=1800, text='Mua đi.'),
+                dict(start_ms=2200, end_ms=2900, text='Ngon lắm.')]
+        paths = render.render_video(source, cues, self.clips, self.directory/'boxed', speed=1.,
+                                    burn_subtitles=True, subtitle_box='white')
+        plan = json.loads(Path(paths['plan']).read_text(encoding='utf-8'))
+        self.assertEqual(plan['subtitle_style'], {'color': 'white', 'weight': 'bold', 'size': 13, 'box': 'white'})
+        self.assertEqual(plan['caption_cover']['seen'], 3)
+        output, original = self.frames_of(paths['video']), self.frames_of(source)
+        def at(frames, seconds):
+            return frames[min(frames, key=lambda moment: abs(moment-seconds))]
+        rows, columns = np.nonzero(at(self.frames_of(truth), .35).min(axis=2) > 150)
+        top, bottom, left, right = rows.min(), rows.max()+1, columns.min(), columns.max()+1
+        middle = (left+right)//2
+        def edge_pixels(frame):  # The black edge of the own caption's two ends, beside the short Vietnamese line.
+            ends = np.concatenate([frame[top:bottom, left:middle-90], frame[top:bottom, middle+90:right]], axis=1)
+            return int(np.sum(ends.max(axis=2) < 50))
+        self.assertGreater(edge_pixels(at(original, .35)), 50)
+        self.assertLess(edge_pixels(at(output, .35)), 3)       # Hidden while the Vietnamese line is shown...
+        self.assertGreater(edge_pixels(at(output, 3.2)), 50)   # ...and untouched when nobody speaks.
+        sides = np.concatenate([at(output, .35)[top:bottom, :16], at(output, .35)[top:bottom, -16:]], axis=1)
+        self.assertLess(float(np.mean(sides.min(axis=2) > 235)), .05)  # Snug: no band across the whole picture.
+
+    def test_a_picture_that_cannot_be_analysed_falls_back_to_the_wide_band(self):
+        source, _truth = self.own_caption_source()
+        with patch('teodub.caption_cover.cover_boxes', side_effect=RuntimeError('decoder trouble')):
+            paths = render.render_video(source, [dict(start_ms=0, end_ms=700, text='Rẻ thật.')], self.clips[:1],
+                                        self.directory/'fallback', speed=1., burn_subtitles=True, subtitle_box='white')
+        plan = json.loads(Path(paths['plan']).read_text(encoding='utf-8'))
+        self.assertEqual(plan['caption_cover']['fallback'], 'wide_band')
+        frame = self.frames_of(paths['video'])
+        first = frame[min(frame)]
+        self.assertGreater(float(np.mean(first[320:345, 40:600].min(axis=2) > 235)), .6)  # The wide band is there.
 
     def test_start_positions_keep_a_later_original_cue(self):
         import av
@@ -324,8 +382,10 @@ class SubprocessTests(unittest.TestCase):
                     raise subprocess.TimeoutExpired('ffmpeg.exe', timeout)
                 return self.returncode
         process = Process()
+        # Awake time grows in steady 30 s polls (a single long jump is sleep, see test_sleep_safe).
         with patch.object(render.subprocess, 'Popen', return_value=process):
-            with patch.object(render.time, 'monotonic', side_effect=[0, 301]):
+            with patch.object(render.time, 'monotonic', side_effect=itertools.count(0, 30)), \
+                    patch.object(render.time, 'sleep'):
                 with self.assertRaisesRegex(ValueError, 'quá thời gian chờ'):
                     render._run_ffmpeg(['ffmpeg.exe', 'a.mp4'], self.directory, 1, None, None)
         self.assertTrue(process.terminated)

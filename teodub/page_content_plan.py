@@ -667,9 +667,18 @@ class ContentPlanStore:
         return (review['body'], review['due_at']) if review else (item['body'], item['due_at'])
 
     def reserved_video_keys(self, account_id, page_key):
-        """Video keys held by plans; an item rejected in review returns to the AI inventory."""
+        """Video keys held by plans.
+
+        An item rejected in review, or whose schedule was removed from the list while untouched (its source slot was
+        released), returns to the AI inventory. A removed schedule that may have been sent keeps its video reserved.
+        """
+        rows = {row['id']: row for row in PageScheduleStore(self.data_dir).list(account_id, page_key)}
+
+        def released(item):
+            row = rows.get(item.get('schedule_id'))
+            return bool(row) and row['state'] == 'removed' and str(row['source_key']).startswith('removed:')
         return {item['video_key'] for plan in self.plans(account_id, page_key) for item in plan['items']
-                if item['video_key'] and (item.get('review') or {}).get('decision') != 'rejected'}
+                if item['video_key'] and (item.get('review') or {}).get('decision') != 'rejected' and not released(item)}
 
     def review_queue(self, pages=None):
         if pages is None:
@@ -702,6 +711,24 @@ class ContentPlanStore:
                         decision=review.get('decision', ''), message=review.get('message', ''),
                         expired=due <= clock+60, goal=item['goal']))
         return sorted(rows, key=lambda row: (row['due_at'], row['page_name'], row['item_id']))
+
+    def approved_ai_items(self, limit=100):
+        """Recently approved AI-written posts of every Page, newest first, with their live schedule state."""
+        rows = []
+        for page in self.activity.accounts.load()['pages']:
+            try:
+                plans = self.plans(page['account_id'], page['id'])
+            except ValueError:
+                continue
+            for plan in plans:
+                if plan.get('source_kind') != 'scheduled_ai' or not plan['approved_at']:
+                    continue
+                for item in plan['items']:
+                    rows.append(dict(page_name=plan['target']['name'], plan_id=plan['plan_id'], item_id=item['id'],
+                        schedule_id=item['schedule_id'], kind=item['kind'], due_at=item['due_at'], body=item['body'],
+                        state=item['state'], message=item['message'], account_id=page['account_id'], page_key=page['id'],
+                        video_label=(item.get('source') or {}).get('label', '')))
+        return sorted(rows, key=lambda row: row['due_at'], reverse=True)[:limit]
 
     def edit_item(self, record_id, item_id, *, body, due_at):
         plan, items = self._reviewable(record_id)

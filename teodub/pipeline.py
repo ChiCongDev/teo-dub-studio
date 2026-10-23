@@ -450,7 +450,7 @@ class Job:
         speech_plan = self.state.get('speech_plan')
         if speech_plan and hash_file(speech_plan['path']) != speech_plan['sha256']:
             raise ValueError('Kế hoạch lời đọc đã thay đổi trong lúc tạo giọng; chưa ghép thành phẩm.')
-        from teodub.render import render_video
+        from teodub.render import clear_leftover_work, render_video
         cleaned = None
         if clean_options['enabled']:
             self.emit('subtitle_clean', 'Đang xóa vùng chữ gốc bằng GPU; Sub Việt sẽ được chèn sau.', 75)
@@ -461,6 +461,9 @@ class Job:
             raise ValueError('Chọn thư mục thành phẩm đầy đủ.')
         name = self.state.get('output_name') or self.config.get('campaign_basename') or (_safe_title(Path(source['path']).stem)+'_'+datetime.now().strftime('%d-%m-%Y')+'_'+self.directory.name[:8])
         name = _bounded_output_name(output_root, name, self.directory)
+        if self.state.get('render_directory'):
+            # A failed render of this job may have left its temporary folder (21/10: a locked file after sleep).
+            clear_leftover_work(self.state['render_directory'])
         destination = output_root/name
         attempt = 1
         while destination.exists():

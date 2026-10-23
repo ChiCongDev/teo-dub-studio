@@ -84,6 +84,14 @@ class PageAIUITests(unittest.TestCase):
         self.assertEqual(self.panel.sources.item(self.campaign,'values'),('Câu cá','0','0'))
         self.invoke.assert_not_called()
 
+    def test_open_panel_refreshes_the_source_counts_by_itself_when_a_video_finishes(self):
+        self.panel.set_sources([self.campaign])
+        self.assertEqual(self.panel.sources.item(self.campaign,'values'),('Câu cá','1','1'))
+        self.video.unlink()
+        for _ in range(5):
+            self.panel.poll()
+        self.assertEqual(self.panel.sources.item(self.campaign,'values'),('Câu cá','0','0'))
+
     def test_strategy_prerequisite_is_page_scoped_and_opens_manager_navigation(self):
         self.assertIn('Phát triển page câu cá',self.panel.strategy_status.get())
         self.panel.strategy_button.invoke()

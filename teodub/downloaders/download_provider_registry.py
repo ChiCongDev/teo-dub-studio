@@ -1,4 +1,4 @@
-"""Public download services, in one fixed failover order."""
+"""Download sources, in one fixed failover order: Douyin's own page first, then the public download sites."""
 from dataclasses import dataclass
 
 
@@ -10,6 +10,7 @@ class Provider:
 
 
 PROVIDERS = (
+    Provider('douyin', 'Douyin trực tiếp', 'https://www.douyin.com/'),
     Provider('savetik', 'SaveTik', 'https://savetik.io/en/douyin-video-downloader'),
     Provider('vienphanmem', 'Viện Phần Mềm', 'https://vienphanmem.com/snaptik/'),
     Provider('socialvideo', 'Social Video Download', 'https://socialvideodownload.com/douyin'),

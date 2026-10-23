@@ -271,6 +271,21 @@ class BrowserDomTests(unittest.TestCase):
         self.assertEqual(self.prepare(post)['state'], 'review')
         self.assertIsNone(self.composer_tab().evaluate('window.wrong'))
 
+    def test_page_name_saved_in_other_letter_case_than_facebook_shows_is_still_found(self):
+        self.html = self.html.replace('<h1>Page Demo</h1>', '<h1>PAGE demo</h1>')
+        post = self.draft()
+        self.assertEqual(self.prepare(post)['state'], 'review')
+        self.assertEqual(self.publish(post)['state'], 'published')
+        self.assertEqual(self.composer_tab().evaluate('window.posts'), 1)
+
+    def test_a_different_page_name_is_still_refused_whatever_the_letter_case(self):
+        from teodub.facebook_web_post import _page_main
+        self.html = self.html.replace('<h1>Page Demo</h1>', '<h1>Page Demo Two</h1>')
+        tab = self.context.new_page()
+        tab.goto(self.target['url'])
+        with self.assertRaisesRegex(ValueError, 'tên Page'):
+            _page_main(tab, self.target)
+
     def test_hidden_duplicate_heading_is_not_another_page(self):
         self.html += '<main role="main" hidden><h1>Page Demo</h1><button>Create post</button></main>'
         self.assertEqual(self.prepare(self.draft())['state'], 'review')

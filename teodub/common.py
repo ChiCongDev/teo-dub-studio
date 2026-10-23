@@ -23,6 +23,26 @@ def check_cancel(cancel=None):
         raise Cancelled('Đã dừng. Các bước đã hoàn tất được giữ để tiếp tục.')
 
 
+SLEEP_GAP_S = 60
+
+
+class AwakeTime:
+    """Seconds the computer was awake between frequent polls of a local process.
+
+    time.monotonic() keeps counting while Windows sleeps, so a plain deadline fires
+    the moment the computer wakes (21/10: a render stopped 12 s before the end).
+    A gap longer than SLEEP_GAP_S between two polls is sleep, not work.
+    """
+    def __init__(self, now):
+        self.last, self.seconds = now, 0.
+
+    def update(self, now):
+        step, self.last = now-self.last, now
+        if 0 <= step <= SLEEP_GAP_S:
+            self.seconds += step
+        return self.seconds
+
+
 def hash_file(path):
     result = hashlib.sha256()
     with Path(path).open('rb') as file:

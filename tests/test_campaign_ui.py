@@ -150,6 +150,49 @@ class CampaignUITests(unittest.TestCase):
             self.assertTrue(self.studio.campaign_busy)
             self.assertEqual(str(self.studio.start_button['state']), 'disabled')
 
+    def waiting_for_source(self, resume_after, status='paused', **extra):
+        self.tab.create()
+        path = self.tab.directory/'campaign.json'
+        manifest = json.loads(path.read_text(encoding='utf-8'))
+        manifest.update(status=status, resume_after=resume_after, message='Chờ nguồn tải', **extra)
+        path.write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
+
+    def test_a_wait_during_a_retry_pass_restarts_as_a_retry_pass(self):
+        self.waiting_for_source(1.0, resume_retry_failed=True)
+        worker = Mock()
+        worker.poll.return_value = None
+        with patch('teodub.campaign_ui.subprocess.Popen', return_value=worker) as spawn:
+            self.tab.poll()
+            spawn.assert_called_once()
+            self.assertIn('--retry-failed', spawn.call_args.args[0])
+
+    def test_a_campaign_waiting_for_a_download_source_restarts_itself_when_the_time_comes(self):
+        self.waiting_for_source(1.0)
+        worker = Mock()
+        worker.poll.return_value = None
+        with patch('teodub.campaign_ui.subprocess.Popen', return_value=worker) as spawn:
+            self.tab.poll()
+            self.tab.poll()
+            spawn.assert_called_once()
+            self.assertIn('--campaign-worker', spawn.call_args.args[0])
+            self.assertNotIn('--retry-failed', spawn.call_args.args[0])
+
+    def test_it_does_not_restart_before_the_time_nor_for_other_pauses_nor_while_busy(self):
+        import time
+        self.waiting_for_source(time.time()+3600)
+        with patch('teodub.campaign_ui.subprocess.Popen') as spawn:
+            self.tab.poll()
+            spawn.assert_not_called()
+        self.waiting_for_source(1.0, status='running')
+        with patch('teodub.campaign_ui.subprocess.Popen') as spawn:
+            self.tab.poll()
+            spawn.assert_not_called()
+        self.waiting_for_source(1.0)
+        self.studio.process = Mock()
+        with patch('teodub.campaign_ui.subprocess.Popen') as spawn:
+            self.tab.poll()
+            spawn.assert_not_called()
+
     def test_single_job_blocks_campaign(self):
         self.tab.create()
         self.studio.process = Mock()

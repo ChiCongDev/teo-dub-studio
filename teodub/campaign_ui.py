@@ -5,10 +5,11 @@ from pathlib import Path
 import queue
 import subprocess
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-from teodub.campaign import (create_campaign, is_running,
+from teodub.campaign import (auto_resume_due, create_campaign, is_running,
                             read_json, totals)
 from teodub.campaign_tracking import tracking_row, campaign_notice, processing_time
 from teodub.campaign_posting import campaign_posting_statuses
@@ -57,6 +58,7 @@ class CampaignTab(ttk.Frame):
         self.creation_summary = tk.StringVar(self)
         self.retry_summary = tk.StringVar(self)
         self.preview_retry_failed = False
+        self.auto_resume_tried = 0.0
         self.saved_voice = tk.StringVar(self)
         self.saved = tk.StringVar(self)
         self.progress = tk.DoubleVar(self, value=0)
@@ -881,11 +883,23 @@ class CampaignTab(ttk.Frame):
             self.studio.refresh_buttons()
         if self.directory and not self.scanning:
             try:
-                self.display(read_json(self.directory/'campaign.json'))
+                manifest = read_json(self.directory/'campaign.json')
+                self.display(manifest)
+                self.resume_when_source_returns(manifest, busy)
             except (OSError, ValueError) as exc:
                 self.status.set('Chưa đọc được tiến độ: '+str(exc))
         self.refresh_buttons()
         self.timer = self.after(1000, self.poll)
+
+    def resume_when_source_returns(self, manifest, busy):
+        """Only a campaign that paused itself because no download service worked, at most once a minute."""
+        now = time.time()
+        if busy or not auto_resume_due(manifest, now) or now-self.auto_resume_tried < 60:
+            return
+        self.auto_resume_tried = now
+        self.start(retry=manifest.get('resume_retry_failed') is True)
+        if self.process is not None:
+            self.status.set('Đã đến giờ thử lại nguồn tải; Tèo tự chạy tiếp chiến dịch.')
 
     def displayed_records(self):
         if self.directory:

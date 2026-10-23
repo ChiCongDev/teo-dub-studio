@@ -51,13 +51,16 @@ def describe_pipeline_settings(config):
     from teodub.voice_profiles import describe_voice_settings
     from teodub.ai_models import validate_models, ASR_MODELS, TRANSLATION_MODELS, REASONING_LEVELS
     from teodub.audio_mix import validate_audio_mix
-    from teodub.subtitle_style import validate_subtitle_style, SUBTITLE_COLORS, SUBTITLE_WEIGHTS
+    from teodub.subtitle_style import validate_subtitle_style, SUBTITLE_BOXES, SUBTITLE_COLORS, SUBTITLE_WEIGHTS
     models = validate_models(config)
     mix = validate_audio_mix(config)
     subtitles = validate_subtitle_style(config)
     def percent(value):
         return f'{value*100:g}'.replace('.', ',')+'%'
-    subtitle_text = ('Ghi Sub vào hình · '+SUBTITLE_COLORS[subtitles['subtitle_color']]['label']+
+    box = subtitles.get('subtitle_box')
+    # With a box, the box decides the text colour, so its label replaces the colour.
+    colour = SUBTITLE_BOXES[box]['label'] if box else SUBTITLE_COLORS[subtitles['subtitle_color']]['label']
+    subtitle_text = ('Ghi Sub vào hình · '+colour+
                      ' · '+SUBTITLE_WEIGHTS[subtitles['subtitle_weight']]['label']+
                      f' · cỡ {subtitles["subtitle_size"]}' if subtitles['burn_subtitles'] else 'Sub bật/tắt')
     speed = f'{float(config.get("speed", .9)):g}'.replace('.', ',')+'×'
