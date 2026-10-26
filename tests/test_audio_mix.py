@@ -116,7 +116,12 @@ class AudioMixRenderTests(unittest.TestCase):
                 paths = render.render_video(self.source, cues, clips, self.directory/f'noise-{gain}',
                                             speed=.9, original_gain=.8, voice_gain=gain)
                 quality = json.loads(Path(paths['quality']).read_text(encoding='utf-8'))
-                self.assertGreater(quality['duration_s'], 2.5)
+                plan = json.loads(Path(paths['plan']).read_text(encoding='utf-8'))
+                # The picture keeps its speed; the voice runs on over the held last frame, the original ducked under it.
+                self.assertEqual(plan['effective_picture_speed'], .9)
+                self.assertGreater(quality['duration_s'], 1.5/.9+.3)
+                self.assertGreater(plan['last_frame_held_s'], .3)
+                self.assertEqual(plan['ducking']['spans'], 1)
                 self.assertEqual(len(quality['mix_checks']), 3)
                 self.assertTrue(all(check['correlation'] > .99 for check in quality['mix_checks']))
 

@@ -19,7 +19,11 @@ from teodub.srt import stamp, write_srt
 from teodub.subtitles import normalized_text, read_srt, read_vietnamese_srt
 
 LEGACY_PROMPT_VERSION = 'zh-vi-context-v1'
-PROMPT_VERSION = 'zh-vi-context-v2'
+STYLE_PROMPT_VERSION = 'zh-vi-context-v2'
+# Owner-approved 23/10: each cue carries the seconds it may be spoken in, and lines are kept short enough for them.
+PROMPT_VERSION = 'zh-vi-context-v3'
+TIMED_PROMPT_VERSIONS = {PROMPT_VERSION}
+SPOKEN_TAIL_MS = 1000      # A line may also be read in the pause after it, up to this long.
 MAX_CUES = 2000
 MAX_SOURCE_CHARS = 100000
 BATCH_CUES = 300
@@ -339,10 +343,27 @@ Chinese: 这个能防水，不代表能泡在水里。
 Vietnamese: Sản phẩm này chống nước, nhưng không có nghĩa là có thể ngâm trong nước.
 '''
 
+_DUBBING_LENGTH = '''DUBBING LENGTH:
+Each transcript cue has "seconds": the time its Vietnamese line can be spoken in, from the moment the speaker
+starts until the next cue begins (at most one second after the speaker stops). The dub is read at about
+4 Vietnamese syllables per second, so aim for at most about 4 syllables (written words) per second: a 2-second
+cue gets about 8 syllables. When the full wording does not fit, keep what the speaker means and cut filler,
+repetition and words that add nothing; prefer short everyday words, and leave out subjects and pronouns that
+Vietnamese does not need. Never drop negation, numbers, names, units, conditions, uncertainty or the point of a
+joke to save length: a line may run longer when its meaning needs it. Do not pad a short cue.
+
+Illustrative examples of these rules, not additional cues to translate or output:
+Chinese (1.5 seconds): 我们现在就去看一看吧
+Vietnamese: Giờ đi xem thử nhé.
+Chinese (2 seconds): 这个东西其实呢说实话真的是非常非常便宜的
+Vietnamese: Nói thật, món này rẻ lắm.
+'''
+
 # Never edit an existing version: saved jobs and caches remain bound to it.
 PROMPT_INSTRUCTIONS = {
     LEGACY_PROMPT_VERSION: _PROMPT_V1,
-    PROMPT_VERSION: _PROMPT_V1 + '\n' + _VIETNAMESE_GUIDANCE,
+    STYLE_PROMPT_VERSION: _PROMPT_V1 + '\n' + _VIETNAMESE_GUIDANCE,
+    PROMPT_VERSION: _PROMPT_V1 + '\n' + _VIETNAMESE_GUIDANCE + '\n' + _DUBBING_LENGTH,
 }
 
 # Added after the versioned instruction, only in the one follow-up request for rejected lines.
@@ -362,11 +383,25 @@ def _supported_prompt_version(value):
     return value
 
 
+def _spoken_seconds(cues):
+    """Per cue, the time its line can be spoken in: until the next cue starts, at most SPOKEN_TAIL_MS after it ends."""
+    seconds = []
+    for index, cue in enumerate(cues):
+        until = cue['end_ms']+SPOKEN_TAIL_MS
+        if index+1 < len(cues):
+            until = min(until, cues[index+1]['start_ms'])
+        seconds.append(max(.1, round((until-cue['start_ms'])/1000, 1)))
+    return seconds
+
+
 def _prompt(cues, ids, previous, *, prompt_version=None, note=''):
     version = _supported_prompt_version(PROMPT_VERSION if prompt_version is None else prompt_version)
     instruction = PROMPT_INSTRUCTIONS[version] + ('\n' + note if note else '')
+    transcript = [{'id': i, 'text': c['text']} for i, c in enumerate(cues, 1)]
+    if version in TIMED_PROMPT_VERSIONS:
+        transcript = [dict(row, seconds=seconds) for row, seconds in zip(transcript, _spoken_seconds(cues))]
     payload = {
-        'entire_chinese_transcript': [{'id': i, 'text': c['text']} for i, c in enumerate(cues, 1)],
+        'entire_chinese_transcript': transcript,
         'translate_only_ids': ids,
         'previous_vietnamese_context': previous[-80:],
     }

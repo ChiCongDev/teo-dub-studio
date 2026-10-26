@@ -54,6 +54,14 @@ class WordingPipelineTests(unittest.TestCase):
         self.assertEqual(Path(f.notes.call_args.args[0]), raw)
         self.assertEqual(Path(f.notes.call_args.kwargs['wording_path']), adapted)
 
+    def test_recognized_last_line_past_the_picture_still_ends_with_it_after_wording(self):
+        f = self.f
+        f.cues = CUES[:2]+[dict(CUES[2], end_ms=2600)]
+        result = f.run_job()
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(f.render.call_args.args[1], ADAPTED[:2]+[dict(ADAPTED[2], end_ms=2000)])
+        self.assertEqual(read_srt(self.adapted_path())[-1]['end_ms'], 2600)
+
     def test_wording_precedes_phrase_grouping_and_covers_every_raw_cue(self):
         f = self.f
         result = f.run_job(reading_style='conversation')

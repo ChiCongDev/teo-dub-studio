@@ -277,11 +277,15 @@ class PageManager(tk.Toplevel):
 
     def open_video_sources(self):
         notebook = self.owner.master
-        campaign = next((child for child in notebook.winfo_children() if type(child).__name__ == 'CampaignTab'), None)
+        campaign = next((child for child in notebook.winfo_children()
+                         if type(child).__name__ in ('CampaignTab', 'CampaignArea')), None)
         if campaign is None:
             self.status.set('Mở tab Chiến dịch hàng loạt của Tèo để thêm link Douyin, rồi quay lại đây chọn nguồn.')
             return
-        notebook.select(campaign)
+        if hasattr(campaign, 'show_workspace'):
+            campaign.show_workspace()  # The '＋ Thêm link' sub-tab.
+        else:
+            notebook.select(campaign)
         self.status.set('Đã mở Chiến dịch hàng loạt. Thêm link và tạo video, rồi mở lại Page này để chọn nguồn.')
         self.withdraw()
         notebook.winfo_toplevel().lift()

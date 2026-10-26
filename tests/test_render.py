@@ -16,15 +16,15 @@ from teodub.common import Cancelled, hash_file
 from teodub import render
 
 
-def source_video(path, audio=True):
+def source_video(path, audio=True, duration=1.5):
     command = [imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-loglevel', 'error', '-nostdin', '-n',
-               '-f', 'lavfi', '-i', 'testsrc2=size=96x64:rate=12:duration=1.5']
+               '-f', 'lavfi', '-i', f'testsrc2=size=96x64:rate=12:duration={duration}']
     if audio:
-        command += ['-f', 'lavfi', '-i', 'sine=frequency=170:sample_rate=48000:duration=1.5']
+        command += ['-f', 'lavfi', '-i', f'sine=frequency=170:sample_rate=48000:duration={duration}']
     command += ['-c:v', 'libx264', '-threads', '2', '-pix_fmt', 'yuv420p']
     if audio:
         command += ['-c:a', 'aac']
-    command += ['-t', '1.5', str(path)]
+    command += ['-t', str(duration), str(path)]
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                    stdin=subprocess.DEVNULL, timeout=30,
                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -37,6 +37,20 @@ def tone_clip(path, index, duration=.72, rate=22050):
     signal = .23*np.sin(2*np.pi*((470+index*170)*t+90*t*t))
     signal += .08*np.sin(2*np.pi*(1190+index*61)*t)
     data = np.rint(32767*signal*envelope).astype('<i2')
+    with wave.open(str(path), 'wb') as output:
+        output.setparams((1, 2, rate, 0, 'NONE', 'not compressed'))
+        output.writeframes(data.tobytes())
+    return dict(id=index, path=str(path), sha256=hash_file(path),
+                duration_s=len(data)/rate, sample_rate=rate)
+
+
+def syllable_clip(path, index, duration, rate=48000):
+    """About four syllables a second on a 140 Hz voice, fading at the end like a read line."""
+    t = np.arange(round(duration*rate), dtype=np.float64)/rate
+    phase = 2*np.pi*np.cumsum(140+20*np.sin(2*np.pi*1.3*t))/rate
+    voice = sum(np.sin(k*phase)/k for k in range(1, 12))
+    signal = .2*voice*np.clip(np.sin(2*np.pi*4*t), 0, None)**.5*np.minimum(1, (duration-t)/.15)
+    data = np.rint(32767*np.clip(signal, -1, 1)).astype('<i2')
     with wave.open(str(path), 'wb') as output:
         output.setparams((1, 2, rate, 0, 'NONE', 'not compressed'))
         output.writeframes(data.tobytes())
@@ -74,7 +88,7 @@ class RenderTests(unittest.TestCase):
         return render.render_video(kwargs.pop('source', self.source), kwargs.pop('cues', self.cues),
                                    kwargs.pop('clips', self.clips), self.output, **kwargs)
 
-    def test_full_audio_is_serialized_and_picture_is_extended(self):
+    def test_full_audio_is_kept_at_the_chosen_picture_speed_with_the_last_frame_held(self):
         before = hash_file(self.source)
         progress = []
         paths = self.perform(progress=lambda message, percent=None: progress.append(percent))
@@ -85,16 +99,22 @@ class RenderTests(unittest.TestCase):
                          {f'{self.output.name}.mp4', f'{self.output.name}.srt', 'render-plan.json', 'quality.json'})
         plan = json.loads(Path(paths['plan']).read_text(encoding='utf-8'))
         quality = json.loads(Path(paths['quality']).read_text(encoding='utf-8'))
-        self.assertLess(plan['effective_picture_speed'], .9)
+        # Three 0.72 s lines in 1.5 s of picture: read faster (at most 1.25x), never a slowed picture.
+        self.assertEqual(plan['effective_picture_speed'], .9)
+        self.assertGreater(plan['duration_s'], 1.5/.9)
+        self.assertAlmostEqual(plan['last_frame_held_s'], plan['duration_s']-1.5/.9, places=3)
+        self.assertEqual(plan['line_fit'], dict(max_tempo=1.25, catch_up_gap_ms=80, faster_lines=3))
         self.assertEqual(plan['original_gain'], .1)
         self.assertEqual(plan['voice_gain'], 1)
+        self.assertIsNone(plan['ducking'])
         self.assertFalse(plan['source_embedded_text_removed'])
         self.assertEqual(plan['subtitle_mode'], 'soft_mov_text')
         for index, item in enumerate(plan['clips']):
-            self.assertAlmostEqual(item['frames']/render.RATE, self.clips[index]['duration_s'], places=4)
+            self.assertEqual(item['tempo'], 1.25)
+            self.assertAlmostEqual(item['frames']/render.RATE, self.clips[index]['duration_s']/1.25, delta=.01)
             self.assertEqual(item['end_frame']-item['start_frame'], item['frames'])
             if index:
-                self.assertGreaterEqual(item['start_frame']-plan['clips'][index-1]['end_frame'], 4800)
+                self.assertGreaterEqual(item['start_frame']-plan['clips'][index-1]['end_frame'], 3840)
         self.assertGreaterEqual(plan['duration_s'], plan['clips'][-1]['end_frame']/render.RATE+.2)
         self.assertTrue(quality['technical_pass'])
         self.assertEqual(quality['cue_count'], 3)
@@ -128,13 +148,140 @@ class RenderTests(unittest.TestCase):
             self.assertEqual(len(video.streams.subtitles), 0)
         self.assertEqual(Path(paths['subtitles']).read_text(encoding='utf-8').count(' --> '), len(self.cues))
 
-    def test_story_pauses_are_measured_and_do_not_overlap(self):
-        paths = self.perform(gap_ms=300)
+    def test_story_pause_is_kept_on_time_and_shortened_only_to_catch_up(self):
+        cues = [dict(start_ms=0, end_ms=300, text='Xin chào mọi người.'),
+                dict(start_ms=1000, end_ms=1100, text='Chúng ta thử tiếng Việt.'),
+                dict(start_ms=1100, end_ms=1400, text='Đọc đủ cả ba câu nhé.')]
+        paths = self.perform(cues=cues, gap_ms=300, speed=1.)
         plan = json.loads(Path(paths['plan']).read_text(encoding='utf-8'))
         self.assertEqual(plan['gap_ms'], 300)
-        for previous, current in zip(plan['clips'], plan['clips'][1:]):
-            self.assertGreaterEqual(current['start_frame']-previous['end_frame'], round(render.RATE*.3))
+        first, second, third = plan['clips']
+        # Line 1 is 0.72 s for 0.7 s of room (1 s minus the 0.3 s pause): read just a little faster.
+        self.assertAlmostEqual(first['tempo'], .72/.7, delta=.001)
+        self.assertEqual(second['start_frame'], render.RATE)  # On time: at its own moment, the full pause before it.
+        self.assertAlmostEqual((second['start_frame']-first['end_frame'])/render.RATE, .3, delta=.01)
+        self.assertEqual(second['tempo'], 1.25)  # Line 3 should start 0.1 s later: as fast as allowed...
+        self.assertEqual(third['start_frame']-second['end_frame'], round(render.RATE*.08))  # ...then a short pause.
+        self.assertEqual(plan['cues'][1]['start_ms'], 1000)
         self.assertEqual(hash_file(self.source), plan['source_sha256'])
+
+    def test_voice_stays_near_its_picture_through_dense_talk(self):
+        source = self.directory/'dense talk.mp4'
+        source_video(source, duration=6)
+        clips = [tone_clip(self.directory/f'dense {index}.wav', index) for index in range(1, 9)]
+        cues = [dict(start_ms=index*600, end_ms=index*600+500, text=f'Câu số {index+1}.') for index in range(8)]
+        paths = self.perform(source=source, cues=cues, clips=clips, speed=1.)
+        plan = json.loads(Path(paths['plan']).read_text(encoding='utf-8'))
+        late = [item['start_frame']/render.RATE-cue['start_ms']/1000 for item, cue in zip(plan['clips'], cues)]
+        # Placing 0.72 s lines one after another with 0.1 s pauses would put line 8 1.5 s late; now under 0.5 s.
+        self.assertEqual(late[0], 0)
+        self.assertLess(max(late), .5)
+        self.assertTrue(all(value >= 0 for value in late))
+        self.assertEqual(plan['effective_picture_speed'], 1.)
+        self.assertEqual(plan['last_frame_held_s'], 0)
+
+    def test_fit_tempo_reads_faster_only_when_needed_and_at_most_the_cap(self):
+        for frames, room, expected in ((1000, 1000, 1.), (1000, 2000, 1.), (1015, 1000, 1.),
+                                       (1100, 1000, 1.1), (2000, 1000, 1.25), (1000, 0, 1.25), (1000, -500, 1.25)):
+            with self.subTest(frames=frames, room=room):
+                self.assertAlmostEqual(render._fit_tempo(frames, room), expected)
+
+    def test_stretched_line_keeps_its_pitch(self):
+        clip = tone_clip(self.directory/'steady.wav', 1, duration=1.)
+        normalized, stretched = self.directory/'steady 48k.wav', self.directory/'steady faster.wav'
+        frames, _ = render._normalize_clip(clip, normalized, None)
+        written = render._stretch_clip(normalized, stretched, 1.25, None)
+        self.assertAlmostEqual(written, frames/1.25, delta=render.RATE*.01)
+        def peak(path):
+            with wave.open(str(path)) as file:
+                data = np.frombuffer(file.readframes(file.getnframes()), '<i2').reshape(-1, 2)[:, 0].astype(float)
+            middle = data[len(data)//4:len(data)//4+8192]
+            return np.argmax(np.abs(np.fft.rfft(middle*np.hanning(len(middle)))))*render.RATE/len(middle)
+        self.assertAlmostEqual(peak(stretched), peak(normalized), delta=25)  # A pitch shift would be ~175 Hz.
+        cancel = threading.Event()
+        cancel.set()
+        with self.assertRaises(Cancelled):
+            render._stretch_clip(normalized, self.directory/'cancelled.wav', 1.25, cancel)
+
+    def test_a_short_line_read_a_little_faster_keeps_its_exact_length(self):
+        # 24/10: atempo ended a faster line up to ~32 ms early and short lines failed the 20 ms check (6 videos).
+        for duration, tempo in ((1.2, 1.05), (1.95, 1.04), (.9, 1.021), (1.46, 1.25)):
+            with self.subTest(duration=duration, tempo=tempo):
+                clip = syllable_clip(self.directory/f'line {duration}.wav', 1, duration)
+                normalized, stretched = self.directory/f'line {duration} 48k.wav', self.directory/f'line {tempo}.wav'
+                frames, _ = render._normalize_clip(clip, normalized, None)
+                written = render._stretch_clip(normalized, stretched, tempo, None)
+                self.assertEqual(written, round(frames/tempo))
+                with wave.open(str(stretched)) as file:
+                    self.assertEqual(file.getnframes(), written)
+
+    def test_a_faster_line_that_would_lose_its_end_is_refused(self):
+        clip = syllable_clip(self.directory/'cut line.wav', 1, 1.2)
+        normalized = self.directory/'cut line 48k.wav'
+        render._normalize_clip(clip, normalized, None)
+        # Too little silence after it: atempo keeps back the line's last ~30 ms, which must not be dropped.
+        with patch.object(render, 'STRETCH_PAD_S', .001), \
+                self.assertRaisesRegex(ValueError, 'Thời lượng câu đọc sau khi đọc nhanh không khớp'):
+            render._stretch_clip(normalized, self.directory/'cut line faster.wav', 1.05, None)
+
+    def test_original_sound_drops_under_the_voice_and_returns_in_pauses(self):
+        import av
+        source = self.directory/'long source.mp4'
+        source_video(source, duration=4)
+        cue = dict(start_ms=2000, end_ms=2700, text='Giọng Việt ở giữa.')
+        paths = self.perform(source=source, cues=[cue], clips=self.clips[:1], speed=1.,
+                             original_gain=.56, voice_gain=1.36)
+        plan = json.loads(Path(paths['plan']).read_text(encoding='utf-8'))
+        self.assertEqual(plan['ducking']['gain_under_voice'], .12)
+        self.assertEqual(plan['ducking']['spans'], 1)
+        def tone_level(path, start, end):  # Amplitude of the source's 170 Hz tone, apart from the voice's own tones.
+            values = []
+            with av.open(str(path)) as container:
+                resampler = av.AudioResampler(format='fltp', layout='mono', rate=48000)
+                for frame in container.decode(audio=0):
+                    for converted in resampler.resample(frame):
+                        times = converted.time+np.arange(converted.samples)/48000
+                        values.append(converted.to_ndarray()[0][(times >= start) & (times < end)])
+            data = np.concatenate(values).astype(np.float64)
+            t = start+np.arange(len(data))/48000
+            return 2*abs(np.mean(data*np.exp(-2j*np.pi*170*t)))
+        for start, end, gain in ((.5, 1.5, .56), (2.15, 2.65, .12), (3.3, 3.9, .56)):
+            with self.subTest(start=start):
+                ratio = tone_level(paths['video'], start, end)/tone_level(source, start, end)
+                self.assertAlmostEqual(ratio, gain, delta=gain*.08)
+
+    def test_ducking_curve_fades_and_holds_through_short_pauses(self):
+        path = self.directory/'curve.f32'
+        placements = [dict(start_frame=round(a*render.RATE), end_frame=round(b*render.RATE))
+                      for a, b in ((1., 2.), (2.3, 3.), (4., 4.5))]
+        report = render._duck_envelope(path, placements, 5., .25)
+        curve = np.fromfile(path, dtype='<f4')
+        self.assertEqual(len(curve), 6*render.ENVELOPE_RATE)
+        def at(seconds):
+            return float(curve[round(seconds*render.ENVELOPE_RATE)])
+        self.assertEqual(report['spans'], 2)  # The 0.3 s pause stays low.
+        for seconds, value in ((.5, 1), (.85, 1), (1., .25), (1.5, .25), (2.15, .25), (3., .25), (3.3, 1),
+                               (3.7, 1), (4.2, .25), (4.8, 1)):
+            with self.subTest(seconds=seconds):
+                self.assertAlmostEqual(at(seconds), value, places=5)
+        rate = render.ENVELOPE_RATE
+        self.assertTrue(np.all(np.diff(curve[round(.85*rate):rate+1]) < 0))       # Smoothly down before line 1...
+        self.assertTrue(np.all(np.diff(curve[3*rate:round(3.3*rate)+1]) > 0))     # ...and back up after line 2.
+        self.assertTrue(.55 < at(.926) < .7 and .55 < at(3.15) < .7)
+
+    def test_lines_spoken_over_the_held_last_frame_read_the_pictures_last_moments(self):
+        seen = []
+        def boxes(path, intervals, **options):
+            seen.extend(intervals)
+            return [None]*len(intervals), dict(caption_rows=None)
+        cues = [dict(start_ms=0, end_ms=500, text='Một.'), dict(start_ms=1300, end_ms=1800, text='Hai.'),
+                dict(start_ms=1900, end_ms=2400, text='Ba.')]
+        with patch('teodub.caption_cover.cover_boxes', side_effect=boxes):
+            render._caption_boxes(self.source, .5, 2., cues, 1., 96, 64,
+                                  dict(subtitle_size=13, subtitle_weight='bold'), None, None)
+        np.testing.assert_allclose(seen[0], (.5, 1.))
+        np.testing.assert_allclose(seen[1], (1.4, 1.9))   # Ends past the picture: its last half second...
+        np.testing.assert_allclose(seen[2], (1.4, 1.9))   # ...as for a line wholly after it.
 
     def test_font_size_changes_actual_burned_glyph_area(self):
         import av

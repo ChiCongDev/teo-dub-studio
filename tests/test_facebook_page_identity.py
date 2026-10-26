@@ -41,6 +41,37 @@ def fixture(*, duplicate=False, missing=False, wrong_id=False, switch_works=True
     </script>'''
 
 
+def fixture_24_10():
+    """The English layout read from Tèo's Chrome on 24/10/2026: the account button 'Account, your profile' (a menu
+    button), the dialog 'Your profile', 'See all profiles', 'Select profile' with ', currently selected' and
+    ', N notifications', an opener "What's on your mind?" and a composer whose author is plain text."""
+    return '''<!doctype html><meta charset="utf-8">
+    <div role="button" tabindex="0" aria-label="Account, your profile" aria-haspopup="menu" onclick="toggle()"><img alt="Your profile"></div>
+    <div role="dialog" aria-label="Your profile" id="profile" hidden>
+      <div id="quick"><a href="/profile.php?id=777">Phú thọ</a><div role="button">Switch to Minh Châu</div>
+      <div role="button" onclick="showProfiles()">See all profiles</div><div role="button">Log out</div></div>
+      <div id="choices" hidden><div role="button" onclick="toggle();toggle()">Back to previous menu</div><h2>Select profile</h2>
+      <div role="button" id="current">Phú thọ</div><div role="button" id="page-choice" onclick="choose()">Page Demo</div>
+      <div role="button">Demo 23-10</div><a href="/pages/">See all Pages</a></div></div>
+    <main role="main"><h1>Page Demo</h1>
+      <div role="button" onclick="document.getElementById('composer').hidden=false">What's on your mind?</div></main>
+    <div role="dialog" id="composer" aria-label="Create post" hidden><h2>Create post</h2><span>Page Demo</span>
+      <div role="textbox" contenteditable="true" aria-label="What's on your mind?"></div>
+      <div role="button" onclick="publish()">Post</div></div>
+    <script>
+    function toggle(){const p=document.getElementById('profile');p.hidden=!p.hidden;
+      document.getElementById('quick').hidden=false;document.getElementById('choices').hidden=true;}
+    function showProfiles(){document.getElementById('quick').hidden=true;document.getElementById('choices').hidden=false;
+      const active=localStorage.actor||'Phú thọ';
+      document.getElementById('current').setAttribute('aria-label','Phú thọ'+(active==='Phú thọ'?', currently selected':', 25 notifications'));
+      document.getElementById('page-choice').setAttribute('aria-label','Page Demo'+(active==='Page Demo'?', currently selected':', 3 notifications'));}
+    function choose(){localStorage.switches=String(Number(localStorage.switches||0)+1);localStorage.actor='Page Demo';
+      document.getElementById('profile').hidden=true;}
+    function publish(){localStorage.posts=String(Number(localStorage.posts||0)+1);document.getElementById('composer').hidden=true;
+      const status=document.createElement('div');status.setAttribute('role','status');status.innerHTML='Your post was published. <a href="https://www.facebook.com/123/posts/999">View post</a>';document.body.append(status);}
+    </script>'''
+
+
 class IdentityDomTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -168,6 +199,32 @@ class IdentityDomTests(unittest.TestCase):
             self.publish(post)
         self.assertIsNone(self.tab.evaluate('localStorage.posts'))
         self.assertEqual(self.tab.evaluate('localStorage.actor'),'Người dùng')
+
+    def test_24_10_account_button_switches_from_another_page_and_verifies_it(self):
+        # 24/10: "Account, your profile" was not recognized, so du lịch toàn cầu and Phú thọ stopped before Publish.
+        self.html = fixture_24_10()
+        self.reload()
+        result = self.actor()
+        self.assertTrue(result['switched'])
+        self.assertEqual(self.tab.evaluate('localStorage.actor'), 'Page Demo')
+        self.assertEqual(self.tab.evaluate('localStorage.switches'), '1')
+        self.assertTrue(self.tab.get_by_role('dialog', name='Your profile').is_hidden())
+        self.assertFalse(self.actor()['switched'])  # Already the selected Page: not switched again.
+        self.assertEqual(self.tab.evaluate('localStorage.switches'), '1')
+
+    def test_24_10_layout_prepares_with_the_plain_author_and_publishes_once(self):
+        self.html = fixture_24_10()
+        self.reload()
+        post = self.draft()
+        prepared = self.prepare(post)
+        self.assertEqual(prepared['state'], 'review')
+        self.assertEqual(prepared['browser_review']['identity']['source'], 'visible_profile_selector_and_composer')
+        self.assertIsNone(self.tab.evaluate('localStorage.posts'))
+        self.assertEqual(self.publish(post)['state'], 'published')
+        self.assertEqual(self.tab.evaluate('localStorage.posts'), '1')
+        with self.assertRaises(ValueError):
+            self.publish(post)
+        self.assertEqual(self.tab.evaluate('localStorage.posts'), '1')
 
     def test_plain_author_without_selected_profile_evidence_never_accepted(self):
         tab=self.context.new_page();tab.goto(self.target['url'])

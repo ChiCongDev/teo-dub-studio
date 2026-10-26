@@ -27,15 +27,48 @@ CONFIG_KEYS = ('voice_provider', 'voice', 'reference_audio', 'reference_sha256',
 
 def should_process(item, *, retry_failed=False):
     """One selection rule shared by the worker and its read-only GUI preview."""
-    return item['status'] not in DONE and (retry_failed or item['status'] != 'failed')
+    return item['status'] not in DONE and (retry_failed or item['status'] != 'failed' or item.get('retry_once') is True)
 
 
 def read_json(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
+# Thử lại video lỗi on a link's tab (owner 24/10/2026) also works while links take turns: the desktop writes a
+# request, and the worker, the only writer of campaign.json, marks those failed videos `retry_once` when the campaign
+# next runs. A marked video is picked like a pending one; the mark goes when it starts, so it is tried once.
+RETRY_REQUESTS = 'retry-*.json'
+
+
+def request_retry(directory):
+    """Ask for one more try of every video of this campaign that has failed now; returns how many."""
+    directory = Path(directory)
+    numbers = sorted(item['number'] for item in read_json(directory/'campaign.json')['items'] if item['status'] == 'failed')
+    if numbers:
+        atomic_json(directory/f'retry-{uuid.uuid4().hex}.json', dict(videos=numbers))
+    return len(numbers)
+
+
+def requested_retries(directory, paths=None):
+    """Video numbers asked for one more try that the worker has not marked yet."""
+    numbers = set()
+    for path in sorted(Path(directory).glob(RETRY_REQUESTS)) if paths is None else paths:
+        try:
+            videos = None if path.is_symlink() else read_json(path).get('videos')
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(videos, list):
+            numbers.update(number for number in videos if type(number) is int)
+    return numbers
+
+
 WAITING_SOURCE = 'Chờ nguồn tải'
 WAIT_FALLBACK_S = 30*60  # With no download service paused as a whole, the waiting video is tried again after this.
+# Campaigns in turns (owner 23/10/2026): one video of each campaign, then the next campaign. A campaign that has
+# had its turn rests with this message; the desktop asks a running campaign to hand over with ROTATION_REQUEST,
+# which it honours only between two videos.
+ROTATION_WAIT = 'Đang chạy xen kẽ với chiến dịch khác; chờ tới lượt.'
+ROTATION_REQUEST = 'rotation.request'
 
 
 def _source_retry_at(now=None):
@@ -269,10 +302,17 @@ class _StopRequests:
         self.local.touch()
 
 
-def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external_stop=None):
-    """Internal entry for a supervisor that already holds the shared execution lock."""
+def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external_stop=None, max_videos=None,
+                         verify_done=True):
+    """Internal entry for a supervisor that already holds the shared execution lock.
+
+    max_videos ends the campaign's turn after that many videos (a rotation); verify_done=False skips re-checking
+    finished videos that this rotation already checked on the campaign's first turn. The result then carries
+    turn_over=True and the campaign rests as paused with ROTATION_WAIT.
+    """
     directory = Path(directory).resolve()
     runner = runner or run_child
+    processed, turn_over = 0, False
     with _job_lock(directory):
         manifest = read_json(directory/'campaign.json')
         if manifest.get('archived_at'):
@@ -280,11 +320,18 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
         local_stop = directory/'stop.request'
         local_stop.unlink(missing_ok=True)
         stop = _StopRequests(local_stop, Path(external_stop)) if external_stop is not None else local_stop
+        requests = sorted(directory.glob(RETRY_REQUESTS))
+        retry = requested_retries(directory, requests)
+        for item in manifest['items']:
+            if item['number'] in retry and item['status'] == 'failed':
+                item['retry_once'] = True
         manifest['status'] = 'running'
         manifest.pop('message', None)
         manifest.pop('resume_after', None)
         manifest.pop('resume_retry_failed', None)
         atomic_json(directory/'campaign.json', manifest)
+        for path in requests:  # Only after the marks are saved: a crash before this marks them again, no harm.
+            path.unlink(missing_ok=True)
         atomic_json(directory/'campaign-runtime.json', dict(future_settings=1))
         try:
             for item in manifest['items']:
@@ -296,6 +343,8 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 if hash_file(job/'config.json') != item['config_sha256']:
                     raise ValueError(f'Cấu hình Video {item["number"]} đã bị thay đổi; chưa chạy tiếp.')
                 from teodub.campaign_settings import effective_job, prepare_next_job
+                if item['status'] in DONE and not verify_done:
+                    continue
                 if item['status'] in DONE:
                     job = effective_job(directory, item)
                     if item.get('execution_job') and hash_file(job/'config.json') != item.get('execution_config_sha256'):
@@ -323,8 +372,15 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                     continue
                 if not should_process(item, retry_failed=retry_failed):
                     continue
+                # Another campaign's turn: never in the middle of a video, only before the next one starts. Only a
+                # campaign running on its own (no supervisor) hands over on request.
+                hand_over = external_stop is None and (directory/ROTATION_REQUEST).is_file()
+                if (max_videos is not None and processed >= max_videos) or hand_over:
+                    turn_over = True
+                    break
                 job = prepare_next_job(directory, item)
                 item.update(status='running', message='Đang tải và lồng tiếng')
+                item.pop('retry_once', None)
                 attempt_started = time.monotonic()
                 item.setdefault('started_at', datetime.now().astimezone().isoformat(timespec='seconds'))
                 item['last_attempt_started_at'] = datetime.now().astimezone().isoformat(timespec='seconds')
@@ -334,6 +390,7 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                     result = runner(job/'config.json', stop)
                 except Exception as exc:
                     result = dict(status='failed', message=str(exc) or type(exc).__name__)
+                processed += 1
                 previous_seconds = item.get('processing_seconds', 0)
                 if type(previous_seconds) not in (int, float) or not math.isfinite(previous_seconds) or previous_seconds < 0:
                     previous_seconds = 0
@@ -371,7 +428,10 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 manifest['status'] = 'completed' if all(x['status'] in DONE for x in manifest['items']) else 'needs_attention'
                 if manifest['status'] == 'needs_attention':
                     manifest['message'] = 'Chiến dịch còn video lỗi. Chọn dòng lỗi để xem nguyên nhân; bấm Thử lại video lỗi khi đã xử lý.'
-            if stop.exists() or manifest['status'] == 'running':
+            if turn_over and not stop.exists():
+                manifest['status'] = 'paused'
+                manifest['message'] = ROTATION_WAIT
+            elif stop.exists() or manifest['status'] == 'running':
                 manifest['status'] = 'paused'
                 if stop.exists():
                     manifest['message'] = 'Đã nhận yêu cầu Dừng. Giữ tiến độ và các bước đã hoàn tất; bấm Chạy / Tiếp tục khi sẵn sàng.'
@@ -380,9 +440,10 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
         except Exception as exc:
             manifest['status'] = 'paused'
             manifest['message'] = str(exc) or type(exc).__name__
+            turn_over = False
         atomic_json(directory/'campaign.json', manifest)
         (directory/'campaign-runtime.json').unlink(missing_ok=True)
-        return manifest
+        return dict(manifest, turn_over=True) if turn_over and manifest.get('message') == ROTATION_WAIT else manifest
 
 
 def main(args=None):

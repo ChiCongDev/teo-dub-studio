@@ -1,4 +1,4 @@
-"""Saved campaigns and an explicitly started, serial campaign queue."""
+"""Saved campaigns and an explicitly started campaign queue: one campaign after another, or in turns."""
 import os
 from pathlib import Path
 import tkinter as tk
@@ -15,6 +15,8 @@ STATE_LABELS = {
     'failed': 'Cần kiểm tra', 'cancelled': 'Đã dừng', 'waiting': 'Chờ trong hàng đợi',
     'review_required': 'Hoàn tất · cần nghe duyệt', 'skipped': 'Đã bỏ qua',
 }
+# How "Chạy các chiến dịch đã chọn" runs them; the second is the rotation (owner 23/10/2026).
+ORDERS = ('Lần lượt từng chiến dịch', 'Xen kẽ từng video')
 
 
 class CampaignLibraryTab(ttk.Frame):
@@ -35,6 +37,7 @@ class CampaignLibraryTab(ttk.Frame):
         self.queue_status = tk.StringVar(self)
         self.details = tk.StringVar(self, value='Chọn một chiến dịch để xem thư mục và cấu hình đã lưu.')
         self.selection_summary = tk.StringVar(self)
+        self.order = tk.StringVar(self, value=ORDERS[0])
         self.build()
         self.search.trace_add('write', lambda *_: self.refresh())
         self.bind('<Destroy>', self.on_destroy, add='+')
@@ -46,8 +49,8 @@ class CampaignLibraryTab(ttk.Frame):
         self.rowconfigure(3, weight=1)
         ttk.Label(self, text='Danh sách chiến dịch', font=('Segoe UI', 21, 'bold')).grid(
             row=0, column=0, sticky='w')
-        ttk.Label(self, text='Lưu một lần, mở lại bất cứ lúc nào. Chọn nhiều chiến dịch để chạy lần lượt; '
-                  'giữ kết quả khi dừng và tiếp tục.', wraplength=1000).grid(
+        ttk.Label(self, text='Lưu một lần, mở lại bất cứ lúc nào. Chọn nhiều chiến dịch để chạy lần lượt từng chiến dịch '
+                  'hoặc xen kẽ từng video; giữ kết quả khi dừng và tiếp tục.', wraplength=1000).grid(
                       row=1, column=0, sticky='w', pady=(4, 10))
         search_row = ttk.Frame(self)
         search_row.grid(row=2, column=0, sticky='ew', pady=(0, 8))
@@ -86,6 +89,7 @@ class CampaignLibraryTab(ttk.Frame):
         self.open_button.pack(side='left')
         self.run_button = ttk.Button(actions, text='Chạy các chiến dịch đã chọn', command=self.run_selected)
         self.run_button.pack(side='left', padx=6)
+        ttk.Combobox(actions, textvariable=self.order, values=ORDERS, state='readonly', width=24).pack(side='left', padx=(0, 6))
         self.resume_button = ttk.Button(actions, text='Tiếp tục hàng đợi', command=self.resume)
         self.resume_button.pack(side='left')
         self.stop_button = ttk.Button(actions, text='Dừng hàng đợi', command=self.stop)
@@ -176,7 +180,7 @@ class CampaignLibraryTab(ttk.Frame):
             if not active and snapshot and snapshot.get('status') == 'running' and queue_item:
                 queue_state = queue_item.get('status', '')
                 if queue_state in ('pending', 'queued', 'waiting'):
-                    label = 'Chờ trong hàng đợi'
+                    label = 'Chạy xen kẽ · chờ tới lượt' if snapshot.get('order') == 'rotate' else 'Chờ trong hàng đợi'
                 elif queue_state == 'running':
                     label = 'Đang khởi động'
             if isinstance(discovery, dict) and discovery and not discovery.get('complete', False):
@@ -213,7 +217,8 @@ class CampaignLibraryTab(ttk.Frame):
         label = {'running': 'Đang chạy', 'completed': 'Hoàn tất', 'paused': 'Đã dừng',
                  'failed': 'Cần kiểm tra', 'ready': 'Sẵn sàng',
                  'needs_attention': 'Còn chiến dịch lỗi'}.get(snapshot.get('status'), str(snapshot.get('status', '')))
-        text = f'Hàng đợi: {label} · Hoàn tất {finished}/{len(campaigns)} chiến dịch · Cần kiểm tra {attention}.'
+        kind = 'Vòng xen kẽ' if snapshot.get('order') == 'rotate' else 'Hàng đợi'
+        text = f'{kind}: {label} · Hoàn tất {finished}/{len(campaigns)} chiến dịch · Cần kiểm tra {attention}.'
         active = snapshot.get('active_directory')
         if active:
             manifest = self.records.get(str(Path(active).resolve()))
@@ -402,7 +407,11 @@ class CampaignLibraryTab(ttk.Frame):
             self.campaign_tab.records = [dict(url=item['url'], title=item.get('title', '')) for item in manifest['items']]
             self.campaign_tab.display(manifest)
             self.campaign_tab.refresh_buttons()
-            self.master.select(self.campaign_tab)
+            area = getattr(self.studio, 'campaign_area', None)
+            if area is not None:
+                area.open_link(directory)  # Its own sub-tab (owner 23/10/2026).
+            else:
+                self.master.select(self.campaign_tab)
         except (OSError, ValueError, KeyError, TypeError, tk.TclError) as exc:
             self.status.set('Chưa mở được chiến dịch: '+str(exc))
 
@@ -433,7 +442,10 @@ class CampaignLibraryTab(ttk.Frame):
             self.status.set('Đợi công việc hiện tại hoàn tất hoặc dừng trước khi tạo hàng đợi mới.')
             return
         try:
-            self.batch_controller.start(selected)
+            if self.order.get() == ORDERS[1]:
+                self.batch_controller.start(selected, order='rotate')
+            else:
+                self.batch_controller.start(selected)
             self.refresh()
         except (OSError, ValueError) as exc:
             self.status.set('Chưa chạy hàng đợi: '+str(exc))

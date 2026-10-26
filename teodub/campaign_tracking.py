@@ -11,6 +11,7 @@ STAGES = {'download': 'Đang tải', 'source': 'Kiểm tra nguồn',
           'google_drive': 'Video xong · lưu Drive'}
 STATUS = {'pending': 'Chờ xử lý', 'running': 'Đang khởi động', 'completed': 'Hoàn tất',
           'review_required': 'Xong · cần duyệt', 'cancelled': 'Đã dừng', 'failed': 'Lỗi'}
+RETRYING = 'Chờ thử lại'  # A failed video the owner asked to try once more (owner 24/10/2026).
 DISPLAY_TIMEZONE = timezone(timedelta(hours=7))
 
 
@@ -104,10 +105,12 @@ def latest_progress(job):
     return latest, percent
 
 
-def tracking_row(item, active=True):
+def tracking_row(item, active=True, retrying=False):
     status = item['status']
     event, percent = latest_progress(item.get('execution_job') or item['job']) if item.get('job') and status != 'pending' else ({}, None)
     label = STATUS.get(status, status)
+    if status == 'failed' and (retrying or item.get('retry_once') is True):
+        label = RETRYING
     message = item.get('message', '')
     if status == 'running':
         label = STAGES.get(event.get('stage'), label) if active else 'Gián đoạn · Tiếp tục'

@@ -1,5 +1,134 @@
 # Tèo Dub Studio
 
+## Đăng Page được lại sau khi Facebook đổi nút menu tài khoản — 24/10/2026
+
+- Từ sáng 24/10, Facebook đổi tên nút menu tài khoản (ảnh đại diện ở góc phải trên cùng) thành **"Account, your profile"**. Tèo không nhận ra nút này, nên bỏ qua bước chọn và xác minh đúng Page qua menu.
+  - Page **du lịch toàn cầu** báo "không thấy nút Chuyển ngay".
+  - Page **Phú thọ** báo "chưa xác minh được người đăng".
+  - Tèo luôn dừng **trước khi bấm Đăng**, nên không có bài nào bị đăng sai tên hay đăng trùng.
+- Nay Tèo nhận được nút mới. Các bước sau vẫn kiểm tra chặt như trước: menu "Your profile" → "See all profiles" → "Select profile" → chọn đúng tên Page → phải thấy "currently selected" ở đúng Page đó.
+- **Lưu ý:** Tèo không chuyển sang Page khác khi trong Chrome của tài khoản còn **hộp viết bài đang mở dở**, để không làm mất bản nháp. Hãy đóng các hộp viết bài cũ trước.
+- Các lịch "Cần kiểm tra" hôm nay: kiểm tra trên Facebook trước, rồi làm lại bằng "Tạo lượt mới (chưa bật)".
+
+## Bấm Chạy hoặc Dừng link khi đang chạy xen kẽ: tab đổi ngay — 24/10/2026
+
+- Trước đây, khi các link đang chạy xen kẽ mà bạn bấm **Chạy** ở một link, tab vẫn ghi "đã dừng" cho tới khi link khác làm xong video đang dở. Lý do là Tèo chỉ nhận yêu cầu giữa hai video, nên rất dễ tưởng là chưa bấm được.
+- Nay tab đổi ngay thành **"chờ lượt"** và nút Chạy khóa lại, bạn không cần bấm thêm. Bấm **Dừng link này** cũng hiện ngay **"đã dừng"**.
+- Cách chạy không đổi: link vẫn vào lượt sau khi video đang làm xong.
+
+## Thử lại video lỗi khi các link đang chạy xen kẽ — 24/10/2026
+
+- Nút **Thử lại video lỗi** ở tab của mỗi link nay bấm được cả khi các link khác đang chạy.
+- Khi bấm nút:
+  - Các video đang "Lỗi" của link đó chuyển thành **"Chờ thử lại"**. Tên tab cũng hiện "chờ thử lại".
+  - Link đó vào chạy xen kẽ như khi bấm **Chạy**.
+  - Trong các lượt của link, video chờ thử lại được làm trước, mỗi lượt một video, xen kẽ với các link khác.
+- Mỗi lần bấm, mỗi video chỉ được thử lại **một lần**. Nếu lỗi lại, video hiện "Lỗi" như cũ và Tèo làm tiếp video khác. Muốn thử nữa thì bấm nút thêm lần nữa.
+- Video thử lại dùng lại các bước đã xong (bản dịch, giọng…). Video lỗi ở bước dịch sẽ gọi Codex thêm lần nữa, như trước.
+- Nút **Chạy** vẫn bỏ qua video lỗi, không tự thử lại.
+- Nếu bạn dừng link giữa chừng, các video "Chờ thử lại" chưa làm vẫn được giữ. Lần sau bấm Chạy link đó, Tèo sẽ làm tiếp.
+- Nếu link đang chạy một mình (bấm Chạy ở tab "＋ Thêm link"), các video chờ thử lại sẽ được làm ở lần chạy sau của link đó.
+- **Không đổi:** nút Thử lại video lỗi ở tab "＋ Thêm link" (vẫn chạy một mình), các nút Dừng, một video một lúc, đăng Page.
+
+## Câu cuối bị nhận dạng trôi ra sau khi hết hình — 24/10/2026
+
+- Đôi khi Whisper ghi mốc cho vài câu cuối trôi ra sau khi video đã hết. Ví dụ video 21 của chiến dịch "demo" dài 2:19, nhưng câu cuối được ghi ở 2:20–2:22. Lời vẫn đúng, chỉ có mốc giờ bị trôi.
+- Nay Tèo dồn các câu đó vào khoảng cuối video, giữ nguyên thứ tự và lời. Giọng đọc các câu đó nối tiếp nhau ở cuối. Nếu hình hết trước khi đọc xong, Tèo giữ khung hình cuối cho tới khi đọc xong, như với câu cuối dài.
+- Tèo vẫn dừng và báo "SRT dài hơn video" để bạn kiểm tra khi:
+  - có hơn 5 câu bắt đầu sau khi hết hình, hoặc
+  - không câu nào bắt đầu trong video.
+- Chỉ áp dụng khi Tèo tự nhận dạng lời. File SRT bạn tự chọn vẫn được kiểm tra như trước.
+
+## Bớt video lỗi: câu đọc nhanh, câu cuối của video, nạp giọng — 24/10/2026
+
+Ngày 23/10 có 8 video của hai chiến dịch "test" và "demo" dừng vì 3 lỗi của chính Tèo, không phải do giọng hay bản dịch. Nay đã sửa:
+
+- **"Thời lượng câu đọc sau khi đọc nhanh không khớp" (6 video):**
+  - Khi một câu phải đọc nhanh hơn một chút cho khớp hình, công cụ đọc nhanh làm câu ngắn đi hụt 0,003–0,03 giây ở cuối.
+  - Với câu ngắn dưới 2 giây, bước tự kiểm tra của Tèo coi mức hụt đó là lỗi và dừng video.
+  - Nay Tèo thêm một chút im lặng sau câu trước khi đọc nhanh, rồi cắt lại đúng độ dài, nên câu luôn đủ và không bị mất đoạn cuối. Mức đọc nhanh vẫn tối đa 1,25×, giọng không đổi.
+- **"SRT dài hơn video đã chọn" (1 video):**
+  - Khi Tèo tự nhận dạng lời, câu cuối đôi khi được ghi là kết thúc sau khi video đã hết (ví dụ 2:46,3 trong video dài 2:45,87).
+  - Nay câu đó kết thúc đúng lúc hết hình.
+  - Câu bắt đầu khi video đã hết: xem mục "Câu cuối bị nhận dạng trôi ra sau khi hết hình" ở trên. File SRT do bạn tự chọn vẫn được kiểm tra như trước.
+- **Lỗi mạng khi nạp giọng ("WinError 10054", 1 video):** mô hình giọng VieNeu và mô hình nhận dạng Whisper đã có trên máy thì Tèo dùng luôn, không hỏi trang HuggingFace nữa. Máy chưa có mô hình thì vẫn tải như trước.
+- **Video đã lỗi trước đó:** bấm **Thử lại video lỗi**. Video chạy tiếp từ bước bị dừng, dùng lại bản dịch và giọng đã có, không tốn lượt Codex.
+- **Không đổi:** cách đặt câu theo hình, mức đọc nhanh tối đa, âm lượng, phụ đề, đăng Page.
+- Lỗi "Chưa tải được video từ các trang tải" không sửa được bằng code vì phụ thuộc Douyin và các trang tải. Tèo vẫn tự thử lại như trước.
+
+## Mỗi link một tab trong "Chiến dịch hàng loạt" — 23/10/2026
+
+Để dễ nhìn và kiểm soát nhiều link cùng lúc, tab **Chiến dịch hàng loạt** nay có một hàng **tab con**:
+
+- **Tab đầu, "＋ Thêm link":** là màn hình như trước: dán link, Lấy danh sách, đặt tên, Tạo chiến dịch mới.
+- **Mỗi chiến dịch tạo xong có một tab riêng, đúng tên chiến dịch** (mỗi link một tên). Tên tab hiện luôn tình trạng, ví dụ "video-mon-an · 15/100 · chờ lượt", "video-làm-món-ăn · 1/100 · đang làm".
+- **Trong mỗi tab:** link kênh, tiến độ, video đang làm và đang ở bước nào, bảng video của riêng link đó, cùng các nút **Chạy**, **Dừng link này**, **Thử lại video lỗi**, **Mở video gốc**, **Mở thành phẩm**, **Đóng tab**.
+- **Chạy nhiều tab:** bấm Chạy ở bao nhiêu tab cũng được, theo thứ tự nào cũng được. Máy làm một video một lúc, nên các link đang chạy làm **xen kẽ, mỗi link một video**. Link đang làm dở video nào thì làm xong video đó rồi mới chuyển lượt.
+- **Dừng link này** chỉ dừng link đó: video đang làm dừng lại và giữ các bước đã xong, các link khác vẫn chạy. Bấm **Chạy** ở tab đó để chạy lại.
+- **Đóng tab** chỉ ẩn tab, không dừng và không xóa chiến dịch. Mở lại bằng **Danh sách chiến dịch → Mở chiến dịch**. Các tab đang mở vẫn còn khi mở lại Tèo.
+- **Thử lại video lỗi** dùng được khi không có link nào đang chạy. Từ 24/10, nút này bấm được cả khi link khác đang chạy (xem mục "Thử lại video lỗi khi các link đang chạy xen kẽ" ở trên).
+- Nút **Dừng** ở tab "＋ Thêm link" và nút **Dừng hàng đợi** ở Danh sách chiến dịch vẫn dừng tất cả như trước.
+- **Giữ nguyên:** một video một lúc, các bước làm từng video, đăng Page, AI viết caption, giờ đăng. Quản lý Page vẫn chọn nguồn theo tên chiến dịch.
+
+## Chạy xen kẽ nhiều chiến dịch: mỗi chiến dịch một video, lần lượt — 23/10/2026
+
+Trước đây, khi một chiến dịch đang chạy, các nút **Lấy danh sách** và **Tạo chiến dịch mới** bị khóa. Nhiều chiến dịch thì phải chạy xong chiến dịch này mới sang chiến dịch kia. Nay:
+
+- **Tạo chiến dịch khi đang chạy:** trong lúc một chiến dịch đang chạy, bạn vẫn dán link mới, bấm **Lấy danh sách** và **Tạo chiến dịch mới** được. Tèo hỏi lại cho chắc, rồi cho chiến dịch mới **chạy xen kẽ** với chiến dịch đang chạy:
+  - Video đang làm được làm xong, không bị cắt ngang.
+  - Sau đó mỗi chiến dịch một video, lần lượt: A → B → A → B… Thêm chiến dịch thứ ba thì A → B → C → A…
+  - Nhờ vậy các Page lấy video từ các chiến dịch khác nhau đều có video mới đều nhau.
+- **Khi có chuyện:**
+  - Chiến dịch nào hết video thì tự rời vòng.
+  - Video lỗi được ghi lỗi như trước rồi chuyển lượt.
+  - Hết nguồn tải, hết lượt Codex hoặc cần đăng nhập thì cả vòng tạm dừng. Riêng trường hợp chờ nguồn tải, Tèo tự chạy lại khi tới giờ, như trước.
+- **Dừng và chạy tiếp:**
+  - Nút **Dừng** dừng cả vòng.
+  - Bấm **Chạy / Tiếp tục** trên bất kỳ chiến dịch nào trong vòng thì Tèo chạy tiếp đúng lượt đang dở.
+  - Đóng app, hoặc bấm "Khởi động lại, giữ công việc", thì vòng vẫn chạy. Ngoại lệ duy nhất: nếu bạn đóng app đúng lúc chiến dịch cũ còn đang làm nốt video trước khi chuyển sang xen kẽ, vòng xen kẽ sẽ bắt đầu khi bạn mở lại Tèo.
+  - Đang lấy danh sách mà bấm **Dừng** thì chỉ dừng việc lấy danh sách; chiến dịch đang chạy vẫn tiếp tục.
+- **Hiển thị:** chiến dịch đang đợi lượt hiện "Chạy xen kẽ · chờ tới lượt". Ở tab **Danh sách chiến dịch** có thêm lựa chọn **Xen kẽ từng video**, bên cạnh **Lần lượt từng chiến dịch** như trước.
+- **Giữ nguyên:**
+  - Vẫn chỉ làm một video một lúc, mỗi video vẫn đi đủ các bước như trước.
+  - Đánh số video, tên file và thư mục không đổi.
+  - Đăng Page, AI viết caption và giờ đăng không đổi.
+  - Khi một danh sách "lần lượt" (kể cả Nguồn kênh tự động) đang chạy, chiến dịch mới chỉ được lưu, chưa tự chạy.
+
+## Giọng Việt khớp hình, tiếng gốc tự hạ khi đọc, dịch gọn theo thời lượng — 23/10/2026
+
+Trước đây, ở khoảng 6/10 số câu, giọng Việt dài hơn lời gốc. Tèo đọc các câu nối đuôi nhau nên giọng **trễ dần so với hình**: video 15 trễ trung bình 12 giây, có lúc 56 giây. Có video thì Tèo phải **làm chậm cả hình** (video 14 còn 0,92 lần). Tiếng Trung gốc để 56% nên to gần bằng giọng Việt. Nay:
+
+- **Khớp hình:** mỗi câu bắt đầu đúng lúc người trong video nói câu đó. Câu nào dài hơn chỗ trống trước câu kế tiếp thì Tèo **đọc nhanh hơn, tối đa 1,25 lần, không đổi giọng**. Khi đang bị trễ, khoảng nghỉ giữa hai câu rút còn 0,08 giây để đuổi kịp. **Không làm chậm hình nữa.** Nếu câu cuối còn đọc khi hết hình, Tèo giữ khung hình cuối thêm chút ít.
+- **Tiếng gốc tự hạ:** lúc không có giọng Việt, tiếng gốc giữ đúng mức bạn chọn (ví dụ 56%) để còn tiếng động, không khí. Khi giọng Việt đọc, tiếng gốc tự hạ xuống **12%**, chuyển mượt: bắt đầu hạ 0,15 giây trước câu, lên lại trong 0,3 giây sau câu. Hai câu cách nhau dưới 0,6 giây thì giữ thấp luôn, không bị "phập phồng". Nếu mức tiếng gốc đang chọn từ 12% trở xuống, hoặc đã tắt giọng Việt, thì Tèo không hạ.
+- **Dịch gọn:** với video dịch mới, Tèo gửi Codex kèm **số giây của từng câu** và dặn dịch khoảng **4 chữ mỗi giây**: bỏ từ thừa, lặp, nhưng giữ đủ ý, con số, tên, phủ định. Video đang dịch dở vẫn dịch theo cách cũ cho tới hết.
+
+Nghe thử 3 phút đầu video 15 (cùng bản dịch, cùng giọng, không tốn lượt Codex):
+
+- **Độ trễ:** giọng trễ trung bình 17,3 giây → **0,3 giây**, chậm nhất 2,5 giây.
+- **Độ rõ:** giọng Việt to hơn tiếng gốc bên dưới **13 dB** (trước −0,8 dB, tức to ngang tiếng Trung).
+- **Tốc độ đọc:** 3,6 → **4,4 chữ/giây**, câu nhanh nhất 5,4 chữ/giây, trong khoảng nói chuyện tự nhiên.
+
+Tổng âm lượng video nhỏ hơn khoảng 3 dB vì tiếng Trung được hạ; giọng Việt vẫn to như cũ. Video đã dựng hoặc đã đăng không tự đổi.
+
+## Ẩn dòng "Chat chiến lược" ở tab Thiết lập — 23/10/2026
+
+Liên kết chat chiến lược **không bắt buộc** (AI vẫn viết caption theo **Mục tiêu phát triển** và dữ liệu Page), và hiện không Page nào dùng. Theo yêu cầu, dòng "Chưa liên kết chat chiến lược…" cùng nút **Chat chiến lược…** dưới ô Mục tiêu đã được ẩn cho gọn. Ghi cách viết hoặc caption mẫu ưng ý thẳng vào ô **Mục tiêu phát triển** của từng Page. Phần liên kết vẫn còn trong tab **Kế hoạch** nếu sau này cần; lưu ý nếu liên kết hoặc đổi chat **sau khi đã lưu thiết lập**, cần bấm **Lưu thiết lập & hẹn giờ** lại, nếu không lượt AI kế tiếp sẽ dừng và chế độ Tự động tự tắt.
+
+## Caption video tự nhiên như người thật — 23/10/2026
+
+Trước đây AI viết caption dài 55–80 chữ, giọng thuyết minh ("Video ghi lại…", kèm lời khuyến cáo). Nay lời dặn AI (chế độ Tự động từ chiến dịch và kế hoạch AI) theo kiểu bạn chọn hôm 11/10:
+
+- **8–20 chữ**, 1–2 câu ngắn, giọng nói chuyện như người trong cuộc kể lại; **câu đầu là móc câu**: chuyện bất ngờ/thú vị nhất có thật trong video (tình huống, câu thoại, con số, giá, món ăn, nơi chốn). Đổi kiểu móc câu giữa các bài; không kể hết kết quả.
+- Không mở đầu bằng "Video ghi lại/Video này/Hành trình", không giọng báo cáo; không gọi tên người khi chưa rõ; **2–4 hashtag**, tối đa 1–2 emoji; **không kêu gọi like/share/comment/theo dõi** (Facebook hạ phân phối kiểu này), không giật tít, không bịa chi tiết.
+- **Mục tiêu phát triển** của Page được ưu tiên: ghi cách viết hoặc dán caption mẫu ưng ý vào đó thì AI theo.
+- AI đọc lời thoại **rải đầu – giữa – cuối video** (tới 1.200 ký tự mỗi video khi ít video) thay vì chỉ 700 ký tự đầu, để chọn đúng khoảnh khắc hay nhất.
+
+Thử trước với 5 video du lịch (1 lượt Codex): caption mới 13–16 chữ, ví dụ *"Chờ sáu tiếng đến nửa đêm để ngắm núi lửa phun ở Yogyakarta. #Yogyakarta #Indonesia #NuiLua"*. Bài đã bật lịch giữ caption cũ. Caption chỉ là một phần nhỏ của lượt xem — không ai bảo đảm video lên xu hướng.
+
+## Đăng thước phim không còn dừng vì "2 ô mô tả" — 23/10/2026
+
+Video 13 và 15 (Page "du lịch toàn cầu") từng dừng trước khi bấm Đăng với lỗi "Không xác định duy nhất ô mô tả thước phim cuối cùng (2 mục)": Facebook đôi khi giữ một ô mô tả cũ trong **lớp bị ẩn** của hộp tạo thước phim. Nay Tèo chọn đúng ô mô tả đang hiện (cũng là ô được kiểm tra lời đăng trước khi bấm Đăng); vẫn kiểm tra toàn bộ lời đăng và chỉ bấm Đăng một lần. Nếu thật sự có 2 ô hiện rõ, Tèo vẫn dừng trước khi đăng nhưng ghi kèm thông tin từng ô để chẩn đoán.
+
 ## Ghi chú hỏng của Codex không còn làm dừng cả video — 22/10/2026 (chiều)
 
 Video 15 dừng vì Codex trả kèm bản dịch một **ghi chú nghe duyệt** gắn sai số câu ("Ghi chú bản dịch Codex không khớp câu nguồn."). Ghi chú chỉ để bạn nghe lại, không phải lời dịch. Nay Tèo **bỏ những ghi chú hỏng** (gắn câu ngoài nhóm, trùng câu, rỗng; ghi chú quá dài thì cắt ngắn), ghi vào nhật ký "Bỏ N ghi chú…", và vẫn dùng bản dịch. Không tốn thêm lượt Codex. Lời dịch vẫn được kiểm tra chặt như trước; bản dịch đã lưu vẫn kiểm tra chặt.

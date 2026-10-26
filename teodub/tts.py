@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from teodub.common import atomic_json, check_cancel, hash_file
-from teodub.models import configure_models
+from teodub.models import configure_models, saved_first
 
 VOICES = ('Mai Anh', 'Trúc Ly', 'Thùy Dung', 'Ngọc Huyền')
 REFERENCE_VOICE = 'Giọng từ mẫu'
@@ -62,8 +62,8 @@ def get_model(progress=None, tts_model='v3turbo'):
         if progress:
             progress('Đang nạp '+TTS_MODELS[tts_model]+'. Lần đầu cần tải mô hình miễn phí.', percent=None)
         from vieneu import Vieneu
-        _model = (Vieneu(mode='v3nano', threads=4, steps=16, cfg=3.0) if tts_model == 'v3nano' else
-                  Vieneu(mode='v3turbo', backend='onnx', precision='fp32', threads=4))
+        _model = saved_first(lambda: Vieneu(mode='v3nano', threads=4, steps=16, cfg=3.0) if tts_model == 'v3nano' else
+                             Vieneu(mode='v3turbo', backend='onnx', precision='fp32', threads=4))
         _model_name = tts_model
     return _model
 

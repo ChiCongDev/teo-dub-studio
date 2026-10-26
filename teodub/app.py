@@ -1612,11 +1612,15 @@ def main(args=None):
     notebook.add(single_tab, text='Video đơn')
     studio = Studio(root, options.data_dir, parent=single_video_body(single_tab))
     from teodub.campaign_ui import CampaignTab
-    campaign_tab = CampaignTab(notebook, studio)
-    notebook.add(campaign_tab, text='Chiến dịch hàng loạt')
+    from teodub.campaign_tabs_ui import CampaignArea
+    # One sub-tab per link (owner 23/10/2026): the workspace stays the first sub-tab, '＋ Thêm link'.
+    studio.campaign_area = CampaignArea(notebook, studio)
+    campaign_tab = CampaignTab(studio.campaign_area.tabs, studio)
+    notebook.add(studio.campaign_area, text='Chiến dịch hàng loạt')
     from teodub.campaign_batch_controller import CampaignBatchController
     from teodub.campaign_library_ui import CampaignLibraryTab
     studio.batch_controller = CampaignBatchController(studio, campaign_tab)
+    studio.campaign_area.attach(campaign_tab)
     library_tab = CampaignLibraryTab(notebook, studio, campaign_tab, studio.batch_controller)
     notebook.add(library_tab, text='Danh sách chiến dịch')
     from teodub.facebook_ui import FacebookTab

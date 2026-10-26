@@ -3,6 +3,7 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -63,6 +64,30 @@ def _probe_source(path):
     if hash_file(source) != before:
         raise ValueError('Video nguồn thay đổi trong lúc kiểm tra.')
     return result
+
+
+MAX_LATE_LINES = 5   # Recognized lines starting after the picture that may be pulled inside it; more still stop.
+
+
+def _end_with_picture(cues, duration_s):
+    """Recognized lines past the SRT check's 200 ms are pulled inside the picture, in proportion, from the first such
+    line's start (an earlier line's if it leaves no room) to the picture end, order and text kept (owner 24/10/2026:
+    Whisper ended demo's video 9 at 2:46.3 in a 2:45.87 video and slotted video 21's last lines up to 2:22.2 in a
+    2:19.37 one). A supplied SRT is not changed."""
+    end = math.floor(duration_s*1000)
+    late = next((index for index, cue in enumerate(cues) if cue['end_ms'] > duration_s*1000+200), None)
+    if late is None or sum(cue['start_ms'] >= end for cue in cues) > MAX_LATE_LINES:
+        return cues
+    first = late
+    while first > 0 and cues[first]['start_ms'] > end-(len(cues)-first):
+        first -= 1
+    start = cues[first]['start_ms']
+    if start > end-(len(cues)-first):
+        return cues  # No room inside the picture: the SRT check reports it.
+    scale = (end-start)/(cues[-1]['end_ms']-start)
+    fitted = [dict(cue, start_ms=start+round((cue['start_ms']-start)*scale),
+                   end_ms=start+round((cue['end_ms']-start)*scale)) for cue in cues[first:]]
+    return cues if any(cue['end_ms'] <= cue['start_ms'] for cue in fitted) else cues[:first]+fitted
 
 
 def _safe_title(text):
@@ -245,6 +270,7 @@ class Job:
             cues = read_vietnamese_srt(vietnamese)
             if hash_file(vietnamese) != digest:
                 raise ValueError('Bản dịch thay đổi trong lúc đọc; chưa tạo giọng.')
+            cues = _end_with_picture(cues, source['duration_s'])
         if any(c['end_ms'] > source['duration_s']*1000+200 for c in cues):
             raise ValueError('SRT dài hơn video đã chọn. Chọn SRT đúng video trước khi tạo giọng.')
         self.save(captions=dict(path=str(vietnamese), sha256=digest, count=len(cues)))
@@ -408,6 +434,8 @@ class Job:
             adapted = adapt_subtitles(vietnamese, self.directory/'captions'/'vietnamese-wording.srt',
                                       self.config, cancel=self.cancel)
             cues = read_vietnamese_srt(adapted['output'])
+            if not self.config.get('subtitles'):
+                cues = _end_with_picture(cues, source['duration_s'])
             if (hash_file(adapted['output']) != adapted['output_sha256'] or
                     hash_file(adapted['report']) != adapted['report_sha256'] or
                     hash_file(vietnamese) != self.state['captions']['sha256']):

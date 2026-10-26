@@ -14,9 +14,16 @@ from teodub.common import atomic_json, hash_file, protect_worker
 from teodub.pipeline import _job_lock
 
 
-ENTRY_STATUSES = {'pending', 'running', 'paused', 'completed', 'needs_attention'}
+ENTRY_STATUSES = {'pending', 'running', 'paused', 'completed', 'needs_attention', 'stopped'}
 BATCH_STATUSES = {'ready', 'running', 'paused', 'completed', 'needs_attention'}
 MAX_CAMPAIGNS = 1000
+# A queue saved with order ROTATE runs its campaigns in turns, one video each (owner 23/10/2026); queues without
+# 'order' run one campaign after another as before. While it runs, the desktop adds campaigns as join-*.json files.
+ROTATE = 'rotate'
+TURN_WAIT = 'Chờ tới lượt (xen kẽ)'
+# One link stopped on its own tab (owner 23/10/2026): its row is 'stopped' and gets no turns until its own Chạy
+# (a join request) while the other links go on. A pause of the whole rotation keeps rows pending/paused instead.
+LINK_STOPPED = 'Đã dừng link này; các link khác vẫn chạy.'
 
 
 def _plain_path(path):
@@ -94,8 +101,14 @@ def _identity(manifest, directory):
     return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
 
-def create_batch(data_dir, directories):
-    """Save a selection in its given order; this never launches any work."""
+def create_batch(data_dir, directories, *, order='serial', handoff_from=None, first_index=0):
+    """Save a selection in its given order; this never launches any work.
+
+    order=ROTATE saves a rotation; handoff_from names the campaign still running on its own that will hand over to
+    it after its current video, and first_index the campaign whose turn comes first.
+    """
+    if order not in ('serial', ROTATE) or (order != ROTATE and (handoff_from is not None or first_index)):
+        raise ValueError('Cách chạy hàng đợi không hợp lệ.')
     data_dir = Path(data_dir).resolve()
     selected, seen = [], set()
     for value in directories:
@@ -109,6 +122,12 @@ def create_batch(data_dir, directories):
                              config_identity=identity, status='pending', message='Chờ chạy'))
     if not selected or len(selected) > MAX_CAMPAIGNS:
         raise ValueError('Chọn từ 1 đến 1.000 chiến dịch để chạy lần lượt.')
+    if order == ROTATE:
+        if handoff_from is not None and str(_campaign_path(data_dir, handoff_from)) not in {
+                row['directory'] for row in selected}:
+            raise ValueError('Chiến dịch đang chạy không thuộc vòng xen kẽ.')
+        if type(first_index) is not int or not 0 <= first_index < len(selected):
+            raise ValueError('Lượt đầu của vòng xen kẽ không hợp lệ.')
     batches = _plain_path(data_dir/'campaign-batches')
     batches.mkdir(parents=True, exist_ok=True)
     ident = uuid.uuid4().hex
@@ -117,6 +136,13 @@ def create_batch(data_dir, directories):
     queue = dict(schema=1, id=ident, created_at=datetime.now().isoformat(),
                  status='ready', message='Đã lưu danh sách; chưa chạy.',
                  campaigns=selected, active_directory=None)
+    if order == ROTATE:
+        for row in selected:
+            row['message'] = TURN_WAIT
+        queue.update(order=ROTATE, next_index=first_index, message='Đã lưu vòng xen kẽ; chưa chạy.')
+        if handoff_from is not None:
+            queue.update(handoff_from=str(_campaign_path(data_dir, handoff_from)),
+                         message='Chờ chiến dịch đang chạy làm xong video hiện tại rồi chạy xen kẽ.')
     atomic_json(directory/'queue.json', queue)
     atomic_json(data_dir/'last-campaign-batch.json', dict(directory=str(directory)))
     return directory
@@ -159,6 +185,16 @@ def read_batch(directory):
     active = queue.get('active_directory')
     if active is not None and active not in {row['directory'] for row in rows}:
         raise ValueError('Chiến dịch đang chạy không thuộc hàng đợi.')
+    if 'order' in queue and queue['order'] != ROTATE:
+        raise ValueError('Cách chạy hàng đợi không hợp lệ.')
+    if queue.get('order') == ROTATE:
+        if type(queue.get('next_index')) is not int or queue['next_index'] < 0:
+            raise ValueError('Lượt kế tiếp của vòng xen kẽ không hợp lệ.')
+        handoff = queue.get('handoff_from')
+        if handoff is not None and handoff not in {row['directory'] for row in rows}:
+            raise ValueError('Chiến dịch chuyển sang chạy xen kẽ không thuộc hàng đợi.')
+    elif any(key in queue for key in ('next_index', 'handoff_from')):
+        raise ValueError('Dữ liệu hàng đợi chiến dịch không hợp lệ.')
     return queue
 
 
@@ -186,6 +222,154 @@ def _completed_unchanged(directory, manifest):
                 raise ValueError('Thành phẩm chiến dịch đã xong đã thay đổi; không ghi đè.')
 
 
+def add_to_rotation(directory, campaign_directory):
+    """Ask a running rotation to take one more campaign at its next turn; the worker alone writes queue.json."""
+    directory = _queue_directory(directory)
+    target = _campaign_path(directory.parent.parent, campaign_directory)
+    _identity(_read(target/'campaign.json'), target)
+    path = directory/f'join-{uuid.uuid4().hex}.json'
+    atomic_json(path, dict(directory=str(target)))
+    return path
+
+
+def remove_from_rotation(directory, campaign_directory):
+    """Ask a rotation to stop one link (Dừng link này); the other links keep their turns."""
+    directory = _queue_directory(directory)
+    target = _campaign_path(directory.parent.parent, campaign_directory)
+    path = directory/f'leave-{uuid.uuid4().hex}.json'
+    atomic_json(path, dict(directory=str(target)))
+    return path
+
+
+def _requests(directory):
+    """Join and leave requests in the order the owner made them."""
+    found = []
+    for path in list(directory.glob('join-*.json'))+list(directory.glob('leave-*.json')):
+        try:
+            found.append((path.stat().st_mtime_ns, path.name, path))
+        except OSError:
+            continue
+    return [path for _, _, path in sorted(found)]
+
+
+def _leave_requested(directory, target):
+    for path in directory.glob('leave-*.json'):
+        try:
+            if _read(path).get('directory') == str(target):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _absorb_joins(directory, queue, data_dir):
+    """Apply the desktop's requests in order: a new campaign joins at the end of the turn order, a link's own Chạy
+    brings its row back to its turns, Dừng link này takes it out of them."""
+    notes = []
+    for path in _requests(directory):
+        try:
+            _plain_path(path)
+            request = _read(path)
+            target = _campaign_path(data_dir, request.get('directory', ''))
+            row = next((row for row in queue['campaigns'] if row['directory'] == str(target)), None)
+            if path.name.startswith('leave-'):
+                if row is not None and row['status'] not in ('completed', 'needs_attention'):
+                    row.update(status='stopped', message=LINK_STOPPED)
+                continue
+            if row is not None:
+                if row['status'] != 'running':
+                    row.update(status='pending', message=TURN_WAIT)
+                continue
+            if len(queue['campaigns']) >= MAX_CAMPAIGNS:
+                raise ValueError('Vòng xen kẽ đã đủ 1.000 chiến dịch.')
+            manifest = _read(target/'campaign.json')
+            queue['campaigns'].append(dict(directory=str(target), name=manifest['name'],
+                                           config_identity=_identity(manifest, target),
+                                           status='pending', message=TURN_WAIT))
+        except (ValueError, OSError, TypeError, AttributeError) as exc:
+            notes.append(f'Chưa áp dụng được một yêu cầu cho vòng xen kẽ: {exc}')
+        finally:
+            path.unlink(missing_ok=True)
+    return notes
+
+
+def _run_rotation(directory, queue, runner, stop, data_dir):
+    """One video of each campaign in turn, in the queue's order; campaigns with nothing left drop out.
+
+    Everything that pauses a campaign (Dừng, waiting for a download source, AI quota, login) pauses the rotation;
+    the campaign whose turn it was keeps that turn, so resuming continues it first.
+    """
+    runner = runner or campaign._run_campaign_locked
+    handoff = queue.pop('handoff_from', None)
+    if handoff:  # The campaign that ran on its own has handed over; its request is done.
+        (_campaign_path(data_dir, handoff)/campaign.ROTATION_REQUEST).unlink(missing_ok=True)
+    queue.update(status='running', message='Đang chạy xen kẽ: mỗi chiến dịch một video, lần lượt.', active_directory=None)
+    atomic_json(directory/'queue.json', queue)
+    checked = set()
+    try:
+        while True:
+            notes = _absorb_joins(directory, queue, data_dir)
+            if notes:
+                queue['message'] = ' '.join(notes)
+            atomic_json(directory/'queue.json', queue)
+            if stop.exists():
+                queue.update(status='paused', message='Đã dừng vòng xen kẽ. Bấm Tiếp tục để chạy phần còn lại.')
+                break
+            rows = queue['campaigns']
+            start = queue['next_index'] % len(rows)
+            index = next((position % len(rows) for position in range(start, start+len(rows))
+                          if rows[position % len(rows)]['status'] not in ('completed', 'needs_attention', 'stopped')), None)
+            if index is None:
+                for row in rows:  # Failed videos the owner retried by hand since.
+                    if (row['status'] == 'needs_attention'
+                            and _read(_campaign_path(data_dir, row['directory'])/'campaign.json').get('status') == 'completed'):
+                        row.update(status='completed', message='Đã hoàn tất sau khi xử lý video lỗi.')
+                finished = all(row['status'] == 'completed' for row in rows)
+                if any(row['status'] == 'stopped' for row in rows):
+                    queue.update(status='paused', message='Không còn link nào đang chạy; link đã dừng giữ nguyên tiến độ.')
+                else:
+                    queue.update(status='completed' if finished else 'needs_attention',
+                                 message='Đã hoàn tất các chiến dịch.' if finished else
+                                 'Đã chạy hết vòng xen kẽ; có video lỗi cần kiểm tra riêng.')
+                break
+            row = rows[index]
+            path = _campaign_path(data_dir, row['directory'])
+            manifest = _read(path/'campaign.json')
+            if _identity(manifest, path) != row['config_identity']:
+                raise ValueError(f'Cấu hình chiến dịch {row["name"]} đã thay đổi; chưa chạy tiếp.')
+            row.update(status='running', message='Đang chạy (xen kẽ)')
+            queue['active_directory'] = str(path)
+            atomic_json(directory/'queue.json', queue)
+            result = runner(path, external_stop=stop, max_videos=1, verify_done=path not in checked)
+            checked.add(path)
+            if (not isinstance(result, dict) or not isinstance(result.get('status'), str)
+                    or result['status'] not in {'completed', 'needs_attention', 'paused'}):
+                raise ValueError('Chiến dịch chưa trả trạng thái kết thúc hợp lệ; có thể tiếp tục sau khi kiểm tra.')
+            queue['active_directory'] = None
+            if result.get('turn_over') is True:
+                row.update(status='pending', message=TURN_WAIT)
+                queue['next_index'] = index+1
+            elif result['status'] == 'paused' and not stop.exists() and _leave_requested(directory, path):
+                row.update(status='stopped', message=LINK_STOPPED)  # Only this link was stopped; the others go on.
+                queue['next_index'] = index+1
+            elif result['status'] == 'paused':
+                row.update(status='paused', message=result.get('message') or 'Chiến dịch tạm dừng')
+                queue.update(status='paused', message=row['message'])
+                break
+            else:
+                row.update(status=result['status'], message=result.get('message') or
+                           {'completed': 'Đã hoàn tất', 'needs_attention': 'Có video lỗi; chưa tự thử lại'}[result['status']])
+                queue['next_index'] = index+1
+    except Exception as exc:
+        queue.update(status='paused', message=str(exc))
+        for row in queue['campaigns']:
+            if row['status'] == 'running':
+                row.update(status='paused', message=str(exc))
+    queue['active_directory'] = None
+    atomic_json(directory/'queue.json', queue)
+    return queue
+
+
 def run_batch(directory, runner=None, *, clear_stop=True):
     """Explicit start/resume; hold one execution lock across the entire list."""
     directory = _queue_directory(directory)
@@ -201,6 +385,8 @@ def run_batch(directory, runner=None, *, clear_stop=True):
         stop = directory/'stop.request'
         if clear_stop:
             stop.unlink(missing_ok=True)
+        if queue.get('order') == ROTATE:
+            return _run_rotation(directory, queue, runner, stop, data_dir)
         queue.update(status='running', message='Đang chạy các chiến dịch lần lượt.', active_directory=None)
         atomic_json(directory/'queue.json', queue)
         try:

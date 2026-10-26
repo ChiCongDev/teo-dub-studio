@@ -15,11 +15,12 @@ HIDDEN_TEXTS = {
     'Nhập giờ theo dạng YYYY-MM-DD HH:MM.', 'Tôi tự đặt giờ đăng, AI chỉ viết caption', 'Bật lịch gọi AI',
     'Đến giờ hẹn mới dùng hạn mức AI để phân tích và lập kế hoạch.',
     'Tự bật lịch đăng sau khi Tèo kiểm tra kế hoạch',
+    'Chat chiến lược…',  # Owner 23/10/2026: the optional, unused strategy chat row is hidden.
 }
 KEPT_TEXTS = {
     'Video mỗi ngày', 'Giờ bài đầu mỗi ngày (HH:MM)', 'Cách nhau (phút)', 'Lưu thiết lập & hẹn giờ', 'Tạm dừng AI',
-    'Thêm nguồn…', 'Bỏ nguồn', 'Làm mới nguồn', 'Mục tiêu phát triển', 'Chat chiến lược…', 'Nhịp nội dung & giờ gọi AI',
-    '▸ Tùy chọn AI',
+    'Thêm nguồn…', 'Bỏ nguồn', 'Làm mới nguồn', 'Mục tiêu phát triển', 'Bạn muốn phục vụ ai và ưu tiên nội dung gì?',
+    'Nhịp nội dung & giờ gọi AI', '▸ Tùy chọn AI',
 }
 
 

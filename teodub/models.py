@@ -33,3 +33,20 @@ def configure_models():
                     _dll_handles.append(os.add_dll_directory(str(folder)))
                     os.environ['PATH'] = str(folder) + os.pathsep + os.environ.get('PATH', '')
     return directory
+
+
+def saved_first(load):
+    """Build a Hugging Face model from the files already saved here, without asking the Hub; a model with a file
+    missing is loaded online as before (owner 24/10/2026: the Hub reset the connection while VieNeu checked files
+    it already had, and test's video 15 stopped). Call after configure_models(); models load in a worker process,
+    one job at a time, so switching the Hub client offline for the load touches nothing else."""
+    from huggingface_hub import constants
+    from huggingface_hub.errors import LocalEntryNotFoundError, OfflineModeIsEnabled
+    offline, constants.HF_HUB_OFFLINE = constants.HF_HUB_OFFLINE, True
+    try:
+        return load()
+    except (LocalEntryNotFoundError, OfflineModeIsEnabled):
+        pass
+    finally:
+        constants.HF_HUB_OFFLINE = offline
+    return load()

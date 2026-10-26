@@ -568,6 +568,38 @@ def _one_visible(locator, label):
     return found[0]
 
 
+EDITOR_SELECTOR = '[role="textbox"][contenteditable="true"],textarea'
+# The same notion of a visible editor as COMPOSER_SCRIPT, which reads the caption that is verified before Publish.
+EXPOSED_EDITOR = '''e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'
+    && !e.closest('[aria-hidden="true"],[inert]')'''
+# What a stop reports about each candidate editor, for diagnosis: never the caption itself.
+EDITOR_DETAIL = '''e => {
+    const r = e.getBoundingClientRect(), text = (e.value ?? e.innerText ?? '').trim();
+    const label = e.getAttribute('aria-label') || e.getAttribute('placeholder') || e.getAttribute('aria-placeholder') || '';
+    const hidden = e.closest('[aria-hidden="true"]') ? ' ẩn(aria-hidden)' : e.closest('[inert]') ? ' ẩn(inert)' : '';
+    return `${e.tagName.toLowerCase()} "${label.slice(0, 40)}" ${Math.round(r.width)}x${Math.round(r.height)} ${text.length} ký tự${hidden}`;
+}'''
+
+
+def _editor_details(dialog):
+    editors = dialog.locator(EDITOR_SELECTOR)
+    return '; '.join(editors.nth(i).evaluate(EDITOR_DETAIL) for i in range(editors.count()) if editors.nth(i).is_visible())
+
+
+def _caption_editor(dialog, label):
+    """The one caption editor that COMPOSER_SCRIPT also sees (22/10/2026: Facebook sometimes keeps a second reel
+    editor rendered inside an aria-hidden part of the wizard; the plain visibility check counted two, so videos 13 and
+    15 stopped although the verified caption editor was unique). Anything else stops before Publish and names the
+    candidates for diagnosis."""
+    editors = dialog.locator(EDITOR_SELECTOR)
+    found = [editors.nth(i) for i in range(editors.count())
+             if editors.nth(i).is_visible() and editors.nth(i).evaluate(EXPOSED_EDITOR)]
+    if len(found) != 1:
+        raise ValueError(f'Không xác định duy nhất {label} ({len(found)} mục: {_editor_details(dialog)}). '
+                         'Chrome giữ nguyên để kiểm tra; chưa bấm Đăng.')
+    return found[0]
+
+
 def _page_main(tab, target):
     """Anchor to the unique visible Page heading, not the global main count.
 
@@ -1137,7 +1169,8 @@ class BrowserPagePublisher:
             raise ValueError('Video xem trước của thước phim chưa sẵn sàng. '+reason+
                              ' Giữ Chrome để kiểm tra; Tèo không tải hay đăng lại.')
         if heading_names is REEL_SETTINGS_NAMES and data['editors'] != 1:
-            raise ValueError('Không xác định duy nhất lời thước phim ở bước Đăng; giữ Chrome để kiểm tra.')
+            raise ValueError(f'Không xác định duy nhất lời thước phim ở bước Đăng ({data["editors"]} ô: '
+                             f'{_editor_details(dialog)}); giữ Chrome để kiểm tra.')
         return dialog, data
 
     def _wait_reel(self, tab, target, names, preview, *, cancel=None, finished=None):
@@ -1472,8 +1505,7 @@ class BrowserPagePublisher:
                     # This is our original composer with the verified same video;
                     # explicitly enter the frozen caption in its final editor.
                     self._cancel(cancel, finished)
-                    editor = _one_visible(dialog.locator('[role="textbox"][contenteditable="true"],textarea'),
-                                          'ô mô tả thước phim cuối cùng')
+                    editor = _caption_editor(dialog, 'ô mô tả thước phim cuối cùng')
                     editor.fill(post['body'], timeout=5000)
                     retained = {key: data[key] for key in ('identity', 'files', 'preview_count')}
                     dialog, data = self._observe_reel(tab, target, REEL_SETTINGS_NAMES, data['videos'])

@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from teodub.common import atomic_json, check_cancel, hash_file
-from teodub.models import configure_models
+from teodub.models import configure_models, saved_first
 from teodub.srt import write_srt
 from teodub.subtitles import normalized_text, read_srt
 
@@ -56,8 +56,8 @@ def transcribe(source_path, output_path, *, cancel=None, progress=None, asr_mode
         progress('Đang nạp Whisper '+model_name + (' bằng GPU' if device == 'cuda' else ' bằng CPU') +
                  ' ('+runtime['compute_type']+'). '+runtime['note']+
                  ' Lần đầu cần tải mô hình miễn phí; các lần sau dùng bản đã lưu.', percent=None)
-    model = WhisperModel(model_name, device=device, compute_type=runtime['compute_type'],
-                         cpu_threads=4, num_workers=1, download_root=str(cache / 'whisper'))
+    model = saved_first(lambda: WhisperModel(model_name, device=device, compute_type=runtime['compute_type'],
+                                             cpu_threads=4, num_workers=1, download_root=str(cache / 'whisper')))
     check_cancel(cancel)
     segments, info = model.transcribe(str(source), language='zh', task='transcribe', beam_size=5,
                                      vad_filter=True, vad_parameters={'min_silence_duration_ms': 500},

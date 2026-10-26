@@ -11,6 +11,7 @@ from unittest.mock import patch
 from teodub import pipeline
 from teodub.common import Cancelled, atomic_json, hash_file
 from teodub.srt import write_srt
+from teodub.subtitles import read_srt
 
 
 class PipelineTests(unittest.TestCase):
@@ -239,6 +240,49 @@ class PipelineTests(unittest.TestCase):
         self.translate.assert_not_called()
         self.notes.assert_not_called()
         self.assertEqual((self.directory/'captions/vietnamese.srt').read_bytes(), supplied.read_bytes())
+
+    def test_recognized_last_line_past_the_picture_ends_with_it(self):
+        # 24/10: Whisper ended demo's video 9 at 2:46.3 in a 2:45.87 video, which stopped with "SRT dài hơn video".
+        self.cues = [self.cues[0], dict(start_ms=1500, end_ms=2600, text='Câu cuối nói hơi lố.')]
+        result = self.run_job()
+        self.assertEqual(result['status'], 'completed', result)
+        last = dict(start_ms=1500, end_ms=2000, text='Câu cuối nói hơi lố.')
+        self.assertEqual(self.tts.call_args.args[0][-1], last)
+        self.assertEqual(self.render.call_args.args[1], [self.cues[0], last])
+        self.assertEqual(read_srt(self.directory/'captions/vietnamese.srt'), self.cues)
+
+    def test_recognized_line_within_the_allowed_200_ms_is_left_as_it_is(self):
+        self.cues = [self.cues[0], dict(start_ms=1500, end_ms=2150, text='Câu cuối vừa đủ.')]
+        result = self.run_job()
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(self.render.call_args.args[1], self.cues)
+
+    def test_recognized_lines_drifting_after_the_picture_are_pulled_inside_it(self):
+        # 24/10: Whisper gave demo's video 21 2 s slots up to 2:22.2 in a 2:19.37 video; the last one started after it.
+        self.cues = [self.cues[0], dict(start_ms=1200, end_ms=1800, text='Mộc mạc bình dị'),
+                     dict(start_ms=1800, end_ms=2400, text='mà vẫn khiến'),
+                     dict(start_ms=2400, end_ms=3000, text='người ta nhớ thương.')]
+        result = self.run_job()
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual(self.render.call_args.args[1],
+                         self.cues[:2]+[dict(self.cues[2], end_ms=1900), dict(self.cues[3], start_ms=1900, end_ms=2000)])
+        self.assertEqual(read_srt(self.directory/'captions/vietnamese.srt'), self.cues)
+
+    def test_recognized_lines_wholly_after_the_picture_still_stop(self):
+        self.cues = [dict(start_ms=2100, end_ms=2600, text='Câu nằm sau khi video đã hết.')]
+        result = self.run_job()
+        self.assertEqual(result['status'], 'failed')
+        self.assertIn('SRT dài hơn video', result['message'])
+        self.tts.assert_not_called()
+
+    def test_supplied_srt_past_the_picture_still_stops(self):
+        supplied = self.root/'phụ đề Việt.srt'
+        write_srt(supplied, [self.cues[0], dict(start_ms=1500, end_ms=2600, text='Câu cuối nói hơi lố.')])
+        result = self.run_job(subtitles=str(supplied))
+        self.assertEqual(result['status'], 'failed')
+        self.assertIn('SRT dài hơn video', result['message'])
+        self.asr.assert_not_called()
+        self.tts.assert_not_called()
 
     def test_source_without_audio_or_supplied_srt_fails_before_engines(self):
         self.has_audio = False
@@ -499,6 +543,38 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(second['outputs'], first['outputs'])
         self.tts.assert_not_called()
         self.render.assert_not_called()
+
+
+class EndWithPictureTests(unittest.TestCase):
+    """pipeline._end_with_picture on a 2 s picture; the SRT check then refuses anything still past 2.2 s."""
+    def lines(self, *spans):
+        return [dict(start_ms=start, end_ms=end, text=f'Câu {index}.') for index, (start, end) in enumerate(spans, 1)]
+
+    def test_lines_inside_the_picture_or_its_200_ms_are_unchanged(self):
+        cues = self.lines((0, 400), (600, 2150))
+        self.assertIs(pipeline._end_with_picture(cues, 2.), cues)
+
+    def test_one_line_past_the_picture_only_ends_earlier(self):
+        self.assertEqual(pipeline._end_with_picture(self.lines((0, 400), (1500, 2600)), 2.),
+                         self.lines((0, 400), (1500, 2000)))
+
+    def test_a_line_starting_after_the_picture_shares_the_room_of_the_line_before_it(self):
+        self.assertEqual(pipeline._end_with_picture(self.lines((0, 400), (600, 1400), (2100, 2600)), 2.),
+                         self.lines((0, 400), (600, 1160), (1650, 2000)))
+
+    def test_more_late_lines_than_the_limit_or_no_room_stay_as_they_are(self):
+        many = self.lines((1000, 2300), *((2400+i*100, 2450+i*100) for i in range(pipeline.MAX_LATE_LINES+1)))
+        self.assertIs(pipeline._end_with_picture(many, 2.), many)
+        after = self.lines((2100, 2600))
+        self.assertIs(pipeline._end_with_picture(after, 2.), after)
+
+    def test_pulled_lines_keep_their_order_without_overlap(self):
+        cues = self.lines((0, 400), (1990, 2500), *((2500+i*600, 3000+i*600) for i in range(pipeline.MAX_LATE_LINES)))
+        fitted = pipeline._end_with_picture(cues, 2.)
+        self.assertEqual([cue['text'] for cue in fitted], [cue['text'] for cue in cues])
+        self.assertEqual(fitted[-1]['end_ms'], 2000)
+        self.assertTrue(all(cue['end_ms'] > cue['start_ms'] for cue in fitted))
+        self.assertTrue(all(b['start_ms'] >= a['end_ms'] for a, b in zip(fitted, fitted[1:])))
 
 
 if __name__ == '__main__':

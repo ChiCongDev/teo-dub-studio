@@ -396,6 +396,27 @@ class BrowserDomTests(unittest.TestCase):
         self.assertIsNone(self.composer_tab().evaluate('window.nexts'))
         self.assertIsNone(self.composer_tab().evaluate('window.posts'))
 
+    def test_a_reel_editor_left_in_a_hidden_layer_does_not_block_publishing(self):
+        # 22/10 videos 13 and 15: Facebook kept a second editor rendered inside an aria-hidden layer of the wizard.
+        post = self.reel_draft()
+        self.html = self.html.replace('<div id="finalPreview"></div>',
+            '<div aria-hidden="true"><div id="ghost" role="textbox" contenteditable="true" '
+            'style="width:200px;height:40px"></div></div><div id="finalPreview"></div>')
+        prepared = self.prepare(post)
+        tab = self.composer_tab()
+        self.assertEqual(prepared['browser_review']['body'], post['body'])
+        self.assertEqual(tab.evaluate('ghost.innerText'), '')
+        self.assertEqual(self.publish(post)['state'], 'published')
+        self.assertEqual(tab.evaluate('window.posts'), 1)
+
+    def test_two_exposed_reel_editors_stop_before_publishing_and_are_named(self):
+        post = self.reel_draft()
+        self.html = self.html.replace('<div id="finalPreview"></div>',
+            '<textarea aria-label="Thêm vị trí" style="width:200px;height:40px"></textarea><div id="finalPreview"></div>')
+        with self.assertRaisesRegex(ValueError, r'lời thước phim ở bước Đăng \(2 ô: .*Mô tả thước phim.*Thêm vị trí'):
+            self.prepare(post)
+        self.assertIsNone(self.composer_tab().evaluate('window.posts'))
+
     def test_changed_reel_actor_binding_blocks_final_publish(self):
         post = self.reel_draft()
         self.prepare(post)

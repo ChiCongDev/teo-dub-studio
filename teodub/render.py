@@ -27,6 +27,20 @@ CJK = re.compile(r'[\u3400-\u9fff\uf900-\ufaff\U00020000-\U000323af]')
 WORK_PREFIX = '.render-work-'
 # Windows (antivirus, a just-stopped encoder, waking from sleep) can hold a file for a few seconds.
 CLEANUP_WAITS = (.2, .5, 1, 2, 3)
+# Each line stays with its moment in the picture (owner 23/10/2026: on real videos the voice had drifted up to 56 s
+# behind, or the whole picture was slowed). A line longer than its room is read faster, pitch unchanged...
+MAX_FIT_TEMPO = 1.25
+FIT_TOLERANCE = 1.02       # ...unless it is at most this much too long...
+CATCH_UP_GAP_MS = 80       # ...and while the voice is behind the picture, lines follow each other this closely.
+# atempo keeps back up to half its 43 ms window at the end of its input: a faster line came out 3-22 ms short and a
+# short one failed the 20 ms length check (owner 24/10/2026: 6 videos stopped). This much silence after the line lets
+# all of it out; the result is then cut to exactly its new length.
+STRETCH_PAD_S = .1
+# The original sound keeps its level in pauses and drops to DUCK_GAIN under a Vietnamese line (owner 23/10/2026).
+DUCK_GAIN = .12
+DUCK_DOWN_S, DUCK_UP_S = .15, .3   # Soft fades just before a line starts and after it ends.
+DUCK_HOLD_S = .6           # A pause shorter than this stays low, so the sound does not pump between close lines.
+ENVELOPE_RATE = 500        # Samples per second of the ducking gain curve.
 
 
 def _notify(progress, message, percent=None):
@@ -167,6 +181,104 @@ def _atempo(speed):
     return ','.join(f'atempo={value:.12g}' for value in factors)
 
 
+def _fit_tempo(frames, room):
+    """How much faster a line must be read to end within its room (both in frames); 1 when it already fits."""
+    if frames <= room*FIT_TOLERANCE:
+        return 1.
+    return MAX_FIT_TEMPO if room <= 0 else min(MAX_FIT_TEMPO, frames/room)
+
+
+def _stretch_clip(path, target, tempo, cancel):
+    """Write a normalized line read `tempo` times faster with FFmpeg's atempo (pitch unchanged), run in-process.
+
+    The line is followed by STRETCH_PAD_S of silence and the result is cut to exactly frames/tempo."""
+    import av
+    import numpy as np
+    graph = av.filter.Graph()
+    source = graph.add_abuffer(format='s16', sample_rate=RATE, layout='stereo', time_base=f'1/{RATE}')
+    stretch = graph.add('atempo', f'{tempo:.12g}')
+    sink = graph.add('abuffersink')
+    source.link_to(stretch)
+    stretch.link_to(sink)
+    graph.configure()
+    frames = pushed = 0
+    pieces = []
+
+    def drain():
+        while True:
+            try:
+                frame = graph.pull()
+            except (av.error.BlockingIOError, av.error.EOFError):
+                return
+            if frame.format.name != 's16' or frame.layout.name != 'stereo':
+                raise ValueError('Chưa chỉnh được nhịp câu đọc cho khớp hình.')
+            pieces.append(bytes(frame.planes[0])[:frame.samples*4])
+
+    def push(data):
+        nonlocal pushed
+        chunk = av.AudioFrame.from_ndarray(np.frombuffer(data, dtype='<i2').reshape(1, -1),
+                                           format='s16', layout='stereo')
+        chunk.sample_rate, chunk.pts, chunk.time_base = RATE, pushed, Fraction(1, RATE)
+        pushed += chunk.samples
+        graph.push(chunk)
+        drain()
+
+    with wave.open(str(path), 'rb') as clip:
+        while data := clip.readframes(RATE//10):
+            check_cancel(cancel)
+            frames += len(data)//4
+            push(data)
+    push(bytes(round(STRETCH_PAD_S*RATE)*4))
+    graph.push(None)
+    drain()
+    audio = b''.join(pieces)
+    length, produced, expected = round(frames/tempo), len(audio)//4, pushed/tempo
+    # All of the line must be there, and the output with its silence must not be longer than `tempo` allows.
+    if produced < length or produced > expected+max(RATE*.02, expected*.01):
+        raise ValueError('Thời lượng câu đọc sau khi đọc nhanh không khớp; chưa ghép vào video.')
+    with wave.open(str(target), 'wb') as output:
+        output.setparams((2, 2, RATE, 0, 'NONE', 'not compressed'))
+        output.writeframesraw(audio[:length*4])
+    return length
+
+
+def _duck_envelope(path, placements, duration, low):
+    """The original sound's gain over time as raw mono float32: 1 in pauses, `low` under the Vietnamese voice."""
+    import numpy as np
+    depth = np.zeros(math.ceil((duration+1)*ENVELOPE_RATE))  # A spare second: amultiply ends with its shorter input.
+    spans = []
+    for item in placements:
+        start, end = item['start_frame']/RATE, item['end_frame']/RATE
+        if spans and start-spans[-1][1] < DUCK_HOLD_S:
+            spans[-1][1] = max(spans[-1][1], end)
+        else:
+            spans.append([start, end])
+    for start, end in spans:
+        first = max(0, math.floor((start-DUCK_DOWN_S)*ENVELOPE_RATE))
+        last = min(len(depth), math.ceil((end+DUCK_UP_S)*ENVELOPE_RATE)+1)
+        times = np.arange(first, last)/ENVELOPE_RATE
+        shape = np.minimum(np.clip((times-start+DUCK_DOWN_S)/DUCK_DOWN_S, 0, 1),
+                           np.clip((end+DUCK_UP_S-times)/DUCK_UP_S, 0, 1))
+        depth[first:last] = np.maximum(depth[first:last], (1-np.cos(np.pi*shape))/2)  # Raised-cosine fades.
+    (1-depth*(1-low)).astype('<f4').tofile(path)
+    return dict(gain_under_voice=DUCK_GAIN, fade_down_s=DUCK_DOWN_S, fade_up_s=DUCK_UP_S, hold_s=DUCK_HOLD_S,
+                spans=len(spans), ducked_s=round(sum(end-start for start, end in spans), 3))
+
+
+def _envelope_input(path):
+    return ['-f', 'f32le', '-ar', str(ENVELOPE_RATE), '-ch_layout', 'mono', '-i', str(path)]
+
+
+def _original_audio(speed, gain, duration, duck=None):
+    """The original sound's filter chain, shared by the export and its independent reference mix."""
+    chain = (f'[0:a:0]asetpts=PTS-STARTPTS,{_atempo(speed)},aresample={RATE},'
+             f'aformat=channel_layouts=stereo,volume={gain:.9g},apad,atrim=duration={duration:.9f}')
+    if duck is None:
+        return chain
+    # pan copies the one gain channel to both sides exactly (a default mono upmix could lower it).
+    return chain+f'[loud];[{duck}:a:0]aresample={RATE},pan=stereo|c0=c0|c1=c0[duck];[loud][duck]amultiply'
+
+
 def _run_ffmpeg(command, directory, duration, cancel, progress):
     log = directory/'ffmpeg.log'
     updates = directory/'progress.txt'
@@ -279,13 +391,14 @@ def _fill_audio_probes(path, probes, cancel):
 
 
 def _expected_audio_mix(source, narration, work, probes, duration, effective_speed,
-                        has_audio, original_gain, voice_gain, cancel):
+                        has_audio, original_gain, voice_gain, cancel, envelope=None):
     """Check narration first, then independently encode the requested reference mix.
 
     AAC reference and final MP4 use the same filter operations and codec settings:
     using mathematically equivalent amix weights changes AAC rounding enough to
     mask quiet voices. This graph is constructed independently of the final video
     graph, after verifying the full-volume narration. Defaults keep the old QC.
+    A ducked original uses the same gain curve file in both graphs.
     """
     import imageio_ffmpeg
     _fill_audio_probes(narration, probes, cancel)
@@ -302,9 +415,7 @@ def _expected_audio_mix(source, narration, work, probes, duration, effective_spe
     reference_dir.mkdir()
     reference = reference_dir/'expected.m4a'
     if has_audio:
-        filters = (f'[0:a:0]asetpts=PTS-STARTPTS,{_atempo(effective_speed)},aresample={RATE},'
-                   f'aformat=channel_layouts=stereo,volume={original_gain:.9g},apad,'
-                   f'atrim=duration={duration:.9f}[base];'
+        filters = (_original_audio(effective_speed, original_gain, duration, None if envelope is None else 2)+'[base];'
                    f'[1:a:0]volume={voice_gain:.9g}[speech];'
                    '[base][speech]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,')
     else:
@@ -312,6 +423,7 @@ def _expected_audio_mix(source, narration, work, probes, duration, effective_spe
     filters += f'alimiter=limit=0.98:level=0:latency=1,atrim=duration={duration:.9f}[a]'
     command = [imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-nostdin', '-n',
                '-threads', '4', '-i', str(source), '-i', str(narration),
+               *([] if envelope is None else _envelope_input(envelope)),
                '-filter_complex_threads', '2', '-filter_complex', filters, '-map', '[a]',
                '-c:a', 'aac', '-b:a', '192k', '-ar', str(RATE), '-t', f'{duration:.9f}', str(reference)]
     _run_ffmpeg(command, reference_dir, duration, cancel, None)
@@ -440,13 +552,17 @@ def _verify(source, video, expected, cues, probes, subtitle_mode, cancel, progre
     return report
 
 
-def _caption_boxes(picture, start_s, cues, effective_speed, width, height, options, cancel, progress):
+def _caption_boxes(picture, start_s, end_s, cues, effective_speed, width, height, options, cancel, progress):
     """One box per burned line that also hides the video's own caption; the wide band if the picture cannot be read."""
     from teodub.caption_cover import cover_boxes
     _notify(progress, 'Đang tìm phụ đề gốc trong hình để che vừa đủ…', 18)
     # The picture plays at 1/effective_speed, so output time t shows the source at start_s + t*effective_speed.
-    intervals = [(start_s+cue['start_ms']/1000*effective_speed, start_s+cue['end_ms']/1000*effective_speed)
-                 for cue in cues]
+    intervals = []
+    for cue in cues:
+        start, end = (start_s+cue[key]/1000*effective_speed for key in ('start_ms', 'end_ms'))
+        if end > end_s-.1:  # Spoken over the frozen last frame: read the picture's last moments.
+            start, end = min(start, end_s-.6), end_s-.1
+        intervals.append((start, end))
     size, weight = options['subtitle_size'], options['subtitle_weight']
     try:
         regions, report = cover_boxes(picture, intervals, check=lambda: check_cancel(cancel),
@@ -572,15 +688,28 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
                         plan=output/'render-plan.json', quality=output/'quality.json')
     with _work_directory(output) as work:
         placements, probes, final_cues = [], [], []
-        cursor = -gap_frames
+        # Each line's moment in the picture; the voice may not start before it.
+        targets = [round(cue['start_ms']*RATE/(1000*speed)) for cue in clean_cues]
+        picture_end = round(info['duration_s']*RATE/speed)
+        catch_up = min(gap_frames, round(CATCH_UP_GAP_MS*RATE/1000))
+        cursor = None
         for index, (cue, clip) in enumerate(zip(clean_cues, clips), 1):
             check_cancel(cancel)
             _notify(progress, f'Đang kiểm tra và xếp giọng câu {index}/{len(clips)}…', 5+10*index/len(clips))
             normalized = work/f'voice-{index}.wav'
             frames, original = _normalize_clip(clip, normalized, cancel)
-            start = max(round(cue['start_ms']*RATE/(1000*speed)), cursor+gap_frames)
+            target = targets[index-1]
+            # On time, a line starts at its moment; behind the picture, right after the previous line.
+            start = target if cursor is None or cursor+gap_frames <= target else max(target, cursor+catch_up)
+            # Its room ends where the next line should start (a pause before it), or where the picture ends.
+            room = (targets[index]-gap_frames if index < len(targets) else picture_end)-start
+            tempo = _fit_tempo(frames, room)
+            if tempo > 1:
+                fitted = work/f'voice-{index}.fit.wav'
+                frames = _stretch_clip(normalized, fitted, tempo, cancel)
+                normalized = fitted
             end = start+frames
-            placement = dict(id=index, start_frame=start, end_frame=end, frames=frames,
+            placement = dict(id=index, start_frame=start, end_frame=end, frames=frames, tempo=tempo,
                              source=str(original), sha256=clip['sha256'], normalized=str(normalized))
             placements.append(placement)
             probes.append(_voice_probe(normalized, start))
@@ -589,15 +718,20 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
         duration = max(info['duration_s']/speed, cursor/RATE+.2)
         fps = Fraction(info['fps']).limit_denominator(1001)
         duration = math.ceil(duration*float(fps))/float(fps)
-        effective_speed = info['duration_s']/duration
+        # The picture keeps the chosen speed; a voice still speaking at its end is shown over the last frame.
+        effective_speed = speed
         width, height = info['width']+info['width']%2, info['height']+info['height']%2
         narration = work/'narration.wav'
         _write_narration(narration, placements, math.ceil(duration*RATE), cancel)
+        envelope = ducking = None
+        if info['has_audio'] and voice_gain > 0 and original_gain > DUCK_GAIN:
+            envelope = work/'ducking.f32'
+            ducking = _duck_envelope(envelope, placements, duration, DUCK_GAIN/original_gain)
         mix = None
         if original_gain != .1 or voice_gain != 1.0:
             _notify(progress, 'Đang kiểm tra hai mức âm lượng đã chọn…', 17)
             mix = _expected_audio_mix(source, narration, work, probes, duration, effective_speed,
-                                      info['has_audio'], original_gain, voice_gain, cancel)
+                                      info['has_audio'], original_gain, voice_gain, cancel, envelope)
         subtitles, video = work/'final.srt', work/'render.partial.mp4'
         _write_srt(subtitles, final_cues)
         picture_index = 2 if cleaned_picture else 0
@@ -615,18 +749,20 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
         elif subtitle_options['burn_subtitles']:
             # One rectangle per line (owner 22/10): the Vietnamese caption in its middle, sitting on the video's own
             # caption rows and just large enough to hide the caption shown there. Text and box come from one script.
-            picture_start = (picture_info if cleaned_picture else info)['start_s']
-            placed, cover = _caption_boxes(picture_source, picture_start, final_cues, effective_speed,
-                                           width, height, subtitle_options, cancel, progress)
+            shown = picture_info if cleaned_picture else info
+            placed, cover = _caption_boxes(picture_source, shown['start_s'], shown['start_s']+shown['duration_s'],
+                                           final_cues, effective_speed, width, height, subtitle_options, cancel, progress)
             captions = work/'captions.ass'
             write_captions(captions, placed, cover['text_size'], subtitle_options['subtitle_weight'], box, width, height)
             escaped = str(captions.resolve()).replace('\\', '/').replace(':', '\\:').replace("'", "\\'")
             picture += f",subtitles=filename='{escaped}':original_size={width}x{height}[v]"
         else:
             picture += '[v]'
+        # The gain curve is the last input: after the cleaned picture and the subtitle track when they are used.
+        duck_input = 2+bool(cleaned_picture)+(not subtitle_options['burn_subtitles'])
         if info['has_audio']:
-            audio = (f'[0:a:0]asetpts=PTS-STARTPTS,{_atempo(effective_speed)},aresample={RATE},'
-                     f'aformat=channel_layouts=stereo,volume={original_gain:.9g},apad,atrim=duration={duration:.9f}[original];'
+            audio = (_original_audio(effective_speed, original_gain, duration, None if envelope is None else duck_input)+
+                     '[original];'
                      f'[1:a:0]volume={voice_gain:.9g}[voice];'
                      '[original][voice]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,')
         else:
@@ -640,6 +776,8 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
             command += ['-i', str(picture_source)]
         if not subtitle_options['burn_subtitles']:
             command += ['-i', str(subtitles)]
+        if envelope is not None:
+            command += _envelope_input(envelope)
         command += ['-filter_complex_threads', '2', '-filter_complex_script', str(filters),
                     '-map', '[v]', '-map', '[a]']
         if not subtitle_options['burn_subtitles']:
@@ -663,6 +801,10 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
             raise ValueError('Nguồn hoặc giọng đã thay đổi trong lúc dựng; không công bố bản xuất.')
         plan = dict(schema=1, source=str(source), source_sha256=source_hash, source_duration_s=info['duration_s'],
                     requested_speed=speed, effective_picture_speed=effective_speed, duration_s=duration,
+                    last_frame_held_s=round(max(0., duration-info['duration_s']/speed), 3),
+                    line_fit=dict(max_tempo=MAX_FIT_TEMPO, catch_up_gap_ms=CATCH_UP_GAP_MS,
+                                  faster_lines=sum(item['tempo'] > 1 for item in placements)),
+                    ducking=ducking,
                     original_gain=original_gain, voice_gain=voice_gain, gap_ms=gap_ms, sample_rate=RATE,
                     source_embedded_text_removed=False, subtitle_clean=cleaned_picture,
                     source_text_removal_scope=('selected_rectangle_only' if cleaned_picture else 'none'),

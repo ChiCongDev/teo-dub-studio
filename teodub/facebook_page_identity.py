@@ -3,7 +3,9 @@
 Only the user's account Chrome is used. No cookies, hidden state, endpoints or
 profile IDs are read; the final composer must independently verify the Page ID.
 Observed Facebook layout: Your profile -> See all profiles -> Choose profile,
-with named buttons and an explicit ', selected' / ', đang chọn' marker.
+with named buttons and an explicit ', selected' / ', đang chọn' marker. Read on 24/10/2026 (English UI):
+"Account, your profile" -> dialog "Your profile" -> See all profiles -> "Select profile" with
+"<Page>, currently selected" and "<Page>, 3 notifications".
 """
 import re
 import time
@@ -13,7 +15,9 @@ from urllib.parse import parse_qs, urlsplit
 from teodub.common import Cancelled, check_cancel
 from teodub.facebook_accounts import facebook_url
 
-PROFILE_NAMES = re.compile(r'^(Trang cá nhân của bạn|Your profile|Tài khoản|Account)$', re.I)
+# 24/10/2026: the account button reads "Account, your profile" (its menu is still the dialog "Your profile").
+PROFILE_NAMES = re.compile(r'^(Trang cá nhân của bạn|Your profile|Tài khoản|Account'
+                           r'|Account, your profile|Tài khoản, trang cá nhân của bạn)$', re.I)
 ALL_NAMES = re.compile(r'^(Xem tất cả trang cá nhân|See all profiles)$', re.I)
 CHOOSER_NAMES = re.compile(r'^(Chọn trang cá nhân|Choose a profile|Select profile|Select a profile)$', re.I)
 CREATE_NAMES = re.compile(r'^(Tạo bài viết|Create post|Create a post)$', re.I)

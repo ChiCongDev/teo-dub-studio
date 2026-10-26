@@ -16,6 +16,9 @@ from teodub.page_schedule import LOCAL_TIME, PageScheduleStore, parse_time, disp
 # and code stay; set to False to show them again.
 SOURCE_REFRESH_POLLS = 5  # The source counts are re-read every 5 polls (about 10 seconds).
 HIDE_AI_SCHEDULE_CONTROLS = True
+# Owner request (23/10/2026): the strategy chat is optional and unused; hide its row under the goal. Linking stays in
+# the Kế hoạch tab and a saved link is still read. Set to False to show the row again.
+HIDE_STRATEGY_LINK = True
 
 
 class PageAIPanel(ttk.Frame):
@@ -114,11 +117,13 @@ class PageAIPanel(ttk.Frame):
         self.goal=tk.Text(goal_card,height=2,wrap='word',width=40)
         self.goal.pack(fill='x',pady=(5,7))
         self.goal.insert('1.0','Phát triển nội dung hữu ích, caption tự nhiên; phân tích kết quả và điều chỉnh lịch để thử nghiệm.')
-        strategy_row=ttk.Frame(goal_card)
-        strategy_row.pack(fill='x')
-        self.strategy_button=ttk.Button(strategy_row,text='Chat chiến lược…',command=self.open_strategy_settings)
-        self.strategy_button.pack(side='right',padx=(8,0))
-        self.note(strategy_row,textvariable=self.strategy_status).pack(side='left',fill='x',expand=True)
+        self.strategy_button=None
+        if not HIDE_STRATEGY_LINK:
+            strategy_row=ttk.Frame(goal_card)
+            strategy_row.pack(fill='x')
+            self.strategy_button=ttk.Button(strategy_row,text='Chat chiến lược…',command=self.open_strategy_settings)
+            self.strategy_button.pack(side='right',padx=(8,0))
+            self.note(strategy_row,textvariable=self.strategy_status).pack(side='left',fill='x',expand=True)
 
         source_card=ttk.LabelFrame(config,text='Nguồn video',padding=10)
         source_card.pack(fill='x',pady=(0,8))

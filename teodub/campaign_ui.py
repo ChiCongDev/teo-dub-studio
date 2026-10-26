@@ -9,7 +9,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-from teodub.campaign import (auto_resume_due, create_campaign, is_running,
+from teodub.campaign import (ROTATION_REQUEST, ROTATION_WAIT, auto_resume_due, create_campaign, is_running,
                             read_json, totals)
 from teodub.campaign_tracking import tracking_row, campaign_notice, processing_time
 from teodub.campaign_posting import campaign_posting_statuses
@@ -559,7 +559,8 @@ class CampaignTab(ttk.Frame):
         key = self.input_key()
         if not key[0] or key == self.auto_key:
             return
-        if self.scanning or self.studio.campaign_busy or self.studio.process is not None or self.studio.login_pending:
+        # Running campaigns are no reason to wait: a new list joins them in turns (owner 23/10/2026).
+        if self.scanning or self.studio.process is not None or self.studio.login_pending:
             self.auto_timer = self.after(1000, self.auto_discover)
             return
         # Incomplete typing is not a request; never loop a failed browser scan.
@@ -573,7 +574,7 @@ class CampaignTab(ttk.Frame):
         self.discover()
 
     def discover(self):
-        if self.scanning or self.studio.campaign_busy or self.studio.process is not None or self.studio.login_pending:
+        if self.scanning or self.studio.process is not None or self.studio.login_pending:
             return
         text = self.source.get('1.0', 'end').strip()
         self.discovery = None
@@ -650,8 +651,20 @@ class CampaignTab(ttk.Frame):
             self.refresh_buttons()
 
     def _create(self):
-        if self.scanning or self.studio.campaign_busy or self.studio.process is not None or self.studio.login_pending:
+        if self.scanning or self.studio.process is not None or self.studio.login_pending:
             return
+        # Campaign work may run meanwhile: the new campaign then joins it in turns (owner 23/10/2026).
+        running = bool(self.studio.campaign_busy)
+        if running:
+            from tkinter import messagebox
+            batch = getattr(self.studio, 'batch_controller', None)
+            serial = bool(batch and batch.busy and batch.rotation() is None)
+            question = ('Một danh sách đang chạy lần lượt. Chiến dịch mới sẽ được lưu nhưng chưa tự chạy; '
+                        'bấm Chạy / Tiếp tục khi danh sách xong. Tạo chiến dịch?' if serial else
+                        'Đang có chiến dịch chạy. Tạo chiến dịch mới và chạy xen kẽ: mỗi chiến dịch một video, lần lượt? '
+                        'Video đang làm sẽ làm xong rồi mới chuyển.')
+            if not messagebox.askyesno('Tạo chiến dịch mới', question, parent=self):
+                return
         try:
             # The single-video form may have changed since this tab was opened.
             # Freeze its complete current profile only at NEW campaign creation;
@@ -683,11 +696,92 @@ class CampaignTab(ttk.Frame):
             self.directory = directory
             self.records = list(records)
             self.refresh_saved()
+            outcome, problem = None, ''
+            if running:
+                try:
+                    outcome = self.join_running(directory)
+                except (ValueError, OSError, KeyError, TypeError) as exc:
+                    problem = str(exc)
             self.display(read_json(directory/'campaign.json'))
-            self.status.set(f'Đã lưu chiến dịch {len(records)} video. Bấm Chạy / Tiếp tục để bắt đầu.')
+            saved = f'Đã lưu chiến dịch {len(records)} video.'
+            area = getattr(self.studio, 'campaign_area', None)
+            self.status.set(saved+({
+                'handoff': ' Chiến dịch đang chạy làm xong video hiện tại thì Tèo chạy xen kẽ: mỗi chiến dịch một video, lần lượt.',
+                'joined': ' Đã thêm vào vòng chạy xen kẽ; tới lượt là chạy.',
+                'serial': ' Danh sách đang chạy lần lượt nên chiến dịch này chưa tự chạy; bấm Chạy / Tiếp tục khi danh sách xong.',
+            }.get(outcome) or (' Chưa thêm được vào vòng chạy xen kẽ: '+problem if problem else
+                               ' Bấm Chạy / Tiếp tục để bắt đầu.')))
             self.refresh_buttons()
+            if area is not None:  # Each link gets its own sub-tab, named like the campaign (owner 23/10/2026).
+                area.open_link(directory, message=self.status.get().replace('Chạy / Tiếp tục', 'Chạy'))
         except (ValueError, OSError, KeyError) as exc:
             self.status.set('Chưa tạo: '+str(exc))
+
+    def join_running(self, directory):
+        """Join a campaign created while campaign work runs; see CampaignBatchController.join."""
+        batch = getattr(self.studio, 'batch_controller', None)
+        if batch is None:
+            return None
+        running = self.worker_directory if self.process is not None and self.process.poll() is None else None
+        if running is None and not batch.busy:
+            # A campaign worker this window did not start (Tèo was reopened while it ran).
+            running = next((path for path in self.saved_paths.values()
+                            if Path(path).resolve() != Path(directory).resolve() and is_running(path)), None)
+        return batch.join(directory, running)
+
+    def rotation_running(self):
+        # Reading the queue first: probing a worker's lock only when it is a rotation.
+        batch = getattr(self.studio, 'batch_controller', None)
+        return bool(batch is not None and batch.rotation() is not None and batch.busy)
+
+    def resume_rotation(self):
+        """Chạy / Tiếp tục on a campaign of a stopped rotation continues the rotation, not this campaign alone."""
+        batch = getattr(self.studio, 'batch_controller', None)
+        queue = batch.rotation() if batch is not None and self.directory else None
+        if not queue or queue.get('status') not in ('ready', 'paused') or not batch.includes(self.directory, queue):
+            return False
+        target = str(Path(self.directory).resolve())
+        if any(row.get('directory') == target and row.get('status') in ('completed', 'needs_attention')
+               for row in queue['campaigns']):
+            return False
+        try:
+            if any(row.get('directory') == target and row.get('status') == 'stopped' for row in queue['campaigns']):
+                from teodub.campaign_batch import add_to_rotation
+                add_to_rotation(batch.directory, self.directory)  # Stopped on its own tab: back into the turns.
+            batch.resume()
+            self.status.set('Đang chạy tiếp vòng xen kẽ: mỗi chiến dịch một video, lần lượt.')
+        except (OSError, ValueError) as exc:
+            self.status.set('Chưa chạy tiếp vòng xen kẽ: '+str(exc))
+        self.refresh_buttons()
+        return True
+
+    def continue_rotation(self, busy):
+        """Start the rotation once the running campaign handed over; restart it when a download source is back."""
+        batch = getattr(self.studio, 'batch_controller', None)
+        if batch is None or self.studio.closed or self.studio.closing:
+            return
+        try:
+            if batch.complete_handoff() == 'started':
+                self.status.set('Bắt đầu chạy xen kẽ: mỗi chiến dịch một video, lần lượt.')
+                return
+        except (OSError, ValueError):
+            pass  # Something else runs now (a list being read, a single video); try again on a later poll.
+        queue = batch.rotation()
+        now = time.time()
+        if busy or not queue or queue.get('status') != 'paused' or now-self.auto_resume_tried < 60 or batch.busy:
+            return
+        paused = next((row for row in queue.get('campaigns', []) if row.get('status') == 'paused'), None)
+        try:
+            due = bool(paused) and auto_resume_due(read_json(Path(paused['directory'])/'campaign.json'), now)
+        except (OSError, ValueError, KeyError, TypeError):
+            due = False
+        if due:
+            self.auto_resume_tried = now
+            try:
+                batch.resume()
+                self.status.set('Đã đến giờ thử lại nguồn tải; Tèo tự chạy tiếp vòng xen kẽ.')
+            except (OSError, ValueError):
+                pass
 
     def refresh_saved(self):
         self.saved_paths = {}
@@ -725,11 +819,15 @@ class CampaignTab(ttk.Frame):
         if (not self.directory or self.scanning or self.studio.process is not None or self.studio.campaign_busy
                 or self.studio.login_pending or getattr(self.studio, 'voice_learning_busy', False) is True):
             return
+        if not retry and self.resume_rotation():
+            return
         try:
             self.launch_notice = None
             self.preview_retry_failed = bool(retry)
             if not self.update_execution_summary(read_json(self.directory/'campaign.json')):
                 raise ValueError(self.summary.get())
+            # Run on its own: a hand-over asked of an earlier run must not end this one after its first video.
+            (self.directory/ROTATION_REQUEST).unlink(missing_ok=True)
             from teodub.app import worker_command
             # Same interpreter/frozen entry point as single-video workers.
             command = worker_command(self.directory/'unused.json')
@@ -750,13 +848,20 @@ class CampaignTab(ttk.Frame):
             self.notice.set(self.launch_notice[1])
 
     def stop(self):
+        reading = self.chrome_login_pending or self.scanning
         if self.chrome_login_pending:
             self.chrome_login_cancel.set()
         if self.scanning:
             self.scan_cancel.set()
+        if reading and self.studio.campaign_busy:
+            # Reading a new list while campaigns run: Dừng ends the reading only; the campaigns go on.
+            self.status.set('Đã dừng lấy danh sách; chiến dịch đang chạy vẫn tiếp tục.')
+            return
         active_directory = self.worker_directory if self.process and self.process.poll() is None else self.directory
         if active_directory and is_running(active_directory):
             (active_directory/'stop.request').touch()
+        if self.rotation_running():
+            self.studio.batch_controller.stop()  # Dừng stops the whole rotation, whichever campaign's turn it is.
         self.status.set('Đang dừng và giữ các phần đã hoàn tất…')
         self.notice.set('Đã yêu cầu Dừng; đang chờ bước hiện tại dừng và lưu tiến độ.')
 
@@ -768,12 +873,32 @@ class CampaignTab(ttk.Frame):
         label = 'Đang chạy' if active else {
             'ready': 'Sẵn sàng', 'completed': 'Hoàn tất', 'needs_attention': 'Còn video lỗi',
             'paused': 'Đã dừng', 'running': 'Bị gián đoạn · bấm Tiếp tục'}.get(manifest['status'], manifest['status'])
+        # Campaigns in turns (owner 23/10/2026): resting between turns is not a stop.
+        batch = getattr(self.studio, 'batch_controller', None)
+        rotation = batch.rotation() if batch is not None else None
+        target = str(Path(self.directory).resolve())
+        # A link stopped on its own tab is out of the turns.
+        in_rotation = bool(rotation) and any(row.get('directory') == target and row.get('status') != 'stopped'
+                                             for row in rotation.get('campaigns', []))
+        handoff = bool(rotation) and rotation.get('status') == 'ready' and rotation.get('handoff_from')
+        rotation_busy = in_rotation and batch.busy
+        if in_rotation and not active and manifest['status'] not in ('completed', 'needs_attention'):
+            if rotation_busy:
+                label = 'Chạy xen kẽ · chờ tới lượt'
+            elif handoff:
+                label = 'Chờ chạy xen kẽ (sau video đang làm)'
         self.status.set(f'{manifest["name"]}: {label} · Xong {counts["completed"]}/{counts["total"]} · '
                         f'Lỗi {counts["failed"]} · Chờ {counts["waiting"]}. '+manifest.get('message', ''))
+        if active and handoff and in_rotation:
+            self.status.set(self.status.get()+' Làm xong video đang chạy, Tèo chạy xen kẽ: mỗi chiến dịch một video, lần lượt.')
         discovery = manifest.get('discovery') or {}
         if discovery and not discovery.get('complete', False):
             self.status.set(self.status.get()+' · Danh sách chưa đủ kênh: '+discovery.get('message', ''))
         notice = campaign_notice(manifest, active=active)
+        if in_rotation and not active and (rotation_busy or handoff) and manifest.get('status') == 'paused':
+            notice = ''  # Waiting for its turn, not stopped.
+        elif manifest.get('message') == ROTATION_WAIT and manifest.get('status') == 'paused' and not active:
+            notice = 'Vòng chạy xen kẽ đang dừng. Bấm Chạy / Tiếp tục để chạy tiếp.'
         if self.launch_notice and self.launch_notice[0] == self.directory:
             notice = self.launch_notice[1]
         elif active and (self.directory/'stop.request').exists():
@@ -813,8 +938,11 @@ class CampaignTab(ttk.Frame):
     def refresh_buttons(self):
         busy = (self.studio.process is not None or self.studio.campaign_busy or self.scanning or self.creating
             or self.studio.login_pending or getattr(self.studio, 'voice_learning_busy', False) is True)
+        # Campaigns running are no reason to wait for a new list: it joins them in turns (owner 23/10/2026).
+        new_blocked = (self.studio.process is not None or self.scanning or self.creating or self.studio.login_pending
+            or getattr(self.studio, 'voice_learning_busy', False) is True)
         for button in (self.create_button, self.scan_button):
-            button.configure(state='disabled' if busy else 'normal')
+            button.configure(state='disabled' if new_blocked else 'normal')
         self.chrome_login_button.configure(state='disabled' if busy else 'normal')
         self.drive_button.configure(state='disabled' if busy else 'normal')
         self.drive_check.configure(state='disabled' if busy else 'normal')
@@ -826,7 +954,8 @@ class CampaignTab(ttk.Frame):
         for button in (self.start_button, self.retry_button):
             button.configure(state='normal' if self.directory and not busy else 'disabled')
         active_directory = self.worker_directory if self.process and self.process.poll() is None else self.directory
-        self.stop_button.configure(state='normal' if self.scanning or self.chrome_login_pending or (active_directory and is_running(active_directory)) else 'disabled')
+        self.stop_button.configure(state='normal' if self.scanning or self.chrome_login_pending or (active_directory and is_running(active_directory))
+                                   or self.rotation_running() else 'disabled')
 
     def poll(self):
         if self.studio.closed:
@@ -881,6 +1010,7 @@ class CampaignTab(ttk.Frame):
         if self.studio.campaign_busy != busy:
             self.studio.campaign_busy = busy
             self.studio.refresh_buttons()
+        self.continue_rotation(busy)
         if self.directory and not self.scanning:
             try:
                 manifest = read_json(self.directory/'campaign.json')

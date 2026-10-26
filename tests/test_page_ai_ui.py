@@ -92,14 +92,25 @@ class PageAIUITests(unittest.TestCase):
             self.panel.poll()
         self.assertEqual(self.panel.sources.item(self.campaign,'values'),('Câu cá','0','0'))
 
-    def test_strategy_prerequisite_is_page_scoped_and_opens_manager_navigation(self):
+    def test_strategy_row_is_hidden_and_settings_save_without_a_link(self):
+        # Owner 23/10/2026: the strategy chat is optional and unused; its row is hidden.
+        self.assertIsNone(self.panel.strategy_button)
+        self.store.plans.disconnect(self.account,self.page)
+        self.panel.set_sources([self.campaign])
+        self.panel.save()
+        self.assertEqual(self.store.policy(self.account,self.page)['config']['thread_id'],'')
+        self.invoke.assert_not_called()
+
+    def test_shown_again_the_strategy_row_is_page_scoped_and_opens_manager_navigation(self):
+        import teodub.page_ai_ui as page_ai_ui
+        with patch.object(page_ai_ui,'HIDE_STRATEGY_LINK',False):
+            self.panel=PageAIPanel(ttk.Notebook(self.tk),self.manager)
         self.assertIn('Phát triển page câu cá',self.panel.strategy_status.get())
         self.panel.strategy_button.invoke()
         self.manager.open_strategy_settings.assert_called_once_with()
         self.store.plans.disconnect(self.account,self.page)
         self.panel.refresh()
         self.assertIn('Chưa liên kết chat chiến lược',self.panel.strategy_status.get())
-        self.assertIn('Cần liên kết trước',self.panel.strategy_status.get())
         self.assertIsNone(self.store.policy(self.account,self.page))
         self.invoke.assert_not_called()
 
