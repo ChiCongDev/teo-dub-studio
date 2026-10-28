@@ -152,5 +152,52 @@ class AutoApprovedListTests(unittest.TestCase):
         self.assertIn('Chọn', self.tab.status.get())
 
 
+class SaveNoticeTests(unittest.TestCase):
+    """28/10/2026: the owner typed 9:30, pressed Lưu, saw no refusal (the 2-second refresh wiped it) and the old
+    setup stayed in force."""
+    def setUp(self):
+        AutoPanelTests.setUp(self)
+        self.panel.videos.set(10)
+        self.panel.slot_gap.set('10')
+        self.panel.auto_campaign.set(True)
+
+    saved_config = AutoPanelTests.saved_config
+
+    def test_short_hour_is_saved_as_two_digits_and_the_box_follows(self):
+        for typed, saved in (('9:30', '09:30'), ('9:5', '09:05'), ('09:30', '09:30'), (' 6:00 ', '06:00')):
+            with self.subTest(typed=typed):
+                self.panel.slot_start.set(typed)
+                self.panel.save()
+                self.assertEqual(self.saved_config()['slot_start'], saved)
+                self.assertEqual(self.panel.slot_start.get(), saved)
+                self.assertTrue(self.panel.status.get().startswith('Đã lưu thiết lập lúc '))
+
+    def test_a_wrong_hour_is_still_refused_and_the_old_setup_stays(self):
+        self.panel.slot_start.set('10:00')
+        self.panel.save()
+        for typed in ('25:00', '9:75', 'abc', '', '930'):
+            with self.subTest(typed=typed):
+                self.panel.slot_start.set(typed)
+                self.panel.save()
+                self.assertEqual(self.saved_config()['slot_start'], '10:00')
+                self.assertEqual(self.panel.slot_start.get(), typed)
+                self.assertTrue(self.panel.status.get().startswith('Chưa lưu: '))
+                self.assertIn('HH:MM', self.panel.status.get())
+
+    def test_the_notice_survives_the_two_second_refresh_and_the_next_save_replaces_it(self):
+        self.panel.slot_start.set('25:00')
+        self.panel.save()
+        refused = self.panel.status.get()
+        self.assertTrue(refused.startswith('Chưa lưu: '))
+        for _ in range(3):
+            self.panel.refresh()  # What poll() does every 2 seconds.
+            self.assertTrue(self.panel.status.get().startswith(refused.split('\n')[0]))
+        self.panel.slot_start.set('9:30')
+        self.panel.save()
+        self.assertTrue(self.panel.status.get().startswith('Đã lưu thiết lập lúc '))
+        self.panel.refresh()
+        self.assertNotIn('Chưa lưu', self.panel.status.get())
+
+
 if __name__ == '__main__':
     unittest.main()

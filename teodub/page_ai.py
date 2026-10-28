@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 import hashlib
 import json
+import math
 from pathlib import Path
 import queue
 import re
@@ -45,10 +46,11 @@ def _integer(value, low, high):
 
 BASE_KEYS={'campaigns','model','effort','days','videos_per_day','texts_per_week','interval_days','goal','auto_publish'}
 SLOT_KEYS={'slot_start','slot_gap'}
-OPTIONAL_KEYS=SLOT_KEYS|{'auto_campaign'}
+OPTIONAL_KEYS=SLOT_KEYS|{'auto_campaign','slot_times'}
 MAX_PER_DAY=1000  # Sanity bound only: the owner chooses the daily number.
 AUTO_SAME_MINUTE=60  # Auto mode: two posts only may not share a minute.
 AUTO_LEAD_SECONDS=180  # Auto mode: a slot must still be this far ahead when the AI turn starts.
+AUTO_DEBT_GAP_SECONDS=900  # Owner's own times only (28/10/2026): catch-up posts for owed times are spaced this far apart.
 GONE_STATES=('removed','cancelled')  # Posts the owner deleted/cancelled take no quota and block no time.
 AUTO_STALE_SECONDS=90  # A slot that is closer than this when the AI answers is dropped; its video waits for the next batch.
 AUTO_BATCH_SECONDS=300  # Finished videos are gathered for this long before one AI call.
@@ -64,13 +66,22 @@ def _config_keys_ok(config):
 
 
 def _check_slots(config):
-    """Owner-chosen posting times: first time of day plus a gap. Both settings or neither."""
+    """Owner-chosen posting times: a daily rhythm (first time + gap), or an explicit HH:MM per video
+    (28/10/2026, `slot_times`). At most one of the two, or neither (the AI chooses)."""
     auto=config.get('auto_campaign',False)
     if type(auto) is not bool:
         raise ValueError('Chế độ tự động từ chiến dịch phải là bật hoặc tắt.')
     present=SLOT_KEYS&set(config)
+    custom='slot_times' in config
+    if present and custom:
+        raise ValueError('Chỉ dùng một cách đặt giờ: nhịp cố định (giờ bài đầu + khoảng cách) hoặc giờ riêng từng video.')
+    if custom:
+        if auto and not config['auto_publish']:
+            raise ValueError('Chế độ tự động từ chiến dịch với giờ riêng từng video cần chế độ tự đăng.')
+        _check_slot_times(config)
+        return
     if auto and (present!=SLOT_KEYS or not config['auto_publish']):
-        raise ValueError('Chế độ tự động từ chiến dịch cần giờ bài đầu, khoảng cách và chế độ tự đăng.')
+        raise ValueError('Chế độ tự động từ chiến dịch cần giờ bài đầu, khoảng cách (hoặc giờ riêng từng video) và chế độ tự đăng.')
     if not present:
         return
     if present!=SLOT_KEYS:
@@ -90,18 +101,47 @@ def _check_slots(config):
         raise ValueError('Các bài trong ngày vượt quá 23:59; giảm số video, khoảng cách hoặc đặt giờ đầu sớm hơn.')
 
 
+def _check_slot_times(config):
+    """28/10/2026: an explicit HH:MM for each video, in place of a first-time+gap rhythm. The UI already
+    zero-pads and sorts (`PageAIPanel.slot_times_values`); this only refuses what it is given."""
+    times=config['slot_times']
+    if not isinstance(times,list) or not times:
+        raise ValueError('Giờ riêng từng video không hợp lệ.')
+    parsed=[]
+    for value in times:
+        match=re.fullmatch(r'([01]\d|2[0-3]):([0-5]\d)',value) if isinstance(value,str) else None
+        if not match:
+            raise ValueError('Mỗi giờ riêng từng video phải theo dạng HH:MM, ví dụ 08:00.')
+        parsed.append(int(match[1])*60+int(match[2]))
+    if parsed!=sorted(parsed) or len(set(parsed))!=len(parsed):
+        raise ValueError('Giờ riêng từng video phải xếp theo thứ tự tăng dần trong ngày và không trùng nhau.')
+    if len(times)!=config['videos_per_day']:
+        raise ValueError('Số giờ riêng phải bằng đúng số Video mỗi ngày.')
+    if config['texts_per_week']:
+        raise ValueError('Giờ riêng từng video chỉ dùng cho video; đặt số bài chữ mỗi tuần bằng 0.')
+
+
+def _owner_times(config):
+    """(hour, minute) pairs for one day: the owner's explicit list, or the first-time+gap rhythm expanded to
+    `videos_per_day` times (28/10/2026; `fixed_slots` only — never past 23:59 there, `_check_slots` enforces it)."""
+    if 'slot_times' in config:
+        return [tuple(map(int, value.split(':'))) for value in config['slot_times']]
+    hour,minute=map(int,config['slot_start'].split(':'))
+    gap=config['slot_gap']
+    return [((hour*60+minute+index*gap)//60, (hour*60+minute+index*gap)%60) for index in range(config['videos_per_day'])]
+
+
 def fixed_slots(config, clock, reserved):
     """The owner's posting times inside the plan window; None when the AI should choose times."""
-    if 'slot_start' not in config:
+    if 'slot_start' not in config and 'slot_times' not in config:
         return None
-    hour,minute=map(int,config['slot_start'].split(':'))
     begin=datetime.fromtimestamp(clock+1800,LOCAL)
     end=(begin+timedelta(days=config['days'])).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
     day=begin.replace(hour=0,minute=0,second=0,microsecond=0)
     slots=[]
     while day.timestamp()<end:
-        for index in range(config['videos_per_day']):
-            stamp=(day.replace(hour=hour,minute=minute)+timedelta(minutes=index*config['slot_gap'])).timestamp()
+        for hour,minute in _owner_times(config):
+            stamp=day.replace(hour=hour,minute=minute).timestamp()
             if begin.timestamp()<=stamp<end and all(abs(stamp-other)>=1800 for other in reserved):
                 slots.append(stamp)
         day+=timedelta(days=1)
@@ -109,9 +149,14 @@ def fixed_slots(config, clock, reserved):
 
 
 def auto_slots(config, clock, rows, count):
-    """The next `count` free posting times on the owner's daily rhythm, with no overall limit.
+    """The next `count` free posting times for auto mode, with no overall limit."""
+    if 'slot_times' in config:
+        return _auto_slots_custom(config, clock, rows, count)
+    return _auto_slots_rhythm(config, clock, rows, count)
 
-    Each day's rhythm starts at `slot_start` and repeats every `slot_gap` minutes to the end of that day (at least
+
+def _auto_slots_rhythm(config, clock, rows, count):
+    """Each day's rhythm starts at `slot_start` and repeats every `slot_gap` minutes to the end of that day (at least
     `videos_per_day` times, so a long day may run past midnight). A video ready after the day's first times still
     goes out the same day on that rhythm while the day has fewer than `videos_per_day` videos (the owner's choice of
     21/10/2026), and never before `slot_start`. Times closer than `AUTO_LEAD_SECONDS`, in the same minute as an
@@ -137,6 +182,44 @@ def auto_slots(config, clock, rows, count):
             if stamp>=begin and all(abs(stamp-other)>=AUTO_SAME_MINUTE for other in reserved+slots):
                 slots.append(stamp)
                 taken+=1
+        if len(slots)>=count:
+            break
+        day+=timedelta(days=1)
+    return slots
+
+
+def _auto_slots_custom(config, clock, rows, count):
+    """28/10/2026 (owner): the owner's own time for each video, instead of a rhythm. A time still ahead keeps its
+    own appointment. A time already passed today with nothing posted for it is owed; it is filled as soon as a
+    video is ready (`AUTO_LEAD_SECONDS` ahead, same as the rhythm's technical lead), owed times spaced at least
+    `AUTO_DEBT_GAP_SECONDS` apart so a backlog does not post all at once. Never before the day's first time;
+    the daily quota and existing-schedule rules are the same as the rhythm.
+    """
+    if count<=0:
+        return []
+    times=[tuple(map(int, value.split(':'))) for value in config['slot_times']]
+    # A whole second, never earlier than clock+AUTO_LEAD_SECONDS: an owed slot is posted at `begin` itself (unlike
+    # the rhythm, where `begin` only filters whole-minute times), and due_at round-trips through
+    # isoformat(timespec='seconds') elsewhere in page_ai, which would otherwise drop a slot at the window's edge.
+    begin=math.ceil(clock)+AUTO_LEAD_SECONDS
+    rows=[r for r in rows if r.get('state') not in GONE_STATES]
+    reserved=[r['due_at'] for r in rows]
+    used=Counter(datetime.fromtimestamp(r['due_at'],LOCAL).date() for r in rows if r['source'].get('kind')!='text')
+    day=datetime.fromtimestamp(begin,LOCAL).replace(hour=0,minute=0,second=0,microsecond=0)
+    slots=[]
+    owed_next=begin
+    for _ in range(3650):
+        taken=used[day.date()]
+        for hour,minute in times:
+            if taken>=config['videos_per_day'] or len(slots)>=count:
+                break
+            stamp=day.replace(hour=hour,minute=minute).timestamp()
+            point=stamp if stamp>=begin else max(owed_next,begin)
+            if all(abs(point-other)>=AUTO_SAME_MINUTE for other in reserved+slots):
+                slots.append(point)
+                taken+=1
+                if stamp<begin:
+                    owed_next=point+AUTO_DEBT_GAP_SECONDS
         if len(slots)>=count:
             break
         day+=timedelta(days=1)
@@ -598,7 +681,7 @@ class PageAIStore:
             policy=self.policy(a,p)
             if not policy:
                 continue
-            cfg={k:policy['config'][k] for k in ('campaigns','model','effort','days','videos_per_day','texts_per_week','interval_days','goal','auto_publish','slot_start','slot_gap','auto_campaign') if k in policy['config']}
+            cfg={k:policy['config'][k] for k in ('campaigns','model','effort','days','videos_per_day','texts_per_week','interval_days','goal','auto_publish','slot_start','slot_gap','slot_times','auto_campaign') if k in policy['config']}
             history=[{k:r[k] for k in ('at','actor','action','detail')} for r in self.history(a,p)[:12]]
             for entry in history:
                 entry['detail']=entry['detail'][:16000]

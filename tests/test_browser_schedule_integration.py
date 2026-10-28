@@ -297,6 +297,48 @@ class BrowserScheduleIntegrationTests(unittest.TestCase):
         self.assertTrue(session.commands.empty())
         self.assert_no_publish_worker()
 
+    def test_stuck_chrome_after_timeout_tells_owner_to_close_it(self):
+        # 26/10: the 20-minute watchdog ended a stuck prepare, but its Chrome call never returned; the next post
+        # sat behind it as "Đã nhận yêu cầu" with no hint that only closing that Chrome would free it.
+        from teodub.facebook_ui import STALLED_MESSAGE, STALLED_NOTICE_SECONDS
+        session = self.session()
+        first, second = self.draft(), self.draft()
+        with patch('teodub.facebook_ui.time.monotonic', return_value=1000):
+            stuck = self.owner.submit_page_browser(self.a, self.pa, first['id'], 'prepare')
+        session.commands.get_nowait()
+        payload = dict(request_id=stuck, operation='prepare', account_id=self.a, page_key=self.pa,
+            post_id=first['id'], message='Đang mở tab riêng tới đúng Page và kiểm tra danh tính…')
+        session.messages.put(('post_progress', payload))
+        expired = 1000+session.post_actions[stuck]['timeout_seconds']
+        with patch('teodub.facebook_ui.time.monotonic', return_value=expired):
+            self.poll_owner()
+            waiting = self.owner.submit_page_browser(self.a, self.pa, second['id'], 'prepare')
+        self.assertEqual(session.post_actions[stuck]['state'], 'error')
+        self.assertEqual(session.post_actions[waiting]['state'], 'queued')
+        with patch('teodub.facebook_ui.time.monotonic', return_value=expired+STALLED_NOTICE_SECONDS-1):
+            self.poll_owner()
+        self.assertNotEqual(session.post_actions[waiting]['message'], STALLED_MESSAGE)
+        with patch('teodub.facebook_ui.time.monotonic', return_value=expired+STALLED_NOTICE_SECONDS):
+            self.poll_owner()
+        self.assertEqual(session.post_actions[waiting]['message'], STALLED_MESSAGE)
+        self.assertEqual(session.status, STALLED_MESSAGE)
+        self.assertEqual(session.post_actions[waiting]['state'], 'queued')  # Nothing sent, nothing failed.
+        self.assertEqual(self.activity.post(self.a, self.pa, second['id'])['state'], 'draft')
+        session.messages.put(('post_error', dict(payload, message='Đã dừng chuẩn bị.')))  # The stuck call returns.
+        with patch('teodub.facebook_ui.time.monotonic', return_value=expired+STALLED_NOTICE_SECONDS+1):
+            self.poll_owner()
+        self.assertEqual(session.stalled, {})
+        self.assertEqual(session.post_actions[stuck]['state'], 'error')
+        self.assert_no_publish_worker()
+
+    def test_timeout_of_a_request_chrome_never_started_is_not_called_stuck(self):
+        session = self.session()
+        request = self.owner.submit_page_browser(self.a, self.pa, self.draft()['id'], 'prepare')
+        session.post_actions[request]['expires_at'] = 0
+        self.poll_owner()
+        self.assertEqual(session.post_actions[request]['state'], 'error')
+        self.assertEqual(session.stalled, {})
+
     def test_video_prepare_survives_old_six_minute_cutoff_then_cancels_at_shared_limit(self):
         from teodub.facebook_post_timing import UPLOAD_WAIT_SECONDS, VIDEO_PREPARATION_SECONDS
         video = self.directory/'slow-video.mp4'

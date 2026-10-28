@@ -14,6 +14,7 @@ import numpy as np
 
 from teodub.common import Cancelled, hash_file
 from teodub import render
+from teodub.subtitles import read_srt
 
 
 def source_video(path, audio=True, duration=1.5):
@@ -322,6 +323,48 @@ class RenderTests(unittest.TestCase):
         import av
         with av.open(str(path)) as video:
             return {frame.time: frame.to_ndarray(format='rgb24') for frame in video.decode(video=0)}
+
+    def test_a_burned_caption_stays_until_the_person_finishes_but_never_past_the_next_line_or_six_seconds(self):
+        cues = [dict(start_ms=0, end_ms=5000), dict(start_ms=2000, end_ms=4000), dict(start_ms=8000, end_ms=30000)]
+        finals = [dict(start_ms=0, end_ms=1800), dict(start_ms=2000, end_ms=3000), dict(start_ms=8000, end_ms=9000)]
+        # 1: the person speaks to 5 s but the next line starts at 2 s; 2: to 4 s (next at 8 s); 3: 6 s cap, video ends 12 s.
+        self.assertEqual(render._display_ends(finals, cues, 1., 12.), [2000, 4000, 12000])
+        self.assertEqual(render._display_ends(finals, [dict(c, end_ms=30000) for c in cues], 1., 20.), [2000, 8000, 14000])
+
+    def test_the_voice_always_keeps_its_own_end_and_the_picture_speed_is_followed(self):
+        finals = [dict(start_ms=0, end_ms=3000), dict(start_ms=3500, end_ms=4000)]
+        self.assertEqual(render._display_ends(finals, [dict(end_ms=1000), dict(end_ms=1000)], 1., 10.), [3000, 4000])
+        # At 1.5x a line the person finishes at 6 s of the source is over at 4 s of the output.
+        self.assertEqual(render._display_ends([dict(start_ms=0, end_ms=500)], [dict(end_ms=6000)], 1.5, 10.), [4000])
+
+    def test_burned_captions_are_longer_on_the_picture_while_the_voice_srt_and_plan_are_not(self):
+        source, _truth = self.own_caption_source()
+        cues = [dict(start_ms=0, end_ms=2000, text='Rẻ thật.'), dict(start_ms=2200, end_ms=2900, text='Mua đi.')]
+        with patch('teodub.render.write_captions', wraps=render.write_captions) as written:
+            paths = render.render_video(source, cues, self.clips[:2], self.directory/'longer', speed=1.,
+                                        burn_subtitles=True, subtitle_box='white')
+        placed = written.call_args.args[1]
+        self.assertEqual(placed[0]['end_ms'], 2000)  # Until the person finishes (the voice ends near 0.72 s).
+        self.assertEqual(placed[1]['end_ms'], max(2900, 2200+round(self.clips[1]['duration_s']*1000)))  # The voice's own end.
+        plan = json.loads(Path(paths['plan']).read_text(encoding='utf-8'))
+        self.assertLess(plan['cues'][0]['end_ms'], 1000)  # The voice timing and the delivered SRT keep the voice times.
+        self.assertLess(read_srt(paths['subtitles'])[0]['end_ms'], 1000)
+        self.assertEqual(plan['subtitle_mode'], 'burned_ass')
+
+    def test_without_a_box_the_picture_reads_its_own_longer_copy_and_the_delivered_srt_stays(self):
+        source, _truth = self.own_caption_source()
+        cues = [dict(start_ms=0, end_ms=2000, text='Rẻ thật.'), dict(start_ms=2200, end_ms=2900, text='Mua đi.')]
+        written = []
+        original = render._write_srt
+        def capture(path, items):
+            written.append((Path(path).name, [item['end_ms'] for item in items]))
+            return original(path, items)
+        with patch('teodub.render._write_srt', side_effect=capture):
+            paths = self.perform(source=source, cues=cues, clips=self.clips[:2], speed=1., burn_subtitles=True)
+        by_name = dict(written)
+        self.assertEqual(by_name['display.srt'][0], 2000)
+        self.assertLess(by_name['final.srt'][0], 1000)
+        self.assertLess(read_srt(paths['subtitles'])[0]['end_ms'], 1000)
 
     def test_boxed_captions_hide_the_videos_own_caption_snugly_and_only_while_spoken(self):
         source, truth = self.own_caption_source()

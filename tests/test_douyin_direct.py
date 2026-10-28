@@ -159,6 +159,11 @@ class ResolveTests(unittest.TestCase):
                                    filter_detail=dict(aweme_id=ID, filter_reason='core_dep')))]
         self.refused('parse_failed')
 
+    def test_a_video_douyin_reports_deleted_or_locked_is_gone_for_good(self):
+        self.answers = [(200, dict(status_code=0, aweme_detail=None, filter_detail=dict(
+            aweme_id=ID, filter_reason='status_deleted', detail_msg='因作品权限或已被删除，无法观看')))]
+        self.refused('video_gone')
+
     def test_repeated_refusals_and_a_move_to_the_feed_end_quickly_as_refused(self):
         self.page_script(asks=[ID, ID, ID], after='location.href = "/jingxuan";')
         self.answers = [(403, {})]*3

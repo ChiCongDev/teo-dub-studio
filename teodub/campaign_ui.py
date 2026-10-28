@@ -54,6 +54,7 @@ class CampaignTab(ttk.Frame):
         self.status = tk.StringVar(self, value='Dán link kênh: tự lấy link từng video. Dán nhiều link: tự lập danh sách.')
         self.notice = tk.StringVar(self)
         self.launch_notice = None
+        self.discover_notice = ''  # A Lấy danh sách refusal stays until the next try (28/10/2026).
         self.summary = tk.StringVar(self)
         self.creation_summary = tk.StringVar(self)
         self.retry_summary = tk.StringVar(self)
@@ -578,6 +579,8 @@ class CampaignTab(ttk.Frame):
             return
         text = self.source.get('1.0', 'end').strip()
         self.discovery = None
+        self.discover_notice = ''
+        self.notice.set('')
         try:
             from teodub.channel_discovery import classify_input, scan_channel
             browser = self.selected_browser()
@@ -588,12 +591,17 @@ class CampaignTab(ttk.Frame):
                 self.status.set(f'{len(self.records)} link không trùng. Bấm Tạo chiến dịch mới để lưu.')
                 self.refresh_buttons()
                 return
-            limit = int(self.limit.get())
+            try:
+                limit = int(self.limit.get())
+            except ValueError:
+                raise ValueError('Ô Tối đa phải là một số.') from None
             if not 1 <= limit <= 1000:
                 raise ValueError('Chọn từ 1 đến 1.000 video.')
             self.save_campaign_preferences()
         except (ValueError, OSError) as exc:
+            self.discover_notice = 'Chưa lấy danh sách: '+str(exc)+' Sửa rồi bấm Lấy danh sách lại.'
             self.status.set(str(exc))
+            self.notice.set(self.discover_notice)
             return
         self.scanning = True
         self.scan_cancel.clear()
@@ -899,6 +907,8 @@ class CampaignTab(ttk.Frame):
             notice = ''  # Waiting for its turn, not stopped.
         elif manifest.get('message') == ROTATION_WAIT and manifest.get('status') == 'paused' and not active:
             notice = 'Vòng chạy xen kẽ đang dừng. Bấm Chạy / Tiếp tục để chạy tiếp.'
+        if self.discover_notice:
+            notice = self.discover_notice
         if self.launch_notice and self.launch_notice[0] == self.directory:
             notice = self.launch_notice[1]
         elif active and (self.directory/'stop.request').exists():
@@ -1002,7 +1012,9 @@ class CampaignTab(ttk.Frame):
                 self.status.set(f'Tìm thấy {len(result["items"])} video. {result["message"]} Bấm Tạo chiến dịch mới khi danh sách phù hợp.')
             else:
                 self.scanning = False
-                self.status.set('Chưa lấy được danh sách: '+value)
+                self.discover_notice = 'Chưa lấy được danh sách: '+value
+                self.status.set(self.discover_notice)
+                self.notice.set(self.discover_notice)
         child_alive = self.process is not None and self.process.poll() is None
         batch = getattr(self.studio, 'batch_controller', None)
         busy = child_alive or bool(batch and batch.busy) or (self.studio.process is None

@@ -45,6 +45,7 @@ OPEN_NAMES = re.compile(r"^(Create post|Create a post|Tạo bài viết|Bạn đ
 _HOSTS = {'facebook.com', 'www.facebook.com', 'm.facebook.com'}
 INSPECT_RESULT_WAIT_SECONDS = 20
 INSPECT_RESULT_NAVIGATION_SECONDS = 15
+FINISHED_TAB_SECONDS = 3*60  # A post tab is closed (at the next post's start) this long after its Publish click.
 
 AUTH_SCRIPT = r"""() => {
   const visible = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
@@ -719,6 +720,55 @@ class BrowserPagePublisher:
     def _key(self, account_id, page_key, post_id):
         return str(self.store.path.resolve()), account_id, page_key, post_id
 
+    @staticmethod
+    def _post_tabs(context):
+        # Tabs this worker opened for a post attempt. Each attempt opens its own; on 26/10 nineteen were still
+        # open (7.8 GB) when one crashed and another stopped answering. Only these are ever closed by Tèo.
+        if not hasattr(context, '_teodub_attempt_tabs'):
+            context._teodub_attempt_tabs = []
+        return context._teodub_attempt_tabs
+
+    def _remember_tab(self, context, tab, account_id, page_key, post_id, attempt):
+        self._post_tabs(context).append(dict(tab=tab, key=self._key(account_id, page_key, post_id), attempt=attempt))
+
+    def _attempt_finished(self, entry):
+        """The attempt stopped before anything was typed, or its one Publish click is FINISHED_TAB_SECONDS old."""
+        _, account_id, page_key, post_id = entry['key']
+        try:
+            post = self.store.post(account_id, page_key, post_id)
+        except (KeyError, ValueError):
+            return False
+        if post['attempt'] != entry['attempt'] or post['state'] in {'draft', 'failed'}:
+            return True
+        submitted = (post.get('browser_tracking') or {}).get('submitted_at')
+        return (post['state'] in {'unknown', 'published'} and isinstance(submitted, (int, float))
+                and not isinstance(submitted, bool) and wall_time()-submitted >= FINISHED_TAB_SECONDS)
+
+    def _close_finished_tabs(self, context):
+        """Close earlier attempts' own tabs that are done. A tab that shows an editor (someone may be writing
+        there), does not answer, or belongs to an unfinished or uncertain attempt stays open."""
+        from teodub.facebook_page_identity import open_editor
+        store = str(self.store.path.resolve())
+        kept = []
+        for entry in self._post_tabs(context):
+            tab = entry['tab']
+            try:
+                if tab.is_closed():
+                    continue
+                if entry['key'][0] != store or not self._attempt_finished(entry) or open_editor(tab) is not False:
+                    kept.append(entry)
+                    continue
+                tab.close()
+            except Exception:
+                pass  # Housekeeping only: it never stops the next post.
+            if not tab.is_closed():
+                kept.append(entry)
+                continue
+            binding = self._bindings(context).get(entry['key'])
+            if binding and binding['tab'] is tab:
+                del self._bindings(context)[entry['key']]
+        self._post_tabs(context)[:] = kept
+
     def inspect_result(self, context, account_id, page_key, post_id, *, result_url='',
                        expected_reconcile=None, confirmed_attempt=False,
                        cancel=None, finished=None, progress=None):
@@ -1286,36 +1336,49 @@ class BrowserPagePublisher:
                     raise
                 tab.wait_for_timeout(100)
 
-    def _open_composer(self, tab, target, *, cancel=None, finished=None):
-        from teodub.facebook_page_identity import PROFILE_NAMES, ensure_page_actor
-        deadline = time.monotonic()+12
+    def _page_ready(self, tab, target, *, cancel=None, finished=None, timeout=12):
+        """The saved Page's main column, read again after any reload Facebook makes (26/10/2026: the reload
+        after a profile switch failed a post with "Execution context was destroyed")."""
+        from teodub.facebook_page_identity import _reloading
+        deadline = time.monotonic()+timeout
         while True:
             self._cancel(cancel, finished)
-            self._safe_page(tab, target)
             try:
-                main = _page_main(tab, target)
-                break
-            except ValueError:
-                if time.monotonic() >= deadline:
+                self._safe_page(tab, target)  # Its own refusal (login, another Page) stops at once.
+                main = None
+                try:
+                    main = _page_main(tab, target)
+                except ValueError:
+                    if time.monotonic() >= deadline:
+                        raise
+                if main is not None:
+                    return main
+            except Exception as exc:
+                if not _navigation_interrupted(exc) or time.monotonic() >= deadline:
                     raise
+                _reloading(tab, deadline)
+                continue
             tab.wait_for_timeout(100)
+
+    def _open_composer(self, tab, target, *, cancel=None, finished=None):
+        from teodub.facebook_page_identity import PROFILE_NAMES, _reloading, ensure_page_actor
+        main = self._page_ready(tab, target, cancel=cancel, finished=finished)
         profile = tab.get_by_role('button', name=PROFILE_NAMES)
         if any(profile.nth(i).is_visible() for i in range(profile.count())):
             tab._teodub_page_actor = ensure_page_actor(tab.context, tab, target, cancel=cancel, finished=finished)
             if tab._teodub_page_actor['switched']:
-                tab.goto(target['url'], wait_until='domcontentloaded', timeout=45000)
-            self._safe_page(tab, target)
-            deadline = time.monotonic()+12
-            while True:
-                self._cancel(cancel, finished)
-                self._safe_page(tab, target)
-                try:
-                    main = _page_main(tab, target)
-                    break
-                except ValueError:
-                    if time.monotonic() >= deadline:
-                        raise
-                    tab.wait_for_timeout(100)
+                deadline = time.monotonic()+45
+                while True:
+                    try:
+                        tab.goto(target['url'], wait_until='domcontentloaded', timeout=45000)
+                        break
+                    except Exception as exc:
+                        # Facebook's own reload after the switch may still land; open the Page again after it.
+                        if (not (_navigation_interrupted(exc) or 'interrupted by another navigation' in str(exc))
+                                or time.monotonic() >= deadline):
+                            raise
+                    _reloading(tab, deadline)
+            main = self._page_ready(tab, target, cancel=cancel, finished=finished)
         visible = _page_openers(tab, target, main)
         if not visible:
             # Supported Page-identity switch is a single named button beside the
@@ -1380,14 +1443,16 @@ class BrowserPagePublisher:
                 raise ValueError('Bài đã được chuẩn bị/gửi hoặc chưa rõ kết quả; không tạo lại hộp bài viết.')
             self._cancel(cancel, finished)
             files = self._files(post)
-            self.store.transition(account_id, page_key, post_id, 'preparing',
-                                  'Đang chuẩn bị hộp bài viết trong Chrome; chưa bấm Đăng.', expected={'draft', 'failed'})
+            attempt = self.store.transition(account_id, page_key, post_id, 'preparing',
+                'Đang chuẩn bị hộp bài viết trong Chrome; chưa bấm Đăng.', expected={'draft', 'failed'})['attempt']
             upload_started = False
             composer_changed = False
             try:
                 if progress:
                     progress('Đang mở tab riêng tới đúng Page và kiểm tra danh tính…')
+                self._close_finished_tabs(context)
                 tab = context.new_page()
+                self._remember_tab(context, tab, account_id, page_key, post_id, attempt)
                 tab.goto(target['url'], wait_until='domcontentloaded', timeout=45000)
                 tab.bring_to_front()
                 self._cancel(cancel, finished)
@@ -1679,6 +1744,7 @@ class BrowserPagePublisher:
             if not self._result_checks_enabled():
                 return self._pause_result_verification(account_id, page_key, post_id)
             tab = context.new_page()
+            self._remember_tab(context, tab, account_id, page_key, post_id, post['attempt'])
             if not self._result_checks_enabled():
                 tab.close()
                 return self._pause_result_verification(account_id, page_key, post_id)
@@ -1723,6 +1789,8 @@ class BrowserPagePublisher:
             if not self._result_checks_enabled():
                 return None
             result_tab = existing[0] if len(existing) == 1 else context.new_page()
+            if len(existing) != 1:
+                self._remember_tab(context, result_tab, account_id, page_key, post_id, post['attempt'])
             result_tabs[url] = result_tab
             if url not in tracking['references']:
                 tracking['references'].append(url)

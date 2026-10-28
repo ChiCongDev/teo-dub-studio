@@ -1,5 +1,61 @@
 # Tèo Dub Studio
 
+## Một link chờ nguồn tải không còn làm dừng cả vòng; video đã bị Douyin xóa được bỏ qua — 28/10/2026
+
+- **Vấn đề:** Video 85 của link **test** đã bị Douyin xóa/khóa nên không nguồn tải nào lấy được. Tèo coi đó là "chờ nguồn tải" và **dừng cả vòng xen kẽ**, nên demo, chien_dich_28_10 và câu_ca cũng đứng chờ dù video của chúng tải bình thường. Đến giờ thử lại, Tèo lại thử đúng video đó rồi lại dừng.
+- **Nay:**
+  - **Chỉ link đó chờ.** Khi một link phải chờ nguồn tải, Tèo ghi giờ thử lại cho riêng link đó (không sớm hơn 1 phút) và **các link khác vẫn chạy xen kẽ**. Đến giờ, link được quay lại đúng lượt. Chỉ khi **mọi** link còn việc đều đang chờ thì vòng mới tạm dừng, rồi Tèo tự chạy tiếp ở giờ sớm nhất như trước.
+  - **Video đã bị xóa/khóa thì ghi lỗi và đi tiếp.** Khi chính Douyin báo video "đã bị xóa hoặc khóa" (`status_deleted`) và không nguồn tải nào lấy được, Tèo ghi video đó là **lỗi** (chữ đỏ, nêu rõ lý do) rồi làm video kế tiếp. Muốn thử lại sau, bấm **Thử lại video lỗi**.
+- **Không đổi:** nút Chạy / Tiếp tục khi các link đang chờ vẫn thử lại ngay như trước; Chạy riêng một link đưa link đó vào lượt ngay; Dừng, Dừng link này, hết hạn mức AI, đăng nhập vẫn dừng như cũ. Thứ tự và cách tạm khóa từng nguồn tải, các lỗi tạm thời khác (nguồn bảo trì, hết lượt, không phản hồi) vẫn là chờ rồi thử lại. Hàng đợi "lần lượt" (không xen kẽ) không đổi.
+- Áp dụng từ lần chạy kế tiếp (tiến trình vòng xen kẽ và tiến trình làm video nạp mã mới khi bắt đầu).
+
+## Đặt giờ riêng cho từng video (tùy chọn) — 28/10/2026
+
+- Ở mục "Nhịp nội dung & giờ gọi AI" (Page → Đăng theo kế hoạch AI), cạnh ô "Video mỗi ngày" nay có thêm ô tích **"Đặt giờ riêng cho từng video"**.
+- **Không tích (mặc định):** Tèo chạy đúng như trước, theo "Giờ bài đầu" và "Cách nhau".
+- **Có tích:** gõ giờ cho từng video, cách nhau dấu phẩy, ví dụ `8:00, 11:30, 15:00, 18:00`. Số giờ phải bằng đúng "Video mỗi ngày"; không được trùng nhau. Tèo tự sắp theo thứ tự và tự hiểu "9:30" là 09:30. Hai ô "Giờ bài đầu" và "Cách nhau" mờ đi (không dùng) nhưng vẫn giữ số cũ để khi bỏ tích thì quay lại đúng như trước.
+- **Cách Tèo xếp khi bật "Tự động từ chiến dịch":**
+  - Có video sẵn trước một giờ riêng thì video đăng đúng giờ đó.
+  - Đến giờ mà chưa có video thì giờ đó thành **bài còn nợ**; video xong sau đó được đăng khoảng 15 phút sau, không chờ đến giờ riêng kế tiếp. Nhiều bài nợ cùng lúc được đăng cách nhau ít nhất 15 phút.
+  - Giờ riêng kế tiếp vẫn giữ cho video đến đúng lúc nó.
+  - Mỗi ngày không bao giờ quá số "Video mỗi ngày"; không đăng trước giờ đầu tiên trong ngày; bài nợ chưa bù hết trong ngày thì video sang giờ đầu tiên của ngày hôm sau.
+- Dùng được ở cả chế độ "Tôi tự đặt giờ đăng, AI chỉ viết caption" (ẩn trong giao diện hiện tại, giữ nguyên trong mã).
+- Không đổi: cách AI viết caption, số video/ngày, kiểm tra trùng giờ, bấm Đăng một lần, nguồn video, các thiết lập khác của Page.
+
+## Nghe lại các khoảng bị bỏ sót lời; phụ đề hiện đủ lâu — 28/10/2026
+
+- **Vấn đề:** ở video 6 phút của chien_dich_28_10, Tèo bỏ sót nhiều câu có người nói: câu mở đầu "Hôm nay bọn tôi mang… ra tát ao", "Đến rồi, cái gì đây, là cá mập!", và những tiếng kêu ngắn. Những câu này không có phụ đề và không có thuyết minh. Lý do là card đồ họa 2 GB của máy chỉ chạy được Whisper **small**, loại nghe nhẹ nhất. Phụ đề cũng chỉ hiện đúng lúc giọng Việt đọc, nên có đoạn người trong video đang nói mà hình trống chữ.
+- **Nay:**
+  - **Nghe lại khoảng trống.** Sau khi nghe cả video như cũ, những khoảng im dài từ **4 giây** trở lên (khoảng chưa có lời nào) được nghe lại bằng **Whisper medium** (tốt hơn, chạy trên CPU). Câu nào tìm được thì được dịch và đọc như mọi câu khác. Mỗi video tối đa nghe lại 10 phút âm thanh; trên video 6 phút thử nghiệm bước này thêm khoảng 2–4 phút (lần đầu sau khi mở máy có thể lâu hơn).
+  - **Chỉ giữ lời thật.** Câu mà chính mô hình nghi không phải tiếng người, câu chắc chắn kém, câu chỉ là một cụm lặp đi lặp lại, hoặc cùng một câu xuất hiện từ 3 lần trong một video, đều bị bỏ.
+  - **Chỉ áp dụng khi chọn "Tự động".** Nếu bạn chọn riêng mô hình nhận dạng nào ở cấu hình, Tèo làm đúng như bạn chọn.
+  - **Lỗi không chặn video.** Nếu bước nghe lại gặp sự cố, Tèo giữ kết quả nghe đầu tiên và video vẫn làm tiếp. Bấm Dừng vẫn dừng được như thường.
+  - **Phụ đề hiện đủ lâu.** Chữ Việt in vào hình ở lại đến khi người trong video nói hết câu, hoặc đến khi câu kế tiếp bắt đầu, tối đa 6 giây tính từ lúc câu bắt đầu. Giọng đọc, tệp SRT giao cho bạn và các bước kiểm tra giữ nguyên. Lưu ý: khung trắng chỉ che đúng chỗ chữ gốc lúc câu bắt đầu, nên khi chữ Việt hiện lâu hơn thì chữ Trung gốc xuất hiện sau đó có thể lộ ra một phần ở mép khung.
+- **Không đổi:** chữ Trung in sẵn trên hình vẫn không được dịch (muốn che thì bật "Khung che Sub gốc"). Video đã làm xong không tự đổi; chỉ video làm sau khi cài mới dùng cách nghe này.
+- Áp dụng cho video làm từ lần chạy kế tiếp (các tiến trình làm video nạp mã mới khi bắt đầu).
+
+## Nhập "9:30" được; lời báo lỗi khi Lưu và Lấy danh sách không còn biến mất — 28/10/2026
+
+- **Giờ bài đầu mỗi ngày:** sáng 28/10 bạn gõ `9:30` rồi bấm **Lưu thiết lập & hẹn giờ**, nhưng Tèo từ chối lưu vì chỉ nhận `09:30`. Lời báo lỗi biến mất sau 2 giây nên trông như đã lưu, và video xong không vào lịch. Nay Tèo tự hiểu `9:30` là `09:30` (và `9:5` là `09:05`), ô cũng tự đổi cho đúng. Giờ thật sự sai như `25:00` hay `abc` vẫn bị từ chối.
+- **Lời báo khi Lưu:** dòng đầu dưới nút Lưu nay ghi rõ và giữ nguyên, không bị làm mới mất: **"Đã lưu thiết lập lúc 10:25:03."** hoặc **"Chưa lưu: …lý do…"**. Dòng này chỉ đổi khi bạn bấm Lưu lần nữa.
+- **Nút Lấy danh sách:** nếu bấm mà Tèo từ chối (ô **Tối đa** quá 1.000 hoặc để trống, link trống hoặc sai dạng), lời báo hiện ở dòng chữ đỏ dưới tình trạng chiến dịch, ví dụ **"Chưa lấy danh sách: Chọn từ 1 đến 1.000 video. Sửa rồi bấm Lấy danh sách lại."**, và ở lại cho tới lần bấm kế tiếp. Lỗi xảy ra trong lúc đọc kênh cũng được giữ như vậy.
+- **Không đổi:** cách đọc kênh, tải video, lồng tiếng, lịch đã bật và đăng Facebook. Ô Tối đa không tự đổi số của bạn.
+- Áp dụng sau khi bấm **Khởi động lại, giữ công việc**.
+
+## Đổi qua lại giữa hai Page không còn kẹt; Tèo tự đóng tab đã xong — 26/10/2026
+
+- Lúc 10:30 ngày 26/10, hai Page **Phú thọ** và **du lịch toàn cầu** trùng giờ, nên Tèo phải đổi người đăng qua lại.
+  - Mỗi lần đổi, Facebook tự tải lại trang. Đúng lúc đó Tèo đang đọc trang, nên bài Phú thọ báo lỗi "Execution context was destroyed…" và dừng trước khi nhập hay đăng gì.
+  - Từ sáng, mỗi bài đăng mở một tab mới và không đóng lại. Đến 10:30 Chrome của Tèo có 19 tab, dùng 7,8 GB RAM, và một tab đã sập.
+  - Bài du lịch toàn cầu 10:30 đứng 20 phút vì một tab cũ không trả lời. Các bài sau của cả hai Page phải xếp hàng chờ.
+- Nay Tèo:
+  - **Tự đóng tab đã xong.** Khi bắt đầu bài mới, Tèo đóng tab của các bài trước do chính Tèo mở, nếu bài đó đã bấm Đăng xong từ 3 phút trở lên (kể cả bài "Đã gửi — chưa xác minh"), hoặc đã lỗi khi chưa nhập gì. Tèo **giữ lại** tab còn hộp viết bài đang mở, tab của bài đang chờ bấm Đăng, tab của bài dừng giữa chừng sau khi đã nhập chữ hoặc tải video, và tab không trả lời. Tèo **không bao giờ** đóng tab bạn tự mở.
+  - **Đổi Page chịu được việc trang tự tải lại.** Tèo chờ Facebook tải xong trang mới rồi đọc lại, trong giới hạn 12–15 giây vốn có. Tèo **không bấm chọn lại** Page.
+  - **Không chờ vô hạn.** Trước khi đổi Page, Tèo kiểm tra các tab khác, mỗi tab chờ tối đa 3 giây. Tab đã sập thì bỏ qua. Tab không trả lời thì Tèo dừng ngay, báo "Một tab Facebook trong Chrome của Tèo không phản hồi…", chưa đổi Page và chưa đăng gì.
+  - **Báo rõ khi Chrome kẹt.** Nếu sau 20 phút Chrome vẫn không trả lời thêm 1 phút nữa, lịch đang chờ hiện "Chrome của tài khoản này đang bị kẹt… Hãy đóng cửa sổ Chrome của Tèo…". Đóng cửa sổ đó thì lịch sau tự mở lại Chrome.
+- **Không đổi:** mỗi lượt chỉ bấm Đăng một lần, không tự đăng lại, không báo "đã đăng" khi chưa có bằng chứng.
+- Áp dụng sau khi bấm **Khởi động lại, giữ công việc**.
+
 ## Đăng Page được lại sau khi Facebook đổi nút menu tài khoản — 24/10/2026
 
 - Từ sáng 24/10, Facebook đổi tên nút menu tài khoản (ảnh đại diện ở góc phải trên cùng) thành **"Account, your profile"**. Tèo không nhận ra nút này, nên bỏ qua bước chọn và xác minh đúng Page qua menu.

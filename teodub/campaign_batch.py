@@ -3,10 +3,12 @@ import argparse
 from datetime import datetime
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import stat
 import sys
+import time
 import uuid
 
 from teodub import campaign
@@ -24,6 +26,9 @@ TURN_WAIT = 'Chờ tới lượt (xen kẽ)'
 # One link stopped on its own tab (owner 23/10/2026): its row is 'stopped' and gets no turns until its own Chạy
 # (a join request) while the other links go on. A pause of the whole rotation keeps rows pending/paused instead.
 LINK_STOPPED = 'Đã dừng link này; các link khác vẫn chạy.'
+# A link waiting for a download source rests on its own (owner 28/10/2026): its row keeps `wait_until`, the other
+# links go on, and it is never tried again sooner than SOURCE_WAIT_MIN seconds (no busy loop on a stale time).
+SOURCE_WAIT_MIN = 60
 
 
 def _plain_path(path):
@@ -279,6 +284,7 @@ def _absorb_joins(directory, queue, data_dir):
             if row is not None:
                 if row['status'] != 'running':
                     row.update(status='pending', message=TURN_WAIT)
+                    row.pop('wait_until', None)  # The link's own Chạy: try it now, as before.
                 continue
             if len(queue['campaigns']) >= MAX_CAMPAIGNS:
                 raise ValueError('Vòng xen kẽ đã đủ 1.000 chiến dịch.')
@@ -293,11 +299,33 @@ def _absorb_joins(directory, queue, data_dir):
     return notes
 
 
+def _next_turn(rows, start, now):
+    """Index of the next link to take a turn from `start` on, skipping links that are done, stopped or still waiting
+    for a download source; None when no link can take a turn now."""
+    start %= len(rows)
+    return next((position % len(rows) for position in range(start, start+len(rows))
+                 if rows[position % len(rows)]['status'] not in ('completed', 'needs_attention', 'stopped')
+                 and rows[position % len(rows)].get('wait_until', 0) <= now), None)
+
+
+def _waiting(row, now):
+    return row['status'] not in ('completed', 'needs_attention', 'stopped') and row.get('wait_until', 0) > now
+
+
+def _source_wait(result):
+    """A campaign that paused only because no download source worked now, with the time to try again."""
+    after = result.get('resume_after')
+    return (str(result.get('message') or '').startswith(campaign.WAITING_SOURCE)
+            and type(after) in (int, float) and math.isfinite(after))
+
+
 def _run_rotation(directory, queue, runner, stop, data_dir):
     """One video of each campaign in turn, in the queue's order; campaigns with nothing left drop out.
 
-    Everything that pauses a campaign (Dừng, waiting for a download source, AI quota, login) pauses the rotation;
-    the campaign whose turn it was keeps that turn, so resuming continues it first.
+    Dừng, AI quota and login pause the rotation; the campaign whose turn it was keeps that turn, so resuming
+    continues it first. A link waiting for a download source (owner 28/10/2026) only rests: the other links keep
+    their turns, and it comes back when its time is over. Only when every link waits does the rotation pause (the
+    desktop restarts it at the earliest time).
     """
     runner = runner or campaign._run_campaign_locked
     handoff = queue.pop('handoff_from', None)
@@ -305,7 +333,7 @@ def _run_rotation(directory, queue, runner, stop, data_dir):
         (_campaign_path(data_dir, handoff)/campaign.ROTATION_REQUEST).unlink(missing_ok=True)
     queue.update(status='running', message='Đang chạy xen kẽ: mỗi chiến dịch một video, lần lượt.', active_directory=None)
     atomic_json(directory/'queue.json', queue)
-    checked = set()
+    checked, started = set(), False
     try:
         while True:
             notes = _absorb_joins(directory, queue, data_dir)
@@ -316,10 +344,19 @@ def _run_rotation(directory, queue, runner, stop, data_dir):
                 queue.update(status='paused', message='Đã dừng vòng xen kẽ. Bấm Tiếp tục để chạy phần còn lại.')
                 break
             rows = queue['campaigns']
-            start = queue['next_index'] % len(rows)
-            index = next((position % len(rows) for position in range(start, start+len(rows))
-                          if rows[position % len(rows)]['status'] not in ('completed', 'needs_attention', 'stopped')), None)
+            now = time.time()
+            index = _next_turn(rows, queue['next_index'], now)
+            if index is None and not started and any(_waiting(row, now) for row in rows):
+                for row in rows:  # Chạy / Tiếp tục while links wait: try them now, as before.
+                    row.pop('wait_until', None)
+                index = _next_turn(rows, queue['next_index'], now)
             if index is None:
+                waiting = [row for row in rows if _waiting(row, now)]
+                if waiting:
+                    first = min(waiting, key=lambda row: row['wait_until'])
+                    first.update(status='paused')  # The desktop restarts the rotation when this link's time is over.
+                    queue.update(status='paused', message=first['message'])
+                    break
                 for row in rows:  # Failed videos the owner retried by hand since.
                     if (row['status'] == 'needs_attention'
                             and _read(_campaign_path(data_dir, row['directory'])/'campaign.json').get('status') == 'completed'):
@@ -338,10 +375,12 @@ def _run_rotation(directory, queue, runner, stop, data_dir):
             if _identity(manifest, path) != row['config_identity']:
                 raise ValueError(f'Cấu hình chiến dịch {row["name"]} đã thay đổi; chưa chạy tiếp.')
             row.update(status='running', message='Đang chạy (xen kẽ)')
+            row.pop('wait_until', None)
             queue['active_directory'] = str(path)
             atomic_json(directory/'queue.json', queue)
             result = runner(path, external_stop=stop, max_videos=1, verify_done=path not in checked)
             checked.add(path)
+            started = True
             if (not isinstance(result, dict) or not isinstance(result.get('status'), str)
                     or result['status'] not in {'completed', 'needs_attention', 'paused'}):
                 raise ValueError('Chiến dịch chưa trả trạng thái kết thúc hợp lệ; có thể tiếp tục sau khi kiểm tra.')
@@ -352,6 +391,10 @@ def _run_rotation(directory, queue, runner, stop, data_dir):
             elif result['status'] == 'paused' and not stop.exists() and _leave_requested(directory, path):
                 row.update(status='stopped', message=LINK_STOPPED)  # Only this link was stopped; the others go on.
                 queue['next_index'] = index+1
+            elif result['status'] == 'paused' and not stop.exists() and _source_wait(result):
+                row.update(status='pending', message=result['message'],
+                           wait_until=max(result['resume_after'], time.time()+SOURCE_WAIT_MIN))
+                queue['next_index'] = index+1  # Only this link waits for the download sources; the others go on.
             elif result['status'] == 'paused':
                 row.update(status='paused', message=result.get('message') or 'Chiến dịch tạm dừng')
                 queue.update(status='paused', message=row['message'])

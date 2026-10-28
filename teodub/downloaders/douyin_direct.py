@@ -18,6 +18,9 @@ _ID = r'\d{8,25}'
 # Titles of Douyin's human-check page. Tèo never solves it; that source pauses and the next one is tried.
 # Only whole titles: a normal page title carries the video's own caption, which may mention these words.
 _VERIFICATION_TITLES = {'验证码中间页', '验证码', '安全验证'}
+# Douyin's own flag for a video that was deleted or locked (28/10/2026): the same answer for every viewer, so unlike
+# its other refusals it is final for this video (reason 'video_gone', see browser_download._gone_ending).
+GONE_FILTER = 'status_deleted'
 
 
 def aweme_id(url):
@@ -123,6 +126,8 @@ def resolve_douyin(page, url, check, emit, media_predicate, *, max_bytes, timeou
                      else 'Douyin trực tiếp đã trả đường tải MP4. Đang chuẩn bị tải video…')
                 return dict(media_url=stream['url'], title=title, provider=PROVIDER)
             hidden = data.get('filter_detail')
+            if isinstance(hidden, dict) and hidden.get('filter_reason') == GONE_FILTER:
+                raise problem('Douyin báo video đã bị xóa hoặc khóa; chuyển sang nguồn khác.', 'video_gone')
             if isinstance(hidden, dict) and hidden.get('filter_reason'):
                 raise problem('Douyin không cho xem video này khi chưa đăng nhập (bị giới hạn, riêng tư hoặc đã xóa); '
                               'chuyển sang nguồn khác.', 'parse_failed')

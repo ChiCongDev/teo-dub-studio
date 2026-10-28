@@ -13,6 +13,14 @@ from tkinter import messagebox, simpledialog, ttk
 from teodub.facebook_accounts import BUSINESS_SUITE, FACEBOOK_HOME, FACEBOOK_PAGES, META_APPS, FacebookAccounts, facebook_browser_url
 from teodub.page_publish_settings import result_checks_enabled, set_result_checks_enabled
 
+# 26/10/2026: the 20-minute watchdog ended a stuck prepare, but its Chrome call never returned, so the next
+# post waited unseen behind it. A started request that timed out and has not reported back for this long
+# means that account's Chrome is stuck; only closing that Chrome frees it.
+STALLED_NOTICE_SECONDS = 60
+STALLED_MESSAGE = ('Chrome của tài khoản này đang bị kẹt: lượt trước đã quá thời gian nhưng Chrome vẫn chưa trả lời. '
+                   'Hãy đóng cửa sổ Chrome của Tèo cho tài khoản này để tiếp tục; lịch sau sẽ tự mở lại Chrome. '
+                   'Bài đang chờ chưa được tải/gửi.')
+
 
 def bridge_mailbox_root():
     """Use the existing pinned portal store, never create another web data root."""
@@ -51,6 +59,7 @@ class BrowserSession:
     finished: threading.Event = field(default_factory=threading.Event)
     worker: object = None
     restart_error: str = ''
+    stalled: dict = field(default_factory=dict)  # A started request that timed out and has not reported back.
 
 
 class FacebookTab(ttk.Frame):
@@ -975,6 +984,7 @@ class FacebookTab(ttk.Frame):
                 if kind == 'restart_blocked':
                     session.restart_error = str(value)
                 elif kind in ('done', 'error'):
+                    session.stalled = {}
                     if session.loading_pages:
                         session.page_load_status = 'Load Page bị gián đoạn trước khi lưu danh sách. Chọn Load Page lại; Page cũ được giữ.'
                     session.loading_pages = False
@@ -1008,6 +1018,8 @@ class FacebookTab(ttk.Frame):
                     if (not isinstance(value, dict) or not isinstance(value.get('request_id'), str)
                             or value['request_id'] not in session.post_actions):
                         continue
+                    if session.stalled.get('request_id') == value['request_id']:
+                        session.stalled = {}  # The worker answered again; it is no longer stuck.
                     request = session.post_actions[value['request_id']]
                     if request['state'] in {'done','error'} or value.get('operation') != request['operation']:
                         continue
@@ -1083,14 +1095,24 @@ class FacebookTab(ttk.Frame):
                         session.status = value
                 if account_id == self.account_id:
                     self.status.set(session.status)
-            for request in session.post_actions.values():
+            for request_id, request in session.post_actions.items():
                 if request['state'] in {'queued','running','verifying'} and time.monotonic() >= request.get('expires_at',float('inf')):
+                    if request['state'] in {'running', 'verifying'} and not session.stalled:
+                        session.stalled = dict(request_id=request_id, since=time.monotonic())
                     if request.get('cancel') is not None:
                         request['cancel'].set()
                     from teodub.facebook_post_timing import post_timeout_message
                     message = post_timeout_message(request)
                     request.update(state='error', message=message)
                     session.status = request['message']
+                    if account_id == self.account_id:
+                        self.status.set(session.status)
+            if session.stalled and time.monotonic()-session.stalled['since'] >= STALLED_NOTICE_SECONDS:
+                for request in session.post_actions.values():
+                    if request['state'] == 'queued':
+                        request['message'] = STALLED_MESSAGE
+                if session.status != STALLED_MESSAGE:
+                    session.status = STALLED_MESSAGE
                     if account_id == self.account_id:
                         self.status.set(session.status)
             for table in (session.navigation, session.page_load_requests):

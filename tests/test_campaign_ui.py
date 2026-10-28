@@ -46,6 +46,53 @@ class CampaignUITests(unittest.TestCase):
             spawn.assert_not_called()
             self.assertEqual(len(self.notebook.tabs()), 2)
 
+    def channel_with_campaign(self, limit):
+        self.tab.auto_fetch.set(False)
+        self.tab.discover()
+        self.tab.create()  # A saved campaign is shown, so the periodic refresh runs `display`.
+        self.assertIsNotNone(self.tab.directory)
+        self.tab.source.delete('1.0', 'end')
+        self.tab.source.insert('1.0', 'https://www.douyin.com/user/MS4wLjABAAAAexample')
+        self.tab.limit.set(limit)
+
+    def test_scan_refusal_stays_in_red_through_refreshes_until_the_next_try(self):
+        # 28/10/2026: Tối đa 10000 -> "Chọn từ 1 đến 1.000 video." was overwritten at once by the campaign status.
+        from teodub.campaign import read_json
+        self.channel_with_campaign('10000')
+        with patch('teodub.campaign_ui.threading.Thread') as thread:
+            self.tab.discover()
+            thread.assert_not_called()
+        self.assertIn('Chọn từ 1 đến 1.000 video.', self.tab.notice.get())
+        self.assertTrue(self.tab.notice.get().startswith('Chưa lấy danh sách: '))
+        for _ in range(3):
+            self.tab.display(read_json(self.tab.directory/'campaign.json'))
+            self.assertIn('Chọn từ 1 đến 1.000 video.', self.tab.notice.get())
+        self.tab.limit.set('100')
+        with patch('teodub.campaign_ui.threading.Thread'):
+            self.tab.discover()
+        self.assertEqual(self.tab.discover_notice, '')
+        self.assertNotIn('1.000', self.tab.notice.get())  # A new try clears the old refusal.
+        self.tab.scanning = False
+
+    def test_scan_refusal_for_a_blank_or_text_limit_is_in_plain_words(self):
+        self.channel_with_campaign('')
+        with patch('teodub.campaign_ui.threading.Thread'):
+            self.tab.discover()
+        self.assertIn('Ô Tối đa phải là một số.', self.tab.notice.get())
+
+    def test_a_scan_that_fails_while_reading_also_stays(self):
+        from teodub.campaign import read_json
+        self.channel_with_campaign('100')
+        self.tab.scanning = True
+        key = self.tab.input_key()
+        self.tab.scan_key = key
+        self.tab.scan_messages.put((key, 'error', 'Douyin chưa trả danh sách.'))
+        self.tab.after_cancel(self.tab.timer)
+        self.tab.poll()
+        self.assertFalse(self.tab.scanning)
+        self.tab.display(read_json(self.tab.directory/'campaign.json'))
+        self.assertIn('Douyin chưa trả danh sách.', self.tab.notice.get())
+
     def test_double_create_keeps_one_manifest_and_releases_creation_button(self):
         self.tab.create()
         one = self.tab.directory

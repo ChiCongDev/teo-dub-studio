@@ -281,6 +281,23 @@ def _all_unavailable(health, failures):
     return exc
 
 
+def _gone_ending(failures):
+    """The ending when Douyin itself reports the video deleted or locked and no source got it (28/10/2026).
+
+    No download site can have such a video, so waiting for the sites is pointless: it is a failure of this video
+    (the campaign goes on to the next one; Thử lại video lỗi tries it again by hand). The message must neither start
+    with the waiting text nor mention a login/limit, or the campaign would pause instead.
+    """
+    if not any(item.get('provider') == 'douyin' and item.get('status') == 'failed' and item.get('reason') == 'video_gone'
+               for item in failures):
+        return None
+    exc = ProviderUnavailable('Video đã bị xóa hoặc khóa trên Douyin (Douyin báo status_deleted) và không nguồn tải nào '
+                              'lấy được. Tèo bỏ qua video này để làm video kế tiếp; bấm Thử lại video lỗi nếu muốn thử lại sau.',
+                              provider='all', reason='video_gone')
+    exc.attempts = failures
+    return exc
+
+
 def resolve_providers(context, url, folder, check, emit, *, progress=None, validate=None, health=None):
     """Try each service once, through verified transfer when progress is supplied.
 
@@ -379,8 +396,8 @@ def resolve_providers(context, url, folder, check, emit, *, progress=None, valid
                 health.record_failure(provider, exc.reason, exc.retry_after_text)
             if exc.reason in ('verification_required', 'rate_limited') or index == len(PROVIDERS):
                 # Respect explicit verification/rate restrictions; never loop.
-                if health is not None and exc.reason not in ('verification_required', 'rate_limited'):
-                    exc = _all_unavailable(health, failures) or exc
+                if exc.reason not in ('verification_required', 'rate_limited'):
+                    exc = _gone_ending(failures) or (_all_unavailable(health, failures) if health is not None else None) or exc
                 exc.attempts = failures
                 raise exc
             following = PROVIDERS[index]
@@ -396,7 +413,7 @@ def resolve_providers(context, url, folder, check, emit, *, progress=None, valid
             if page is not None:
                 _close_browser_object(page)
     # Reached only when the last service was skipped, so nothing else could end the attempt.
-    ending = _all_unavailable(health, failures) if health is not None else None
+    ending = _gone_ending(failures) or (_all_unavailable(health, failures) if health is not None else None)
     if ending is None:
         ending = ProviderUnavailable('Chưa tải được video từ các trang tải.', provider='all', reason='provider_error')
         ending.attempts = failures

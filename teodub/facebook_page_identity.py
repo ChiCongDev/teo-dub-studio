@@ -6,6 +6,9 @@ Observed Facebook layout: Your profile -> See all profiles -> Choose profile,
 with named buttons and an explicit ', selected' / ', đang chọn' marker. Read on 24/10/2026 (English UI):
 "Account, your profile" -> dialog "Your profile" -> See all profiles -> "Select profile" with
 "<Page>, currently selected" and "<Page>, 3 notifications".
+26/10/2026: choosing a profile makes Facebook replace the document; a read during that reload failed the
+post ("Execution context was destroyed"), and an old tab that no longer answered held the account 20 minutes.
+Reads here wait for the new document within their deadline, and other tabs are checked with a time limit.
 """
 import re
 import time
@@ -25,6 +28,8 @@ EDIT_NAMES = re.compile(r'^(Tạo bài viết|Create post|Create a post|Tạo th
 SELECTED = re.compile(r',\s*(đang chọn|đã chọn|selected|currently selected)$', re.I)
 NOTIFICATIONS = re.compile(r',\s*\d+\s+(thông báo|notifications?)$', re.I)
 HOSTS = {'www.facebook.com', 'facebook.com', 'm.facebook.com'}
+TAB_CHECK_SECONDS = 3  # Each other tab gets this long to answer before a switch is refused.
+SWITCH_RELOAD_SECONDS = 5  # After choosing a profile, how long to look for Facebook's reload before reading.
 
 CHOICES_SCRIPT = r"""dialog => {
  const visible=e=>!!e.getClientRects().length && getComputedStyle(e).visibility!=='hidden'
@@ -67,6 +72,69 @@ def _safe(tab):
         raise ValueError('Facebook yêu cầu đăng nhập/xác minh. Bạn xử lý trực tiếp trong Chrome; Tèo chưa chuyển Page.')
 
 
+def _navigation(error):
+    from teodub.facebook_web_post import _navigation_interrupted
+    return _navigation_interrupted(error)
+
+
+def _crashed(error):
+    from playwright.sync_api import Error
+    return isinstance(error, Error) and 'Target crashed' in str(error)
+
+
+def _reloading(tab, deadline):
+    """Wait, within the caller's deadline, for the document Facebook is loading; never click anything."""
+    remaining = deadline-time.monotonic()
+    if remaining <= 0:
+        return
+    try:
+        tab.wait_for_load_state('domcontentloaded', timeout=max(1, int(remaining*1000)))
+    except Exception:
+        pass  # The caller's next read reports a closed tab or its own deadline.
+
+
+def _steady(tab, read, deadline):
+    """Run a read-only check; if Facebook replaced the document meanwhile, read the new one until `deadline`."""
+    while True:
+        try:
+            return read()
+        except Exception as exc:
+            if not _navigation(exc) or time.monotonic() >= deadline:
+                raise
+        _reloading(tab, deadline)
+
+
+def _visible(locator):
+    return [locator.nth(i) for i in range(locator.count()) if locator.nth(i).is_visible()]
+
+
+def open_editor(tab, *, seconds=TAB_CHECK_SECONDS):
+    """Whether `tab` shows an unfinished composer: True/False, or None when it does not answer within `seconds`.
+
+    count()/is_visible() have no time limit of their own, so a bounded wait for the document comes first. A
+    crashed or closed tab holds no editor any more.
+    """
+    from playwright.sync_api import Error, TimeoutError as PlaywrightTimeout
+    deadline = time.monotonic()+seconds
+    while True:
+        remaining = deadline-time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            tab.locator('html').wait_for(state='attached', timeout=max(1, int(remaining*1000)))
+            dialogs = tab.get_by_role('dialog').filter(has=tab.get_by_role('heading', name=EDIT_NAMES))
+            labelled = tab.get_by_role('dialog', name=EDIT_NAMES)
+            return bool(_visible(dialogs) or _visible(labelled))
+        except PlaywrightTimeout:
+            return None
+        except Error as exc:
+            if tab.is_closed() or _crashed(exc):
+                return False
+            if not _navigation(exc):
+                raise
+        _reloading(tab, deadline)
+
+
 def _choice(row):
     label = row['label'] or row['text'].split('\n')[0]
     selected = bool(SELECTED.search(label) or row.get('checked') == 'true' or row.get('current') in {'true', 'page'})
@@ -75,16 +143,17 @@ def _choice(row):
 
 
 def _selector(tab, *, cancel=None, finished=None, timeout=12):
-    _safe(tab)
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+    deadline = time.monotonic()+timeout
+    def checked(locator):
+        _safe(tab)
+        return _visible(locator)
     _stop(cancel, finished)
-    dialogs = tab.get_by_role('dialog', name=PROFILE_NAMES)
-    if not any(dialogs.nth(i).is_visible() for i in range(dialogs.count())):
-        deadline = time.monotonic()+timeout
+    if not _steady(tab, lambda: checked(tab.get_by_role('dialog', name=PROFILE_NAMES)), deadline):
         while True:
             _stop(cancel, finished)
-            _safe(tab)
             buttons = tab.get_by_role('button', name=PROFILE_NAMES)
-            visible = [buttons.nth(i) for i in range(buttons.count()) if buttons.nth(i).is_visible()]
+            visible = _steady(tab, lambda: checked(buttons), deadline)
             if visible or time.monotonic() >= deadline:
                 break
             tab.wait_for_timeout(100)
@@ -93,16 +162,18 @@ def _selector(tab, *, cancel=None, finished=None, timeout=12):
     opened_all = False
     while True:
         _stop(cancel, finished)
-        _safe(tab)
-        dialogs = tab.get_by_role('dialog', name=PROFILE_NAMES)
-        visible = [dialogs.nth(i) for i in range(dialogs.count()) if dialogs.nth(i).is_visible()]
+        visible = _steady(tab, lambda: checked(tab.get_by_role('dialog', name=PROFILE_NAMES)), deadline)
         if len(visible) > 1:
             raise ValueError('Facebook hiện nhiều menu tài khoản; chưa chuyển Page hoặc nhập bài.')
         if visible:
             dialog = visible[0]
             headings = dialog.get_by_role('heading', name=CHOOSER_NAMES)
-            if any(headings.nth(i).is_visible() for i in range(headings.count())):
-                rows = [_choice(row) for row in dialog.evaluate(CHOICES_SCRIPT)]
+            if _steady(tab, lambda: _visible(headings), deadline):
+                try:
+                    rows = [_choice(row) for row in _steady(tab, lambda: dialog.evaluate(CHOICES_SCRIPT,
+                        timeout=max(1, int((deadline-time.monotonic())*1000))), deadline)]
+                except PlaywrightTimeout:
+                    rows = []  # The menu closed meanwhile; the deadline below decides.
                 active = [row for row in rows if row['selected']]
                 if len(active) == 1:
                     return dialog, rows, active[0]
@@ -110,7 +181,7 @@ def _selector(tab, *, cancel=None, finished=None, timeout=12):
                     raise ValueError('Menu có nhiều danh tính đang chọn; chưa xác minh được người đăng.')
             elif not opened_all:
                 buttons = dialog.get_by_role('button', name=ALL_NAMES)
-                matches = [buttons.nth(i) for i in range(buttons.count()) if buttons.nth(i).is_visible()]
+                matches = _steady(tab, lambda: _visible(buttons), deadline)
                 if len(matches) == 1:
                     _stop(cancel, finished)
                     matches[0].click(timeout=5000)
@@ -125,12 +196,17 @@ def _selector(tab, *, cancel=None, finished=None, timeout=12):
 def _can_switch(context):
     # An actor switch applies to the whole account, including other tabs. Keep
     # every unfinished editor intact instead of invalidating another draft.
+    # Each tab answers within TAB_CHECK_SECONDS or the switch stops: on 26/10 one of 19 old tabs never
+    # answered and held the account for 20 minutes. A crashed tab holds no editor and is skipped.
     for tab in context.pages:
         if tab.is_closed() or urlsplit(tab.url).hostname not in HOSTS:
             continue
-        dialogs = tab.get_by_role('dialog').filter(has=tab.get_by_role('heading', name=EDIT_NAMES))
-        labelled = tab.get_by_role('dialog', name=EDIT_NAMES)
-        if any(x.nth(i).is_visible() for x in (dialogs, labelled) for i in range(x.count())):
+        editor = open_editor(tab)
+        if editor is None:
+            raise ValueError(f'Một tab Facebook trong Chrome của Tèo không phản hồi sau {TAB_CHECK_SECONDS} giây '
+                             '(thường do mở quá nhiều tab hoặc máy thiếu bộ nhớ). Tèo chưa chuyển Page, chưa nhập hoặc đăng bài; '
+                             'đóng bớt tab Facebook hoặc đóng Chrome của Tèo rồi để lịch sau chạy tiếp.')
+        if editor:
             raise ValueError('Tài khoản đang có hộp soạn bài chưa đóng. Hoàn tất hoặc đóng hộp đó trước khi chuyển sang Page khác; Tèo giữ nội dung đang soạn.')
 
 
@@ -166,15 +242,29 @@ def ensure_page_actor(context, tab, target, *, cancel=None, finished=None, progr
     if switched:
         _can_switch(context)
         _stop(cancel, finished)
-        dialog.locator('button,[role="button"],[role="radio"]').nth(chosen['index']).click(timeout=5000)
         deadline = time.monotonic()+15
-        # Wait for Facebook to finish the switch and close its selector. Do not
-        # re-click a profile if the network outcome is still uncertain.
+        # A new document has another time origin: that is how Facebook's reload after the choice is seen.
+        origin = _steady(tab, lambda: tab.evaluate('performance.timeOrigin'), deadline)
+        try:
+            dialog.locator('button,[role="button"],[role="radio"]').nth(chosen['index']).click(timeout=5000)
+        except Exception as exc:
+            if not _navigation(exc):
+                raise
+            # The document was replaced after the choice went out: observe; NEVER choose a profile again.
+        reload_until = time.monotonic()+SWITCH_RELOAD_SECONDS
+        # Wait for Facebook to finish the switch, close its selector and (usually) reload the page, so the
+        # verification below reads the new document. Do not re-click a profile if the network outcome is
+        # still uncertain.
+        def switching():
+            _safe(tab)
+            return (bool(_visible(tab.get_by_role('dialog', name=PROFILE_NAMES))),
+                    tab.evaluate('performance.timeOrigin') != origin)
         while True:
             _stop(cancel, finished)
-            _safe(tab)
-            visible = tab.get_by_role('dialog', name=PROFILE_NAMES)
-            if not any(visible.nth(i).is_visible() for i in range(visible.count())):
+            menu_open, reloaded = _steady(tab, switching, deadline)
+            if not menu_open and (reloaded or time.monotonic() >= reload_until):
+                if reloaded:
+                    _reloading(tab, deadline)
                 break
             if time.monotonic() >= deadline:
                 raise ValueError('Đã chọn Page nhưng Facebook chưa xác nhận chuyển xong. Kiểm tra Chrome; Tèo không bấm chọn lại.')

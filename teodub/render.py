@@ -552,6 +552,20 @@ def _verify(source, video, expected, cues, probes, subtitle_mode, cancel, progre
     return report
 
 
+DISPLAY_MAX_MS = 6000  # A burned caption stays at most this long from its start (28/10/2026).
+
+
+def _display_ends(final_cues, clean_cues, speed, duration_s):
+    """End of each burned caption: when the person finishes the line (its source end, at the output speed) but never
+    after the next line starts, the video ends or DISPLAY_MAX_MS from its start, and never before the voice ends."""
+    ends = []
+    for index, cue in enumerate(final_cues):
+        limit = min(math.ceil(clean_cues[index]['end_ms']/speed), cue['start_ms']+DISPLAY_MAX_MS,
+                    final_cues[index+1]['start_ms'] if index+1 < len(final_cues) else math.floor(duration_s*1000))
+        ends.append(max(cue['end_ms'], limit))
+    return ends
+
+
 def _caption_boxes(picture, start_s, end_s, cues, effective_speed, width, height, options, cancel, progress):
     """One box per burned line that also hides the video's own caption; the wide band if the picture cannot be read."""
     from teodub.caption_cover import cover_boxes
@@ -740,8 +754,12 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
                    f'tpad=stop_mode=clone:stop_duration={duration:.9f},trim=duration={duration:.9f},format=yuv420p')
         subtitle_mode = 'burned_ass' if subtitle_options['burn_subtitles'] else 'soft_mov_text'
         cover = None
+        shown_ends = _display_ends(final_cues, clean_cues, speed, duration)
         if subtitle_options['burn_subtitles'] and box == 'none':
-            escaped = str(subtitles.resolve()).replace('\\', '/').replace(':', '\\:').replace("'", "\\'")
+            # The picture's captions read their own copy; final.srt (the delivered file) keeps the voice times.
+            display = work/'display.srt'
+            _write_srt(display, [dict(cue, end_ms=end) for cue, end in zip(final_cues, shown_ends)])
+            escaped = str(display.resolve()).replace('\\', '/').replace(':', '\\:').replace("'", "\\'")
             style = ass_force_style(subtitle_options['subtitle_color'], subtitle_options['subtitle_weight'],
                                     subtitle_options['subtitle_size'])
             picture += (f",subtitles=filename='{escaped}':original_size={width}x{height}:"
@@ -753,6 +771,7 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
             placed, cover = _caption_boxes(picture_source, shown['start_s'], shown['start_s']+shown['duration_s'],
                                            final_cues, effective_speed, width, height, subtitle_options, cancel, progress)
             captions = work/'captions.ass'
+            placed = [dict(item, end_ms=end) for item, end in zip(placed, shown_ends)]
             write_captions(captions, placed, cover['text_size'], subtitle_options['subtitle_weight'], box, width, height)
             escaped = str(captions.resolve()).replace('\\', '/').replace(':', '\\:').replace("'", "\\'")
             picture += f",subtitles=filename='{escaped}':original_size={width}x{height}[v]"

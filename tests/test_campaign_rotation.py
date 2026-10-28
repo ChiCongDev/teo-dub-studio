@@ -149,12 +149,13 @@ class RotationQueueTests(Fixture):
         self.assertEqual(queue['status'], 'needs_attention')
         self.assertEqual([row['status'] for row in queue['campaigns']], ['needs_attention', 'completed'])
 
-    def test_waiting_for_a_download_source_pauses_the_whole_rotation(self):
+    def test_waiting_for_a_download_source_rests_that_link_and_pauses_only_when_every_link_waits(self):
+        # Changed 28/10/2026 (owner): it used to pause the whole rotation at once; see tests/test_source_wait.py.
         a, b = self.make('A', 2), self.make('B', 2, start=200)
         self.outcomes[('B', 1)] = dict(status='failed', message=campaign.WAITING_SOURCE+': mọi nguồn tải đang bận.')
         with patch.object(campaign, '_source_retry_at', return_value=12345.0):
             queue = campaign_batch.run_batch(self.rotation(a, b), runner=self.turn)
-        self.assertEqual(self.videos, [('A', 1), ('B', 1)])
+        self.assertEqual(self.videos, [('A', 1), ('B', 1), ('A', 2)])
         self.assertEqual(queue['status'], 'paused')
         manifest = campaign.read_json(b/'campaign.json')
         self.assertEqual((manifest['status'], manifest['resume_after']), ('paused', 12345.0))
