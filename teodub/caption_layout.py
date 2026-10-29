@@ -18,7 +18,7 @@ from pathlib import Path
 
 from teodub.subtitle_band import (MARGIN_BOTTOM, MARGIN_SIDES, SCRIPT_HEIGHT, SCRIPT_WIDTH, _ass_time, _em_per_line,
                                   _width_em)
-from teodub.subtitle_style import MAX_SUBTITLE_SIZE, SUBTITLE_BOXES, SUBTITLE_WEIGHTS, validate_subtitle_size
+from teodub.subtitle_style import MAX_SUBTITLE_SIZE, MIN_SUBTITLE_SIZE, SUBTITLE_BOXES, SUBTITLE_WEIGHTS, validate_subtitle_size
 
 PADDING = 1/6   # Space between the text and the box edge, as a share of the line height (owner 22/10).
 MAX_GROW = 1.5  # A video's Vietnamese text grows to its own captions' height up to this times the chosen size.
@@ -30,15 +30,16 @@ def _metrics(size, height, bold):
 
 
 def matched_size(chosen, rows, height):
-    """The Vietnamese size for one video: as tall as the video's own caption letters (its caption rows), never smaller
-    than the chosen size and at most MAX_GROW times it, the same for every line (owner 22/10: big original captions
-    get big Vietnamese text). Lines are not enlarged one by one: a large region there is too often a white plate or a
-    plastic bag (checked on six real videos)."""
+    """The Vietnamese size for one video: as tall as the video's own caption letters (its caption rows), at most
+    MAX_GROW times the chosen size, never below the smallest allowed size, the same for every line (owner 22/10: big
+    original captions get big Vietnamese text; owner 29/10: small original captions get small text, not the chosen
+    size). Lines are not enlarged one by one: a large region there is too often a white plate or a plastic bag
+    (checked on six real videos). A video with no own captions keeps the chosen size."""
     chosen = validate_subtitle_size(chosen)
     if not rows:
         return chosen
     letters = (rows[1]-rows[0])*SCRIPT_HEIGHT/height
-    return int(min(max(chosen, round(letters)), round(chosen*MAX_GROW), MAX_SUBTITLE_SIZE))
+    return int(min(max(MIN_SUBTITLE_SIZE, round(letters)), round(chosen*MAX_GROW), MAX_SUBTITLE_SIZE))
 
 
 def wrap(text, size, width, height, bold):

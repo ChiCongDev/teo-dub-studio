@@ -120,6 +120,26 @@ def _recheck_gaps(source, cues, duration_s, *, cancel, progress, cache):
     return merged, report
 
 
+WORD_SPLIT_GAP_S = 2.0  # A silence this long between two spoken words ends the line (owner 29/10/2026).
+
+
+def _spoken_pieces(segment):
+    """(start_s, end_s, text) of what one recognized segment says, from its first spoken word to its last, split where
+    two neighbouring words are more than WORD_SPLIT_GAP_S apart. Whisper may glue a cry to a sentence 12 s later; the
+    line then began at the cry and the sentence was read and shown far too early. Without word times: the segment."""
+    words = [word for word in (getattr(segment, 'words', None) or [])
+             if getattr(word, 'start', None) is not None and getattr(word, 'end', None) is not None and word.end >= word.start]
+    if not words:
+        return [(segment.start, segment.end, segment.text)]
+    groups = [[words[0]]]
+    for word in words[1:]:
+        if word.start-groups[-1][-1].end > WORD_SPLIT_GAP_S:
+            groups.append([word])
+        else:
+            groups[-1].append(word)
+    return [(group[0].start, group[-1].end, ''.join(word.word for word in group)) for group in groups]
+
+
 def transcribe(source_path, output_path, *, cancel=None, progress=None, asr_model='auto'):
     from teodub.ai_models import validate_models
     validate_models(dict(asr_model=asr_model))
@@ -173,18 +193,22 @@ def transcribe(source_path, output_path, *, cancel=None, progress=None, asr_mode
     check_cancel(cancel)
     segments, info = model.transcribe(str(source), language='zh', task='transcribe', beam_size=5,
                                      vad_filter=True, vad_parameters={'min_silence_duration_ms': 500},
-                                     condition_on_previous_text=False)
+                                     condition_on_previous_text=False, word_timestamps=True)
     cues = []
     for segment in segments:
         check_cancel(cancel)
-        text = normalized_text(segment.text)
-        if not text:
-            continue
-        start = max(round(segment.start * 1000), cues[-1]['end_ms'] if cues else 0)
-        end = round(segment.end * 1000)
-        if end <= start:
-            raise ValueError('Nhận dạng trả về câu có thời gian không hợp lệ. Đã giữ video để kiểm tra.')
-        cues.append(dict(start_ms=start, end_ms=end, text=text))
+        pieces = _spoken_pieces(segment)
+        for begin, finish, spoken in pieces:
+            text = normalized_text(spoken)
+            if not text:
+                continue
+            start = max(round(begin * 1000), cues[-1]['end_ms'] if cues else 0)
+            end = round(finish * 1000)
+            if end <= start:
+                if len(pieces) == 1:
+                    raise ValueError('Nhận dạng trả về câu có thời gian không hợp lệ. Đã giữ video để kiểm tra.')
+                end = start+200  # One word of a split sentence: keep what was said, never drop it.
+            cues.append(dict(start_ms=start, end_ms=end, text=text))
         if progress:
             progress(f'Đã nhận dạng {segment.end:.0f}/{info.duration:.0f} giây, {len(cues)} câu.',
                      percent=min(100, round(segment.end / max(info.duration, 1) * 100)))

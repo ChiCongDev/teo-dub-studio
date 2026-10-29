@@ -26,10 +26,20 @@ def box_padding(size):
 
 
 class MatchedSizeTests(unittest.TestCase):
-    def test_small_or_missing_own_captions_keep_the_chosen_size(self):
+    def test_missing_own_captions_keep_the_chosen_size(self):
         self.assertEqual(matched_size(16, None, 576), 16)
-        self.assertEqual(matched_size(16, [511, 537], 576), 16)     # Travel video: 26-pixel letters.
-        self.assertEqual(matched_size(16, [970, 1018], 1080), 16)   # 48-pixel letters on 1080 lines.
+        self.assertEqual(matched_size(16, [], 576), 16)
+
+    def test_small_own_captions_give_text_as_small_not_the_chosen_size(self):
+        # Changed 29/10/2026 (owner): these used to stay at the chosen 16.
+        self.assertEqual(matched_size(16, [511, 537], 576), 13)     # Travel video: 26-pixel letters.
+        self.assertEqual(matched_size(16, [970, 1018], 1080), 13)   # 48-pixel letters on 1080 lines.
+        self.assertEqual(matched_size(16, [739, 764], 1024), 8)     # The owner's câu_ca video: 25-pixel letters on 1024 lines.
+
+    def test_the_text_is_never_smaller_than_the_smallest_allowed_size(self):
+        self.assertEqual(matched_size(16, [500, 503], 1080), 8)
+        self.assertEqual(matched_size(8, [500, 503], 1080), 8)
+        self.assertEqual(matched_size(36, [739, 764], 1024), 8)
 
     def test_larger_own_captions_give_larger_text_for_the_whole_video(self):
         self.assertEqual(matched_size(16, [527, 566], 576), 20)     # Food channel: 39-pixel letters.

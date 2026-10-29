@@ -1,5 +1,14 @@
 # Tèo Dub Studio
 
+## Chữ phụ đề Việt vừa bằng chữ gốc; câu nói bắt đầu đúng lúc người nói — 29/10/2026
+
+- **Vấn đề (video câu_ca, Video 1):** chữ Việt in vào hình to hơn nhiều so với chữ Trung có sẵn (một câu xuống 5 dòng), vì Tèo không bao giờ để chữ Việt nhỏ hơn cỡ chữ bạn đã chọn (16). Ngoài ra câu "Con này được đấy" hiện và được đọc ở **1:16** trong khi người trong video nói ở **1:28**: Whisper gộp tiếng "哇" ở 1:16 với câu nói 12 giây sau thành một câu, lấy giờ của tiếng đầu.
+- **Nay:**
+  - **Chữ Việt vừa bằng chữ gốc.** Tèo đo chiều cao chữ gốc trong video rồi dùng cỡ chữ Việt tương đương, **được nhỏ hơn cỡ đã chọn** (nhỏ nhất vẫn là 8, lớn nhất vẫn tối đa 1,5 lần cỡ đã chọn như trước). Video không có chữ gốc thì dùng đúng cỡ bạn chọn. Khung trắng che chữ gốc không đổi.
+  - **Mỗi câu bắt đầu đúng lúc người nói chữ đầu tiên.** Tèo dùng giờ của từng chữ mà Whisper đã có sẵn. Trong một câu, nếu hai chữ cách nhau **hơn 2 giây** im lặng thì tách thành hai câu (tiếng "哇" riêng, câu nói riêng), mỗi câu được dịch, đọc và hiện chữ đúng giờ của nó.
+- **Lưu ý:** bước nghe chậm hơn một chút; có video thêm vài câu (tốn thêm chút lượt Codex khi dịch). Chỉ áp dụng cho video làm **sau khi cài**; video đã làm không tự đổi.
+- **Không đổi:** cỡ chữ chọn ở màn hình chính vẫn là giới hạn để tính cỡ tối đa (1,5 lần); màu, độ đậm, khung; nghe lại các khoảng bỏ sót lời; giọng đọc; quy tắc kiểm tra chất lượng.
+
 ## Một link chờ nguồn tải không còn làm dừng cả vòng; video đã bị Douyin xóa được bỏ qua — 28/10/2026
 
 - **Vấn đề:** Video 85 của link **test** đã bị Douyin xóa/khóa nên không nguồn tải nào lấy được. Tèo coi đó là "chờ nguồn tải" và **dừng cả vòng xen kẽ**, nên demo, chien_dich_28_10 và câu_ca cũng đứng chờ dù video của chúng tải bình thường. Đến giờ thử lại, Tèo lại thử đúng video đó rồi lại dừng.
