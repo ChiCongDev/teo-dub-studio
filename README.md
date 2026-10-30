@@ -1,5 +1,24 @@
 # Tèo Dub Studio
 
+## Page mới mở ra địa chỉ `facebook.com/people/<tên>/<số>/` không còn làm bài bị dừng — 30/10/2026
+
+- **Lỗi:** bài đến giờ đăng dừng sau vài giây với "Link đã lưu không phải địa chỉ Page" dù link Page đã lưu đúng. Facebook tự đổi địa chỉ của Page chưa có tên người dùng sang dạng `/people/<tên>/<số>/`, và Tèo chỉ biết `profile.php?id=`, `/<tên>` và `/pages/<tên>/<số>`. Chưa mở hộp viết bài, chưa tải video, chưa bấm Đăng.
+- **Nay:** Tèo nhận thêm dạng `/people/<tên>/<số>/` ở mọi chỗ kiểm tra Page (tab đang đúng Page, bước Chuyển ngay sang Trang, kiểm tra bài đã đăng, lưu link Page, tự tìm Page). **Số cuối địa chỉ vẫn phải khớp đúng Page ID đã lưu**; khác ID thì vẫn dừng như cũ.
+- **Báo lỗi rõ hơn:** khi Chrome đang ở trang không phải Page, bài ghi "Facebook đã chuyển tab sang một trang không phải Page (/đường-dẫn)". Chỉ ghi đường dẫn, không ghi phần sau dấu `?`.
+- **Không đổi:** cách đăng bài, mỗi lượt một lần bấm Đăng, không tự thử lại.
+
+## Lấy danh sách và chiến dịch tới 10.000 video — 29/10/2026
+
+- **Trước:** ô **Tối đa** của Lấy danh sách và mỗi chiến dịch chỉ nhận tối đa 1.000 video.
+- **Nay:**
+  - Ô **Tối đa** nhận từ 1 đến **10.000**; một chiến dịch chứa tới **10.000 video** và vào vòng chạy xen kẽ như các chiến dịch khác.
+  - **Danh sách lớn đọc lâu hơn.** Tèo cho phép khoảng 0,6 giây mỗi video (không bao giờ dưới 3 phút như cũ): 1.000 video tối đa 10 phút, 10.000 video tối đa khoảng 100 phút. Đợi bạn đăng nhập vẫn tối đa 3 phút. Douyin có thể chặn hoặc bắt xác minh giữa chừng; khi đó Tèo giữ các video đã lấy và báo **danh sách chưa đủ**.
+  - **Tạo chiến dịch lớn mất thời gian:** khoảng 10 giây cho mỗi 1.000 video (10.000 video ≈ 1,5 phút). Dòng trạng thái báo **"Đang lưu chiến dịch… n/N video"**; cửa sổ có thể đứng im một lúc, đừng đóng ứng dụng.
+  - **Bảng video của chiến dịch hơn 1.000 video** được đọc từng ít dòng một (không quá 0,15 giây mỗi giây) và mỗi dòng đọc lại sau 30 giây; dòng chưa đọc tạm hiện **"Đang đọc…"** ở cột Google Drive trong vài chục giây đầu. Video đang làm và dòng vừa thay đổi cập nhật ngay. Chiến dịch từ 1.000 video trở xuống hiển thị y như cũ.
+- **Đo thử (chiến dịch giả 10.000 video, 4.000 đã xong):** mỗi lần vẽ bảng khoảng 0,2 giây (cách cũ ước tính khoảng 74 giây mỗi lần), sau khoảng 46 giây mọi dòng đã đọc xong.
+- **Không đổi:** tải, lồng tiếng, đăng bài; thứ tự và vòng chạy xen kẽ; số chiến dịch tối đa trong vòng chạy (1.000); **Nguồn kênh tự động** vẫn đọc 60 video mỗi lượt; việc kiểm tra lại thành phẩm đã xong khi chạy lại một chiến dịch.
+- **Lưu ý:** mỗi lần chạy lại chiến dịch lớn, Tèo vẫn kiểm tra lại các thành phẩm đã xong nên lượt đầu có thể mất lâu hơn khi đã xong nhiều video.
+
 ## Chữ phụ đề Việt vừa bằng chữ gốc; câu nói bắt đầu đúng lúc người nói — 29/10/2026
 
 - **Vấn đề (video câu_ca, Video 1):** chữ Việt in vào hình to hơn nhiều so với chữ Trung có sẵn (một câu xuống 5 dòng), vì Tèo không bao giờ để chữ Việt nhỏ hơn cỡ chữ bạn đã chọn (16). Ngoài ra câu "Con này được đấy" hiện và được đọc ở **1:16** trong khi người trong video nói ở **1:28**: Whisper gộp tiếng "哇" ở 1:16 với câu nói 12 giây sau thành một câu, lấy giờ của tiếng đầu.
@@ -47,7 +66,7 @@
 
 - **Giờ bài đầu mỗi ngày:** sáng 28/10 bạn gõ `9:30` rồi bấm **Lưu thiết lập & hẹn giờ**, nhưng Tèo từ chối lưu vì chỉ nhận `09:30`. Lời báo lỗi biến mất sau 2 giây nên trông như đã lưu, và video xong không vào lịch. Nay Tèo tự hiểu `9:30` là `09:30` (và `9:5` là `09:05`), ô cũng tự đổi cho đúng. Giờ thật sự sai như `25:00` hay `abc` vẫn bị từ chối.
 - **Lời báo khi Lưu:** dòng đầu dưới nút Lưu nay ghi rõ và giữ nguyên, không bị làm mới mất: **"Đã lưu thiết lập lúc 10:25:03."** hoặc **"Chưa lưu: …lý do…"**. Dòng này chỉ đổi khi bạn bấm Lưu lần nữa.
-- **Nút Lấy danh sách:** nếu bấm mà Tèo từ chối (ô **Tối đa** quá 1.000 hoặc để trống, link trống hoặc sai dạng), lời báo hiện ở dòng chữ đỏ dưới tình trạng chiến dịch, ví dụ **"Chưa lấy danh sách: Chọn từ 1 đến 1.000 video. Sửa rồi bấm Lấy danh sách lại."**, và ở lại cho tới lần bấm kế tiếp. Lỗi xảy ra trong lúc đọc kênh cũng được giữ như vậy.
+- **Nút Lấy danh sách:** nếu bấm mà Tèo từ chối (ô **Tối đa** quá 10.000 hoặc để trống, link trống hoặc sai dạng), lời báo hiện ở dòng chữ đỏ dưới tình trạng chiến dịch, ví dụ **"Chưa lấy danh sách: Chọn từ 1 đến 10.000 video. Sửa rồi bấm Lấy danh sách lại."**, và ở lại cho tới lần bấm kế tiếp. Lỗi xảy ra trong lúc đọc kênh cũng được giữ như vậy.
 - **Không đổi:** cách đọc kênh, tải video, lồng tiếng, lịch đã bật và đăng Facebook. Ô Tối đa không tự đổi số của bạn.
 - Áp dụng sau khi bấm **Khởi động lại, giữ công việc**.
 
@@ -1013,7 +1032,7 @@ Reader cũng đã sửa ba lỗi: phản hồi thiếu dấu `/` cuối, bài c�
 
 1. Ở tab Video đơn, chọn giọng, model, tốc độ và kiểu Sub muốn dùng. Sang tab Chiến dịch, bấm **Lấy cấu hình từ tab Video đơn**. Cấu hình chỉ áp dụng khi tạo chiến dịch mới; chiến dịch đã lưu giữ nguyên lựa chọn ban đầu. SRT riêng của một video không được áp cho cả danh sách.
 2. Đặt tên chiến dịch, chọn hai thư mục video gốc/video lồng tiếng. Giữ **Tự nhận dạng link**, dán link kênh hoặc nhiều link video. Cũng có thể chọn chế độ cụ thể bằng danh sách.
-3. Chờ tự lấy danh sách hoặc bấm **Lấy danh sách**, xem các dòng video và link riêng. Kênh mặc định lấy tối đa 100 video, điều chỉnh từ 1 đến 1.000. Danh sách theo thứ tự trang trả về (có thể có video ghim), không hứa thứ tự ngày đăng. Có tùy chọn đảo danh sách trước khi tạo.
+3. Chờ tự lấy danh sách hoặc bấm **Lấy danh sách**, xem các dòng video và link riêng. Kênh mặc định lấy tối đa 100 video, điều chỉnh từ 1 đến 10.000 (danh sách lớn đọc lâu hơn, xem mục đầu trang). Danh sách theo thứ tự trang trả về (có thể có video ghim), không hứa thứ tự ngày đăng. Có tùy chọn đảo danh sách trước khi tạo.
 4. Nếu Douyin yêu cầu đăng nhập, bật **Hiện trình duyệt để đăng nhập/xác minh**, rồi Lấy danh sách lại. Bạn tự đăng nhập trong cửa sổ riêng; tool chờ tối đa 3 phút. Không cần gửi cookie/mật khẩu. Danh sách bị giới hạn luôn được báo là chưa đủ kênh; tool chỉ khẳng định hết danh sách công khai khi trang có bằng chứng hết trang.
 5. Bấm **Tạo chiến dịch mới** để chốt danh sách/cấu hình, sau đó **Chạy / Tiếp tục**. Bước tạo không gửi lượt dịch hay tạo giọng. Dùng danh sách **Chiến dịch đã lưu** để mở lại tiến độ sau khi tắt app.
 

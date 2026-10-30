@@ -92,6 +92,10 @@ def auto_resume_due(manifest, now):
             and type(after) in (int, float) and math.isfinite(after) and after <= now)
 
 
+MAX_CAMPAIGN_VIDEOS = 10000  # Owner 29/10/2026 (was 1.000).
+CREATE_PROGRESS_EVERY = 250  # Videos between two progress reports while a campaign is being saved.
+
+
 def parse_links(text):
     text = re.sub(r'\[[^\]]*\]\((https?://[^\s)]+)\)', r'\1', text)
     urls = re.findall(r'https?://[^\s<>"\u3000]+', text)
@@ -103,8 +107,8 @@ def parse_links(text):
             result.append(dict(url=url, title=''))
     if not result:
         raise ValueError('Dán ít nhất một link video Douyin/TikTok.')
-    if len(result) > 1000:
-        raise ValueError('Mỗi chiến dịch tối đa 1.000 video; chia thành nhiều chiến dịch.')
+    if len(result) > MAX_CAMPAIGN_VIDEOS:
+        raise ValueError('Mỗi chiến dịch tối đa 10.000 video; chia thành nhiều chiến dịch.')
     return result
 
 
@@ -132,7 +136,8 @@ def totals(manifest):
                 waiting=sum(x['status'] in ('pending', 'cancelled') for x in items))
 
 
-def create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery=None, *, prevent_duplicates=False):
+def create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery=None, *, prevent_duplicates=False,
+                    progress=None):
     """Serialize GUI creation and reuse an identical, recently created campaign."""
     from teodub.drive_delivery import drive_delivery_settings
     settings = dict(settings, wording=validate_wording(settings),
@@ -140,7 +145,7 @@ def create_campaign(data_dir, name, records, settings, original_dir, output_dir,
     if settings['drive_upload']['enabled']:
         settings['drive_data_dir'] = str(Path(data_dir).resolve())
     if not prevent_duplicates:
-        return _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery)
+        return _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery, progress)
     records = list(records)
     request = dict(name=name.strip(), records=records,
                    settings={key: settings[key] for key in CONFIG_KEYS if key in settings},
@@ -159,14 +164,14 @@ def create_campaign(data_dir, name, records, settings, original_dir, output_dir,
                     return path.parent
             except (OSError, ValueError, KeyError, TypeError):
                 continue
-        directory = _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery)
+        directory = _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery, progress)
         manifest = read_json(directory/'campaign.json')
         manifest['creation_fingerprint'] = fingerprint
         atomic_json(directory/'campaign.json', manifest)
         return directory
 
 
-def _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery=None):
+def _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery=None, progress=None):
     """Create only local records; never start paid/network/model work here."""
     if not name.strip():
         raise ValueError('Đặt tên chiến dịch trước.')
@@ -179,8 +184,8 @@ def _create_campaign(data_dir, name, records, settings, original_dir, output_dir
         if url not in seen:
             unique.append(dict(url=url, title=str(row.get('title', ''))[:300]))
             seen.add(url)
-    if not unique or len(unique) > 1000:
-        raise ValueError('Chiến dịch cần từ 1 đến 1.000 video.')
+    if not unique or len(unique) > MAX_CAMPAIGN_VIDEOS:
+        raise ValueError('Chiến dịch cần từ 1 đến 10.000 video.')
     from teodub.ai_models import validate_models
     from teodub.subtitle_style import validate_subtitle_style
     from teodub.tts import selection_options, validate_selection
@@ -215,6 +220,8 @@ def _create_campaign(data_dir, name, records, settings, original_dir, output_dir
         atomic_json(job/'config.json', config)
         items.append(dict(number=number, title=row['title'], url=row['url'], config_sha256=hash_file(job/'config.json'),
                           job=str(job), status='pending', message='Chờ xử lý', outputs={}))
+        if progress is not None and number % CREATE_PROGRESS_EVERY == 0:
+            progress(number, len(unique))
     manifest = dict(schema=1, id=ident, name=name.strip(), created_at=datetime.now().isoformat(),
                     original_dir=str(originals), output_dir=str(outputs), settings=snapshot,
                     discovery=discovery, status='ready', items=items)

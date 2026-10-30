@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 from urllib.parse import urljoin, urlsplit
 
-from teodub.channel_discovery import channel_url, resolved_video_url
+from teodub.channel_discovery import MAX_SCAN_VIDEOS, channel_url, resolved_video_url
 
 MAX_SIZE = 32*1024*1024
 VOID = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}
@@ -78,8 +78,8 @@ class SavedChannelParser(HTMLParser):
 
 
 def import_saved_channel(path, *, limit=100, expected_channel=None):
-    if type(limit) is not int or not 1 <= limit <= 1000:
-        raise ValueError('Chọn từ 1 đến 1.000 video.')
+    if type(limit) is not int or not 1 <= limit <= MAX_SCAN_VIDEOS:
+        raise ValueError('Chọn từ 1 đến 10.000 video.')
     path = Path(path)
     if path.suffix.lower() not in ('.html', '.htm'):
         raise ValueError('Chọn tệp trang kênh .html hoặc .htm do trình duyệt lưu.')

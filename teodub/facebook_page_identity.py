@@ -215,7 +215,13 @@ def _matching_url(href, target):
         return
     url = facebook_url(href, page=True)
     parsed = urlsplit(url)
-    value = parse_qs(parsed.query).get('id', [''])[0] if parsed.path == '/profile.php' else parsed.path.strip('/')
+    bits = parsed.path.strip('/').split('/')
+    if parsed.path == '/profile.php':
+        value = parse_qs(parsed.query).get('id', [''])[0]
+    elif len(bits) == 3 and bits[0] == 'people':  # Facebook's address for a Page without a username: the ID is the last part.
+        value = bits[2]
+    else:
+        value = parsed.path.strip('/')
     if value.isdigit() and value != target['page_id'] or url != facebook_url(target['url'], page=True) and not value.isdigit():
         raise ValueError('Dòng chọn Page có link/Page ID khác cấu hình; chưa chuyển hoặc đăng bài.')
 

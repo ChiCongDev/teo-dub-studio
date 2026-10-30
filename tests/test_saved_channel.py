@@ -158,10 +158,16 @@ class SavedChannelTests(unittest.TestCase):
 
     def test_rejects_invalid_limits(self):
         path = self.saved_page(self.listing('<a href="/video/123">Clip</a>'))
-        for limit in (0, 1001, -1, True, 1.5, '10'):
+        for limit in (0, 10001, -1, True, 1.5, '10'):
             with self.subTest(limit=limit):
                 with self.assertRaises(ValueError):
                     import_saved_channel(path, limit=limit)
+
+    def test_accepts_the_same_limits_as_the_toi_da_box(self):
+        path = self.saved_page(self.listing('<a href="/video/123">Clip</a>'))
+        for limit in (1, 1000, 1001, 10000):
+            with self.subTest(limit=limit):
+                self.assertEqual(len(import_saved_channel(path, limit=limit)['items']), 1)
 
 
 if __name__ == '__main__':

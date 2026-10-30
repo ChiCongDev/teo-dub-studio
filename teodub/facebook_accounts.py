@@ -242,7 +242,7 @@ class FacebookAccounts:
         url = facebook_url(url, page=True)
         parts = urlsplit(url)
         bits = parts.path.strip('/').split('/')
-        excluded = {'pages', 'login', 'login.php', 'checkpoint', 'recover', 'friends', 'me', 'settings',
+        excluded = {'pages', 'people', 'login', 'login.php', 'checkpoint', 'recover', 'friends', 'me', 'settings',
                     'messages', 'notifications', 'groups', 'watch', 'marketplace', 'gaming', 'reel',
                     'reels', 'ads', 'ad_center', 'business', 'help', 'privacy', 'policies', 'bookmarks',
                     'home.php', 'photo', 'photo.php', 'stories', 'profile_switcher', 'share'}
@@ -254,6 +254,9 @@ class FacebookAccounts:
             page_id = bits[0] if re.fullmatch(r'[0-9]+', bits[0]) else ''
             fallback = 'Page '+page_id if page_id else unquote(bits[0]).replace('-', ' ').replace('_', ' ')
         elif len(bits) == 3 and bits[0] == 'pages' and re.fullmatch(r'[0-9]+', bits[2]):
+            page_id = bits[2]
+            fallback = unquote(bits[1]).replace('-', ' ').replace('_', ' ')
+        elif len(bits) == 3 and bits[0] == 'people' and re.fullmatch(r'[0-9]+', bits[2]):
             page_id = bits[2]
             fallback = unquote(bits[1]).replace('-', ' ').replace('_', ' ')
         else:

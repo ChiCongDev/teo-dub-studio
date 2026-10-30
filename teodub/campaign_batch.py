@@ -76,7 +76,7 @@ def _identity(manifest, directory):
             or not isinstance(manifest.get('name'), str)
             or not isinstance(manifest.get('settings'), dict)
             or not isinstance(manifest.get('items'), list)
-            or not 1 <= len(manifest['items']) <= 1000):
+            or not 1 <= len(manifest['items']) <= campaign.MAX_CAMPAIGN_VIDEOS):
         raise ValueError('Dữ liệu chiến dịch đã lưu không hợp lệ.')
     try:
         frozen = {key: manifest[key] for key in

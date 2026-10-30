@@ -22,7 +22,7 @@ SNAPSHOT_SCRIPT = r"""() => {
   const main = heading.closest('[role="main"],main') || heading.parentElement.parentElement;
   const excluded = new Set(['pages','login','login.php','checkpoint','recover','friends','me','settings',
     'messages','notifications','groups','watch','marketplace','gaming','reel','reels','ads','ad_center',
-    'business','help','privacy','policies','bookmarks','home.php','photo','photo.php','stories','profile_switcher']);
+    'business','help','privacy','policies','bookmarks','home.php','photo','photo.php','stories','profile_switcher','people']);
   const candidate = a => {
     let u; try { u = new URL(a.getAttribute('href'), location.href); } catch { return null; }
     if (!['facebook.com','www.facebook.com','m.facebook.com'].includes(u.hostname)
@@ -34,7 +34,7 @@ SNAPSHOT_SCRIPT = r"""() => {
       id = u.searchParams.get('id'); url = 'https://www.facebook.com/profile.php?id=' + id;
     } else if (bits.length === 1 && !excluded.has(bits[0].toLowerCase()) && !bits[0].endsWith('.php')) {
       id = /^\d+$/.test(bits[0]) ? bits[0] : ''; url = 'https://www.facebook.com/' + bits[0];
-    } else if (bits.length === 3 && bits[0] === 'pages' && /^\d+$/.test(bits[2])) {
+    } else if (bits.length === 3 && (bits[0] === 'pages' || bits[0] === 'people') && /^\d+$/.test(bits[2])) {
       id = bits[2]; url = 'https://www.facebook.com' + path;
     } else return null;
     return {url, page_id:id};
@@ -111,10 +111,10 @@ def normalize_items(items):
         parts = urlsplit(url)
         bits = parts.path.strip('/').split('/')
         if (parts.path != '/profile.php' and not (len(bits) == 1 and bits[0]
-                and bits[0].lower() not in {'pages', 'friends', 'me', 'groups', 'messages', 'notifications',
+                and bits[0].lower() not in {'pages', 'people', 'friends', 'me', 'groups', 'messages', 'notifications',
                                           'settings', 'watch', 'marketplace', 'help', 'reels', 'ads'}
                 and not bits[0].endswith('.php'))
-                and not (len(bits) == 3 and bits[0] == 'pages' and bits[-1].isdigit())):
+                and not (len(bits) == 3 and bits[0] in ('pages', 'people') and bits[-1].isdigit())):
             continue
         page_id = parse_qs(parts.query).get('id', [''])[0] if parts.path == '/profile.php' else ''
         if not page_id and bits[-1].isdigit():

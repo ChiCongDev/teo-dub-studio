@@ -57,21 +57,30 @@ class CampaignUITests(unittest.TestCase):
 
     def test_scan_refusal_stays_in_red_through_refreshes_until_the_next_try(self):
         # 28/10/2026: Tối đa 10000 -> "Chọn từ 1 đến 1.000 video." was overwritten at once by the campaign status.
+        # 29/10/2026: the limit is 10.000 now, so the same refusal is tested with 10001.
         from teodub.campaign import read_json
-        self.channel_with_campaign('10000')
+        self.channel_with_campaign('10001')
         with patch('teodub.campaign_ui.threading.Thread') as thread:
             self.tab.discover()
             thread.assert_not_called()
-        self.assertIn('Chọn từ 1 đến 1.000 video.', self.tab.notice.get())
+        self.assertIn('Chọn từ 1 đến 10.000 video.', self.tab.notice.get())
         self.assertTrue(self.tab.notice.get().startswith('Chưa lấy danh sách: '))
         for _ in range(3):
             self.tab.display(read_json(self.tab.directory/'campaign.json'))
-            self.assertIn('Chọn từ 1 đến 1.000 video.', self.tab.notice.get())
+            self.assertIn('Chọn từ 1 đến 10.000 video.', self.tab.notice.get())
         self.tab.limit.set('100')
         with patch('teodub.campaign_ui.threading.Thread'):
             self.tab.discover()
         self.assertEqual(self.tab.discover_notice, '')
-        self.assertNotIn('1.000', self.tab.notice.get())  # A new try clears the old refusal.
+        self.assertNotIn('10.000', self.tab.notice.get())  # A new try clears the old refusal.
+
+    def test_tối_đa_10000_is_accepted_and_starts_the_scan(self):
+        self.channel_with_campaign('10000')
+        with patch('teodub.campaign_ui.threading.Thread') as thread:
+            self.tab.discover()
+            thread.assert_called_once()
+        self.assertEqual(self.tab.discover_notice, '')
+        self.tab.scanning = False
         self.tab.scanning = False
 
     def test_scan_refusal_for_a_blank_or_text_limit_is_in_plain_words(self):

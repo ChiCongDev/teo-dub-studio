@@ -1,4 +1,5 @@
 """Separate campaign tab; ordinary single-video controls remain in Studio."""
+import copy
 from datetime import datetime
 import os
 from pathlib import Path
@@ -11,11 +12,19 @@ from tkinter import filedialog, ttk
 
 from teodub.campaign import (ROTATION_REQUEST, ROTATION_WAIT, auto_resume_due, create_campaign, is_running,
                             read_json, totals)
-from teodub.campaign_tracking import tracking_row, campaign_notice, processing_time
+from teodub.campaign_tracking import STATUS, tracking_row, campaign_notice, processing_time
 from teodub.campaign_posting import campaign_posting_statuses
 from teodub.drive_delivery import drive_upload_summary
 from teodub.channel_browser import BROWSER_LABELS, profile_directory
+from teodub.channel_discovery import MAX_SCAN_VIDEOS
 from teodub.common import atomic_json
+
+
+# A campaign with more videos than this reads its table rows a few at a time (owner 29/10/2026, up to 10.000 videos):
+# opening every video's files each second would freeze the window. Up to this size nothing changes.
+BIG_TABLE_ITEMS = 1000
+BIG_TABLE_SECONDS = 0.15  # The most one refresh spends reading rows' files.
+BIG_TABLE_REFRESH_S = 30  # A row that nothing reported about is read again after this long.
 
 
 class CampaignTab(ttk.Frame):
@@ -38,6 +47,10 @@ class CampaignTab(ttk.Frame):
         self.records = []
         self.posting_statuses = {}
         self.drive_statuses = {}
+        self.big_rows = {}  # Big campaigns: number -> (item as read, table row, Drive status, when read).
+        self.big_written = {}  # Big campaigns: table key -> (values, status) last written.
+        self.big_cursor = 0
+        self.big_for = None
         self.saved_paths = {}
         self.auto_timer = None
         self.auto_key = None
@@ -111,7 +124,7 @@ class CampaignTab(ttk.Frame):
                      values=('Tự nhận dạng link', 'Danh sách link video', 'Link kênh Douyin'), state='readonly', width=21).pack(side='left')
         ttk.Checkbutton(source_row, text='Tự lấy khi dán', variable=self.auto_fetch).pack(side='left', padx=6)
         ttk.Label(source_row, text='Tối đa').pack(side='left', padx=(12, 5))
-        ttk.Spinbox(source_row, from_=1, to=1000, textvariable=self.limit, width=6).pack(side='left')
+        ttk.Spinbox(source_row, from_=1, to=MAX_SCAN_VIDEOS, textvariable=self.limit, width=6).pack(side='left')
         ttk.Label(source_row, text='video/kênh').pack(side='left', padx=5)
         ttk.Checkbutton(source_row, text='Hiện trình duyệt để đăng nhập/xác minh', variable=self.visible).pack(side='left', padx=8)
         self.scan_button = ttk.Button(source_row, text='Lấy danh sách', command=self.discover)
@@ -468,6 +481,7 @@ class CampaignTab(ttk.Frame):
         self.records = records
         self.posting_statuses = {}
         self.drive_statuses = {}
+        self.big_for = None
         self.directory = None
         self.saved_voice.set('')
         self.retry_summary.set('')
@@ -568,7 +582,7 @@ class CampaignTab(ttk.Frame):
         from teodub.channel_discovery import classify_input
         try:
             classify_input(key[0], key[1])
-            if not 1 <= int(key[2]) <= 1000:
+            if not 1 <= int(key[2]) <= MAX_SCAN_VIDEOS:
                 return
         except ValueError:
             return
@@ -595,8 +609,8 @@ class CampaignTab(ttk.Frame):
                 limit = int(self.limit.get())
             except ValueError:
                 raise ValueError('Ô Tối đa phải là một số.') from None
-            if not 1 <= limit <= 1000:
-                raise ValueError('Chọn từ 1 đến 1.000 video.')
+            if not 1 <= limit <= MAX_SCAN_VIDEOS:
+                raise ValueError('Chọn từ 1 đến 10.000 video.')
             self.save_campaign_preferences()
         except (ValueError, OSError) as exc:
             self.discover_notice = 'Chưa lấy danh sách: '+str(exc)+' Sửa rồi bấm Lấy danh sách lại.'
@@ -698,8 +712,12 @@ class CampaignTab(ttk.Frame):
                 records = discovery['items']
             if self.reverse.get():
                 records = list(reversed(records))
+            def saving(done, total):  # Saving thousands of videos takes minutes: show it is working.
+                self.status.set(f'Đang lưu chiến dịch… {done}/{total} video. Cửa sổ có thể đứng im một lúc; đừng đóng ứng dụng.')
+                self.update_idletasks()
             directory = create_campaign(self.data_dir, self.name.get(), records, self.settings,
-                                        self.original_dir.get(), self.output_dir.get(), discovery, prevent_duplicates=True)
+                                        self.original_dir.get(), self.output_dir.get(), discovery, prevent_duplicates=True,
+                                        progress=saving)
             self.save_campaign_preferences()
             self.directory = directory
             self.records = list(records)
@@ -924,6 +942,10 @@ class CampaignTab(ttk.Frame):
         for item in manifest['items']:
             self.posting_statuses.setdefault(item['number'], dict(label='Cần kiểm tra',
                 details='Chưa đọc được trạng thái đăng bài của video này.'))
+        if len(manifest['items']) > BIG_TABLE_ITEMS:
+            self.display_big_table(manifest, active, expected)
+            return
+        self.big_for = None
         self.drive_statuses = {}
         from teodub.campaign_settings import effective_job
         for item in manifest['items']:
@@ -944,6 +966,66 @@ class CampaignTab(ttk.Frame):
                 self.tree.item(key, values=values, tags=(item['status'],))
             else:
                 self.tree.insert('', 'end', iid=key, values=values, tags=(item['status'],))
+
+    def display_big_table(self, manifest, active, expected):
+        """The table of a campaign with thousands of videos: rows are read a few at a time, never all at once.
+
+        What changed since the last read and the video being made are read at once; the other rows are read in turns,
+        at most BIG_TABLE_SECONDS per refresh, and again after BIG_TABLE_REFRESH_S. A row not read yet shows what the
+        list already knows. The table is only written where a row differs from what it already shows.
+        """
+        from teodub.campaign_settings import effective_job
+        if self.big_for != self.directory:
+            self.big_rows, self.big_written, self.big_cursor, self.big_for = {}, {}, 0, self.directory
+        items, rows = manifest['items'], self.big_rows
+        started = time.monotonic()
+
+        def read(item):
+            row = tracking_row(item, active=active)
+            try:
+                job = effective_job(self.directory, item)
+                drive = drive_upload_summary(read_json(job/'config.json'), job)
+            except (OSError, ValueError, TypeError, KeyError):
+                drive = dict(label='Cần kiểm tra', details='Chưa đọc được cấu hình Drive của video.')
+            rows[item['number']] = (copy.deepcopy(item), row, drive, time.monotonic())
+
+        for item in items:
+            known = rows.get(item['number'])
+            if item['status'] == 'running' or (known is not None and known[0] != item):
+                read(item)
+        count = len(items)
+        first = self.big_cursor % count
+        for step in range(count):
+            if time.monotonic()-started > BIG_TABLE_SECONDS:
+                break
+            position = (first+step) % count
+            item = items[position]
+            known = rows.get(item['number'])
+            if known is None or started-known[3] >= BIG_TABLE_REFRESH_S:
+                read(item)
+            self.big_cursor = position+1
+        self.drive_statuses = {number: entry[2] for number, entry in rows.items()}
+        for key in set(self.tree.get_children())-expected:
+            self.tree.delete(key)
+            self.big_written.pop(key, None)
+        written = self.big_written
+        for item in items:
+            known = rows.get(item['number'])
+            posting = self.posting_statuses.get(item['number'], {}).get('label', 'Cần kiểm tra')
+            if known is None:
+                values = (f'Video {item["number"]}', item.get('title') or '(Chưa có tiêu đề)', item['url'],
+                          STATUS.get(item['status'], item['status']), '…', '—', posting, 'Đang đọc…', '')
+            else:
+                values = known[1][:-1]+(posting, known[2]['label'], known[1][-1])
+            key = str(item['number'])
+            stamp = (values, item['status'])
+            if written.get(key) == stamp:
+                continue
+            if self.tree.exists(key):
+                self.tree.item(key, values=values, tags=(item['status'],))
+            else:
+                self.tree.insert('', 'end', iid=key, values=values, tags=(item['status'],))
+            written[key] = stamp
 
     def refresh_buttons(self):
         busy = (self.studio.process is not None or self.studio.campaign_busy or self.scanning or self.creating

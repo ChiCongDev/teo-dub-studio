@@ -540,7 +540,7 @@ def _page_id(url):
     bits = parsed.path.strip('/').split('/')
     if parsed.path == '/profile.php':
         value = parse_qs(parsed.query).get('id', [''])[0]
-    elif len(bits) == 1 or len(bits) == 3 and bits[0] == 'pages':
+    elif len(bits) == 1 or len(bits) == 3 and bits[0] in ('pages', 'people'):
         value = bits[-1]
     else:
         value = ''
@@ -554,12 +554,18 @@ def _target_url(url):
     excluded = {'pages', 'login', 'login.php', 'checkpoint', 'recover', 'friends', 'me', 'settings',
                 'messages', 'notifications', 'groups', 'watch', 'marketplace', 'gaming', 'reel',
                 'reels', 'ads', 'ad_center', 'business', 'help', 'privacy', 'policies', 'bookmarks',
-                'home.php', 'photo', 'photo.php', 'stories', 'profile_switcher', 'share'}
+                'home.php', 'photo', 'photo.php', 'stories', 'profile_switcher', 'share', 'people'}
+    # /people/<name>/<numeric id>: how Facebook shows a Page that has no username. The ID is still compared with the saved one.
     if (urlsplit(url).path != '/profile.php' and not (len(bits) == 1 and bits[0]
             and bits[0].casefold() not in excluded and not bits[0].endswith('.php'))
-            and not (len(bits) == 3 and bits[0] == 'pages' and bits[-1].isdigit())):
+            and not (len(bits) == 3 and bits[0] in ('pages', 'people') and bits[-1].isdigit())):
         raise ValueError('Link đã lưu không phải địa chỉ Page; sửa đúng Page trước khi chuẩn bị.')
     return url
+
+
+def _where(url):
+    """Only the path of an address, never its query, for a message the owner reads."""
+    return urlsplit(url).path[:80] or '/'
 
 
 def _one_visible(locator, label):
@@ -978,7 +984,11 @@ class BrowserPagePublisher:
         auth = tab.evaluate(AUTH_SCRIPT)
         if auth.get('auth') or auth.get('blocked'):
             raise ValueError('Facebook đang yêu cầu đăng nhập/xác minh. Bạn tự thao tác trong Chrome; chưa chuẩn bị/đăng bài.')
-        current = _target_url(tab.url)
+        try:
+            current = _target_url(tab.url)
+        except ValueError:
+            raise ValueError('Facebook đã chuyển tab sang một trang không phải Page ('+_where(tab.url)+'). '
+                             'Mở Chrome xem Facebook đang yêu cầu gì; chưa chuẩn bị hoặc đăng bài.') from None
         current_id = _page_id(current)
         if current != _target_url(target['url']) and current_id != target['page_id']:
             raise ValueError('Tab đã chuyển sang Page khác; chưa bấm Đăng. Kiểm tra danh tính trong Chrome.')

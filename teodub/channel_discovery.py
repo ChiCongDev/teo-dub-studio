@@ -1,4 +1,5 @@
 """Read public Douyin channel posts through a normal, isolated browser session."""
+import math
 from pathlib import Path
 import re
 import time
@@ -7,6 +8,17 @@ from urllib.parse import parse_qs, urlsplit
 from teodub.common import check_cancel
 from teodub.channel_browser import BROWSER_LABELS, launch_channel_browser
 from teodub.channel_scan_guard import channel_scan_guard
+
+
+# Owner 29/10/2026: a channel list may hold up to 10.000 videos. Reading it takes longer the more videos it asks for
+# (about 0,6 s each, never less than the old 3 minutes); waiting for the owner's login keeps the old 3 minutes.
+MAX_SCAN_VIDEOS = 10000
+SCAN_SECONDS_PER_VIDEO = 0.6
+SCAN_MIN_SECONDS = 180
+
+
+def scan_timeout(limit):
+    return max(SCAN_MIN_SECONDS, math.ceil(limit*SCAN_SECONDS_PER_VIDEO))
 
 
 def channel_url(text):
@@ -84,12 +96,12 @@ class ChannelPosts:
 
 
 def scan_channel(text, profile_dir, *, limit=100, visible=False, cancel=None, progress=None,
-                 on_items=None, allow_video=False, browser='auto', timeout=180):
+                 on_items=None, allow_video=False, browser='auto', timeout=None):
     # Keep the profile exclusive through launch, reading and context.close().
     # Validation and cancellation happen before the guard creates any files.
     channel_url(text)
-    if type(limit) is not int or not 1 <= limit <= 1000:
-        raise ValueError('Giới hạn lấy danh sách từ 1 đến 1.000 video.')
+    if type(limit) is not int or not 1 <= limit <= MAX_SCAN_VIDEOS:
+        raise ValueError('Giới hạn lấy danh sách từ 1 đến 10.000 video.')
     if browser not in BROWSER_LABELS:
         raise ValueError('Chọn trình duyệt đọc kênh trong danh sách.')
     check_cancel(cancel)
@@ -101,9 +113,12 @@ def scan_channel(text, profile_dir, *, limit=100, visible=False, cancel=None, pr
 
 
 def _scan_channel(text, profile_dir, *, limit=100, visible=False, cancel=None, progress=None,
-                  on_items=None, allow_video=False, browser='auto', timeout=180):
-    if type(limit) is not int or not 1 <= limit <= 1000:
-        raise ValueError('Giới hạn lấy danh sách từ 1 đến 1.000 video.')
+                  on_items=None, allow_video=False, browser='auto', timeout=None):
+    if type(limit) is not int or not 1 <= limit <= MAX_SCAN_VIDEOS:
+        raise ValueError('Giới hạn lấy danh sách từ 1 đến 10.000 video.')
+    login_limit = SCAN_MIN_SECONDS if timeout is None else timeout
+    if timeout is None:
+        timeout = scan_timeout(limit)
     url = channel_url(text)
     if browser not in BROWSER_LABELS:
         raise ValueError('Chọn trình duyệt đọc kênh trong danh sách.')
@@ -199,6 +214,8 @@ def _scan_channel(text, profile_dir, *, limit=100, visible=False, cancel=None, p
                         if not login_notified:
                             notify(f'Đã đọc {count} video. Douyin yêu cầu đăng nhập để xem tiếp; hãy đăng nhập trong cửa sổ vừa mở (tối đa 3 phút).')
                             login_notified = True
+                        if time.monotonic()-started >= login_limit:
+                            break  # A long list reads for longer, but waiting for the login stays at 3 minutes.
                         page.wait_for_timeout(1200)
                         continue
                     reason = 'timeout'
