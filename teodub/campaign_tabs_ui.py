@@ -6,7 +6,9 @@ one video at a time, so running links take turns (one video each). Closing a sub
 """
 import os
 from pathlib import Path
+import queue
 import re
+import threading
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -31,6 +33,7 @@ STATES = {
     'ready': ('sẵn sàng', 'Sẵn sàng · bấm Chạy'),
     'interrupted': ('gián đoạn', 'Bị gián đoạn · bấm Chạy để chạy tiếp'),
 }
+CHANNEL_WINDOW_S = 12*3600  # A channel window may stay open all day; the login helper's own 30 minutes is for signing in.
 RUNNABLE = {'ready', 'paused', 'stopped', 'interrupted'}
 STOPPABLE = {'running', 'waiting', 'handoff'}
 
@@ -48,6 +51,11 @@ class CampaignArea(ttk.Frame):
         self.campaign_tab = None
         self.timer = None
         self.closed = False
+        # Mở kênh (owner 31/10/2026): at most one channel window of Tèo's own Chrome at a time.
+        self.channel_tab = None
+        self.channel_thread = None
+        self.channel_cancel = threading.Event()
+        self.channel_messages = queue.Queue()
         self.bind('<Destroy>', self.on_destroy, add='+')
 
     def attach(self, campaign_tab):
@@ -127,6 +135,7 @@ class CampaignArea(ttk.Frame):
         self.timer = None
         if self.closed or getattr(self.studio, 'closed', False):
             return
+        self.drain_channel()
         visible = self.visible_tab()
         for tab in list(self.links.values()):
             try:
@@ -135,9 +144,75 @@ class CampaignArea(ttk.Frame):
                 continue
         self.timer = self.after(REFRESH_MS, self.poll)
 
+    @property
+    def channel_open(self):
+        return self.channel_tab is not None
+
+    def open_channel(self, tab, channel):
+        """Open one link's channel page in Tèo's own Chrome (the profile "Đăng nhập Chrome" signs in). Look only: it reads
+        nothing and changes no campaign. Runs on its own thread until the owner closes the Chrome window."""
+        if self.channel_open:
+            raise ValueError('Đang có một cửa sổ kênh mở trong Chrome của Tèo. Đóng cửa sổ Chrome đó trước rồi bấm lại.')
+        workspace = self.campaign_tab
+        if (getattr(self.studio, 'login_pending', False) or getattr(workspace, 'chrome_login_pending', False)
+                or getattr(workspace, 'scanning', False)):
+            raise ValueError('Đang đăng nhập hoặc đọc kênh bằng Chrome của Tèo. Đợi xong rồi bấm Mở kênh.')
+        from teodub.channel_browser import profile_directory
+        profile = profile_directory(self.data_dir/'douyin-channel-browser', 'chrome')
+        self.channel_cancel.clear()
+        self.channel_tab = tab
+        shown = []
+
+        def progress(_message):
+            # The login helper reports twice: browser starting, then the page loaded. Its second text talks about signing in.
+            shown.append(1)
+            self.channel_messages.put(('opened' if len(shown) > 1 else 'starting', ''))
+
+        def work():
+            try:
+                from teodub.channel_login import open_chrome_login
+                reason = open_chrome_login(profile, text=channel, cancel=self.channel_cancel, progress=progress,
+                                           timeout=CHANNEL_WINDOW_S)
+                self.channel_messages.put(('done', reason))
+            except Exception as exc:
+                self.channel_messages.put(('error', str(exc) or type(exc).__name__))
+        try:
+            # Not a daemon: closing Tèo cancels it and it closes the browser and flushes the profile first.
+            self.channel_thread = threading.Thread(target=work, daemon=False)
+            self.channel_thread.start()
+        except Exception:
+            self.channel_tab = None
+            raise
+
+    def drain_channel(self):
+        while True:
+            try:
+                kind, value = self.channel_messages.get_nowait()
+            except queue.Empty:
+                return
+            tab = self.channel_tab
+            if kind == 'starting':
+                text = 'Đang mở kênh trong Chrome của Tèo…'
+            elif kind == 'opened':
+                text = 'Đã mở kênh trong Chrome của Tèo (phiên đăng nhập đã lưu). Xem xong thì đóng cửa sổ Chrome đó.'
+            else:
+                self.channel_tab = None
+                if kind == 'error':
+                    text = 'Chưa mở được kênh: '+value
+                elif value == 'timeout':
+                    text = 'Cửa sổ kênh đã mở quá lâu nên Tèo đóng lại; hồ sơ đăng nhập vẫn được giữ.'
+                else:
+                    text = 'Đã đóng cửa sổ kênh. Hồ sơ đăng nhập của Tèo được giữ nguyên.'
+            if tab is not None:
+                try:
+                    tab.message.set(text)
+                except tk.TclError:
+                    pass
+
     def on_destroy(self, event):
         if event.widget is self:
             self.closed = True
+            self.channel_cancel.set()
             if self.timer is not None:
                 try:
                     self.after_cancel(self.timer)
@@ -156,6 +231,7 @@ class CampaignLinkTab(ttk.Frame):
         self.state = 'ready'
         self.slow_at = 0.
         self.posting, self.drive = {}, {}
+        self.more_window = None
         self.header = tk.StringVar(self)
         self.source = tk.StringVar(self)
         self.status = tk.StringVar(self)
@@ -180,9 +256,13 @@ class CampaignLinkTab(ttk.Frame):
         self.stop_button.pack(side='left', padx=6)
         self.retry_button = ttk.Button(buttons, text='Thử lại video lỗi', command=self.retry)
         self.retry_button.pack(side='left')
+        self.more_button = ttk.Button(buttons, text='Lấy thêm video mới…', command=self.open_more, state='disabled')
+        self.more_button.pack(side='left', padx=6)
         ttk.Button(buttons, text='Mở video gốc', command=lambda: self.open_folder('original_dir')).pack(side='left', padx=6)
         ttk.Button(buttons, text='Mở thành phẩm', command=lambda: self.open_folder('output_dir')).pack(side='left')
         ttk.Button(buttons, text='Đóng tab', command=self.close).pack(side='left', padx=(18, 0))
+        self.channel_button = ttk.Button(buttons, text='Mở kênh', command=self.open_channel, state='disabled')
+        self.channel_button.pack(side='left', padx=(6, 0))
         table = ttk.Frame(self)
         table.grid(row=5, column=0, sticky='nsew')
         table.columnconfigure(0, weight=1)
@@ -212,6 +292,8 @@ class CampaignLinkTab(ttk.Frame):
             'Mỗi tab là một link. "Dừng link này" chỉ dừng link này, các link khác vẫn chạy. Máy làm một video '
             'một lúc nên các link đang chạy làm xen kẽ, mỗi link một video. "Chạy" bỏ qua video lỗi; "Thử lại video '
             'lỗi" làm lại mỗi video lỗi một lần trong các lượt của link này, kể cả khi link khác đang chạy. '
+            '"Lấy thêm video mới…" đọc lại kênh của link và chỉ thêm vào cuối link những video chưa có trong chiến dịch nào. '
+            '"Mở kênh" mở link kênh trong Chrome của Tèo (đã đăng nhập Douyin) để bạn xem; đóng cửa sổ Chrome đó khi xong. '
             'Đóng tab không dừng link. Nhấp đôi một video để mở thành phẩm hoặc xem lỗi.')).grid(
                 row=8, column=0, sticky='w', pady=(4, 0))
 
@@ -275,6 +357,10 @@ class CampaignLinkTab(ttk.Frame):
         self.run_button.configure(state='normal' if self.state in RUNNABLE and not busy else 'disabled')
         self.stop_button.configure(state='normal' if self.state in STOPPABLE else 'disabled')
         self.retry_button.configure(state='normal' if failed-retrying and not busy else 'disabled')
+        # Owner 30/10/2026: only a link made from a channel has one to read again.
+        self.more_button.configure(state='normal' if channel and not busy else 'disabled')
+        # Owner 31/10/2026: opening the channel to look needs only a channel link; it never touches a running video.
+        self.channel_button.configure(state='normal' if channel else 'disabled')
         if time.monotonic()-self.slow_at >= SLOW_S or not self.posting:
             self.slow_at = time.monotonic()
             self.read_slow_columns(manifest)
@@ -360,6 +446,34 @@ class CampaignLinkTab(ttk.Frame):
         self.studio.refresh_buttons()
         self.refresh(full=True)
 
+    def open_more(self):
+        """Lấy thêm video mới (owner 30/10/2026): read this link's channel again, add only the videos no campaign has."""
+        if self.more_window is not None and self.more_window.winfo_exists():
+            self.more_window.lift()
+            return
+        workspace = getattr(self.area, 'campaign_tab', None)
+        if self.studio.process is not None or getattr(self.studio, 'login_pending', False) or getattr(workspace, 'scanning', False):
+            self.message.set('Đang có video đơn, cửa sổ đăng nhập hoặc một lượt đọc kênh khác. Đợi xong rồi bấm Lấy thêm video mới.')
+            return
+        try:
+            from teodub.campaign_append_ui import AppendVideosDialog
+            self.more_window = AppendVideosDialog(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.message.set(str(exc))
+
+    def open_channel(self):
+        """Mở kênh (owner 31/10/2026): open this link's channel in Tèo's Chrome, signed in as "Đăng nhập Chrome" left it."""
+        try:
+            discovery = (self.manifest or read_json(self.directory/'campaign.json')).get('discovery') or {}
+            channel = discovery.get('channel') if isinstance(discovery, dict) else None
+            if not channel:
+                raise ValueError('Link này không có link kênh (tạo từ danh sách video dán vào).')
+            self.area.open_channel(self, channel)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.message.set(str(exc))
+            return
+        self.message.set('Đang mở kênh trong Chrome của Tèo…')
+
     def open_folder(self, key):
         try:
             path = Path((self.manifest or read_json(self.directory/'campaign.json'))[key])
@@ -387,4 +501,6 @@ class CampaignLinkTab(ttk.Frame):
         messagebox.showinfo(f'Video {item["number"]}', str(item.get('message') or 'Chưa có thông tin.'), parent=self)
 
     def close(self):
+        if self.more_window is not None and self.more_window.winfo_exists():
+            self.more_window.close()
         self.area.close_link(self)

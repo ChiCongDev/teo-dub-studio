@@ -9,17 +9,35 @@ from teodub.facebook_accounts import FACEBOOK_PAGES, facebook_url
 
 # Evidence for the layout: user's screenshot of /pages/?category=your_pages,
 # heading 'Trang bạn quản lý', named cards with 'Tạo bài viết'/'Quảng cáo'.
-SNAPSHOT_SCRIPT = r"""() => {
+# The heading of the list: "Trang bạn quản lý" / "Pages you manage" / "Your Pages", and since 31/10/2026 "Pages <name> manages"
+# (Facebook also shows "Your Pages" in the left menu, which holds no cards). The heading chosen is the one whose area has
+# the most "Create post" buttons; the last one when none has any.
+_HEADING_HELPERS = r"""
   const norm = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/đ/g, 'd').replace(/Đ/g, 'D').replace(/\s+/g, ' ').trim().toLowerCase();
   const visible = e => !!e && !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
   const text = e => (e.innerText || e.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-  const actionName = s => /^(tao bai viet|create post|create a post|quang cao|advertise|(?:\d+ )?thong bao|(?:\d+ )?notifications|tin nhan|messages|\.{3}|…)$/.test(norm(s));
-  const headings = [...document.querySelectorAll('h1,h2,h3,[role="heading"],span')];
-  const heading = headings.find(e => visible(e) && /^(trang ban quan ly|pages you manage|your pages)$/.test(norm(text(e))));
+  const mainOf = h => h.closest('[role="main"],main') || h.parentElement.parentElement;
+  const createCount = m => [...m.querySelectorAll('a,[role="button"],button')].filter(visible)
+    .filter(e => /^(tao bai viet|create post|create a post)$/.test(norm(text(e)))).length;
+  const pickHeading = () => {
+    const found = [...document.querySelectorAll('h1,h2,h3,[role="heading"],span')].filter(e => visible(e)
+      && /^(trang ban quan ly|pages you manage|your pages|pages .{1,80} manages|trang .{1,80} quan ly)$/.test(norm(text(e))));
+    let best = null, bestCount = -1;
+    for (const h of found) {
+      const count = h.parentElement && h.parentElement.parentElement ? createCount(mainOf(h)) : -1;
+      if (count >= bestCount) { best = h; bestCount = count; }
+    }
+    return best;
+  };
+"""
+
+SNAPSHOT_SCRIPT = "() => {" + _HEADING_HELPERS + r"""
+  const actionName = s => /^(tao bai viet|create post|create a post|quang cao|advertise|promote|quang ba|(?:\d+ )?thong bao|(?:\d+ )?notifications|tin nhan|messages|\.{3}|…)$/.test(norm(s));
+  const heading = pickHeading();
   const auth = !![...document.querySelectorAll('input[type="password"],form[action*="login"]')].find(visible);
   if (!heading) return {managed:false, auth, items:[], busy:false, bottom:false};
-  const main = heading.closest('[role="main"],main') || heading.parentElement.parentElement;
+  const main = mainOf(heading);
   const excluded = new Set(['pages','login','login.php','checkpoint','recover','friends','me','settings',
     'messages','notifications','groups','watch','marketplace','gaming','reel','reels','ads','ad_center',
     'business','help','privacy','policies','bookmarks','home.php','photo','photo.php','stories','profile_switcher','people']);
@@ -52,7 +70,7 @@ SNAPSHOT_SCRIPT = r"""() => {
       if (card.contains(heading)) break;
       const actions = [...card.querySelectorAll('a,[role="button"],button')].filter(visible).map(e => norm(text(e)));
       const post = actions.some(s => /^(tao bai viet|create post|create a post)$/.test(s));
-      const secondary = actions.some(s => /^(quang cao|advertise|thong bao|\d+ thong bao|notifications|messages|tin nhan)$/.test(s));
+      const secondary = actions.some(s => /^(quang cao|advertise|promote|quang ba|thong bao|\d+ thong bao|notifications|messages|tin nhan)$/.test(s));
       if (!post || !secondary) {
         if (card.matches('article,[role="article"]')) break;
         continue;
@@ -76,10 +94,8 @@ SNAPSHOT_SCRIPT = r"""() => {
     bottom:scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 12};
 }"""
 
-SCROLL_SCRIPT = r"""() => {
-  const norm = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').trim().toLowerCase();
-  const heading = [...document.querySelectorAll('h1,h2,h3,[role="heading"],span')].find(e =>
-    e.getClientRects().length && /^(trang ban quan ly|pages you manage|your pages)$/.test(norm(e.innerText)));
+SCROLL_SCRIPT = "() => {" + _HEADING_HELPERS + r"""
+  const heading = pickHeading();
   if (!heading) return;
   let node = heading.parentElement;
   while (node && node !== document.body) {

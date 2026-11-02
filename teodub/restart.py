@@ -173,6 +173,8 @@ def busy_reasons(studio, campaign, facebook):
             pending_windows.extend(widget.winfo_children())
     if studio.login_pending or campaign.scanning or campaign.chrome_login_pending:
         reasons.append('đang đăng nhập hoặc lấy danh sách video')
+    if getattr(getattr(studio, 'campaign_area', None), 'channel_open', False) is True:
+        reasons.append('đang mở cửa sổ kênh trong Chrome của Tèo; đóng cửa sổ Chrome đó')
     if studio.stop_started is not None and studio.process is not None:
         reasons.append('video đang dừng theo yêu cầu')
     bridge = facebook.page_bridge

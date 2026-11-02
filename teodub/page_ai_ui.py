@@ -9,7 +9,7 @@ from tkinter import ttk
 
 from teodub.ai_models import TRANSLATION_MODELS, REASONING_LEVELS
 from teodub.campaign import read_json
-from teodub.page_ai import PageAIStore, LABELS
+from teodub.page_ai import PageAIStore, LABELS, MAX_STYLE_SAMPLES
 from teodub.page_schedule import LOCAL_TIME, PageScheduleStore, parse_time, display_time
 
 
@@ -46,6 +46,7 @@ class PageAIPanel(ttk.Frame):
         self.slot_gap=tk.StringVar(self,'450')
         self.custom_times_on=tk.BooleanVar(self,False)  # 28/10/2026: owner's own time per video, instead of the rhythm.
         self.slot_times=tk.StringVar(self,'')
+        self.style_count=tk.StringVar(self,'')  # 30/10/2026: characters in the sample-captions box.
         tomorrow=(datetime.now(LOCAL_TIME)+timedelta(days=1)).replace(hour=6,minute=0)
         self.due=tk.StringVar(self,tomorrow.strftime('%Y-%m-%d %H:%M'))
         self.status=tk.StringVar(self,'Chưa bật AI. Chọn nguồn và lưu cấu hình để hẹn giờ.')
@@ -66,6 +67,7 @@ class PageAIPanel(ttk.Frame):
         self.polls=0
         self.build()
         self.load()
+        self.update_style_count()
         self.update_summaries()
         for variable in (self.days,self.videos,self.texts,self.interval,self.auto):
             variable.trace_add('write',self.update_summaries)
@@ -129,6 +131,24 @@ class PageAIPanel(ttk.Frame):
             self.strategy_button=ttk.Button(strategy_row,text='Chat chiến lược…',command=self.open_strategy_settings)
             self.strategy_button.pack(side='right',padx=(8,0))
             self.note(strategy_row,textvariable=self.strategy_status).pack(side='left',fill='x',expand=True)
+
+        style_card=ttk.LabelFrame(config,text='Caption mẫu để học phong cách',padding=10)
+        style_card.pack(fill='x',pady=(0,8))
+        self.note(style_card,text='Tùy chọn. Dán caption của một Page khác mà bạn thích (mỗi caption một đoạn, cách nhau dòng trống). '
+                  'AI chỉ học giọng văn: độ dài, nhịp câu, cách mở đầu, cách dùng emoji/hashtag. AI không chép lại câu nào và vẫn viết '
+                  'theo nội dung video của bạn. Để trống: AI viết như trước. Không gửi link Page: AI không mở được Facebook, '
+                  'phải dán chính chữ caption.').pack(anchor='w',fill='x')
+        style_box=ttk.Frame(style_card)
+        style_box.pack(fill='x',pady=(5,3))
+        style_box.columnconfigure(0,weight=1)
+        self.style=tk.Text(style_box,height=7,wrap='word',width=40)
+        self.style.grid(row=0,column=0,sticky='ew')
+        style_scroll=ttk.Scrollbar(style_box,command=self.style.yview)
+        style_scroll.grid(row=0,column=1,sticky='ns')
+        self.style.configure(yscrollcommand=style_scroll.set)
+        for sequence in ('<KeyRelease>','<<Paste>>','<<Cut>>'):
+            self.style.bind(sequence,lambda _event:self.after_idle(self.update_style_count),add='+')
+        self.note(style_card,textvariable=self.style_count).pack(anchor='w',fill='x')
 
         source_card=ttk.LabelFrame(config,text='Nguồn video',padding=10)
         source_card.pack(fill='x',pady=(0,8))
@@ -281,6 +301,11 @@ class PageAIPanel(ttk.Frame):
             self.strategy_status.set('Chat chiến lược: '+(connection.get('title') or connection['thread_id']))
         else:
             self.strategy_status.set('Chưa liên kết chat chiến lược. Cần liên kết trước khi lưu lịch AI.')
+
+    def update_style_count(self):
+        size=len(self.style.get('1.0','end-1c'))
+        limit=f'{MAX_STYLE_SAMPLES:,}'.replace(',','.')
+        self.style_count.set(f'{size:,}'.replace(',','.')+' / '+limit+' ký tự'+(' — quá dài, bớt bớt mẫu rồi mới lưu được.' if size>MAX_STYLE_SAMPLES else '.'))
 
     def update_summaries(self,*_):
         selected=self.selected_campaigns
@@ -544,6 +569,9 @@ class PageAIPanel(ttk.Frame):
         self.set_sources(config['campaigns'])
         self.goal.delete('1.0','end')
         self.goal.insert('1.0',config['goal'])
+        self.style.delete('1.0','end')
+        self.style.insert('1.0',config.get('style_samples',''))
+        self.update_style_count()
 
     def save(self):
         try:
@@ -552,6 +580,9 @@ class PageAIPanel(ttk.Frame):
             config=dict(campaigns=list(self.selected_campaigns),model=model,effort=effort,days=self.days.get(),
                 videos_per_day=self.videos.get(),texts_per_week=self.texts.get(),interval_days=self.interval.get(),
                 goal=self.goal.get('1.0','end-1c').strip(),auto_publish=self.auto.get())
+            samples=self.style.get('1.0','end-1c').strip()
+            if samples:  # An empty box leaves the key out, so a Page without samples keeps its exact old settings.
+                config.update(style_samples=samples)
             custom=self.slot_times_values()
             slots=None if custom is not None else self.slot_values()
             if custom is not None:

@@ -1,5 +1,48 @@
 # Tèo Dub Studio
 
+## "Load Page của tài khoản" đọc được giao diện Facebook mới — 31/10/2026
+
+- **Lỗi trước đó:** Facebook đổi trang "Your Pages": tiêu đề thành "Pages <tên tài khoản> manages", nút quảng cáo thành "Promote". Tèo không nhận ra tiêu đề mới, lại khớp nhầm chữ "Your Pages" ở menu trái (không có thẻ Page nào) nên báo "Chưa đọc được thẻ Page hợp lệ…".
+- **Nay:** Tèo nhận tiêu đề mới ("Pages <tên> manages" / "Trang <tên> quản lý") cùng các tiêu đề cũ, chọn đúng tiêu đề của vùng có nút Create post (không lấy menu trái), coi "Promote" / "Quảng bá" như "Quảng cáo", và cuộn đúng vùng danh sách để đọc hết Page.
+- **Không đổi:** mỗi thẻ vẫn phải có Create post cùng Thông báo / Tin nhắn / Quảng bá; Page ở menu trái, Page gợi ý và Page đang theo dõi không bao giờ được nhập; Load Page chỉ thêm / cập nhật, không xóa Page đã lưu và không đổi tên Page bạn đã tự sửa; không dùng API hay token.
+
+## Nút "Mở kênh" trong tab của từng link — 31/10/2026
+
+- **Để làm gì:** xem nhanh kênh Douyin của link bằng đúng Chrome đã đăng nhập, không phải tự dán link vào trình duyệt.
+- **Cách dùng:** mở tab của link → **Mở kênh** (bên phải "Đóng tab"). Tèo mở dòng "Link kênh: …" của link trong **Chrome của Tèo**, là hồ sơ mà **Đăng nhập Chrome** đã lưu phiên Douyin. Xem xong thì đóng cửa sổ Chrome đó.
+- **Chỉ để xem:** không đọc kênh, không thêm video, không đổi chiến dịch, không gọi AI. Link tạo từ danh sách video dán vào (không có link kênh) thì nút mờ.
+- **Đang chạy vẫn bấm được:** các link đang chạy xen kẽ vẫn làm video bình thường.
+- **Trong lúc cửa sổ đang mở:** Chrome của Tèo chỉ mở được một lần mỗi lúc nên "Lấy danh sách", "Lấy thêm video mới…", "Đăng nhập Chrome" và nguồn kênh tự động báo "hồ sơ trình duyệt đang bận" (nguồn tự động thử lại sau 5 phút) cho tới khi đóng cửa sổ; chỉ mở được một cửa sổ kênh mỗi lúc; "Khởi động lại, giữ công việc" nhắc đóng cửa sổ đó trước. Cửa sổ tự đóng sau 12 giờ; đóng Tèo cũng đóng nó và giữ hồ sơ.
+
+## Nút "Lấy thêm video mới…" trong tab của từng link — 30/10/2026
+
+- **Để làm gì:** một link tạo từ kênh Douyin chỉ có số video đã đọc lúc tạo (ví dụ 100, vì ô Tối đa để 100, hoặc vì lúc đó chưa đăng nhập Douyin). Nay đọc lại kênh và **chỉ thêm các video Tèo chưa có** vào đúng link đó, không trùng với bất kỳ chiến dịch nào.
+- **Cách dùng:** (1) Ở tab "＋ Thêm link" bấm **Đăng nhập Chrome**, đăng nhập Douyin, bấm **Đã xong / Lưu phiên** (một lần là đủ). (2) Mở tab của link → **Lấy thêm video mới…**. (3) Đặt **Tối đa** cao hơn số video của kênh (mặc định 1.000; tối đa 10.000), giữ ô "Hiện trình duyệt" → **Lấy danh sách**. Kênh xếp video mới nhất lên đầu nên phải đọc đủ sâu mới tới video cũ chưa lấy. (4) Tèo ghi "Đọc được N video · M đã có trong Tèo · K video mới" và liệt kê K video sẽ thêm (Video 101, 102…). (5) **Thêm K video mới vào link**. Ô "Chạy link này ngay sau khi thêm" mặc định bật; bỏ bật thì Tèo chỉ thêm, bạn bấm Chạy sau.
+- **Video cũ giữ nguyên:** số thứ tự, trạng thái, thành phẩm, lịch đăng của các video đã có không đổi. Video mới được thêm vào cuối, cùng cấu hình lồng tiếng và cùng thư mục với link; chạy xen kẽ với các link khác như bình thường.
+- **"Đã có" nghĩa là gì:** video đó nằm trong BẤT KỲ chiến dịch nào đã lưu (kể cả chiến dịch đã xóa khỏi danh sách). Ví dụ `demo` và `video-làm-món-ăn` cùng đọc một kênh và đang trùng 100 video; thêm video mới vào `demo` sẽ không lấy lại 100 video đó.
+- **Khi link đang chạy xen kẽ:** Tèo không ghi chen vào link giữa lúc đang làm video. Yêu cầu thêm được giao cho tiến trình đang chạy, nó thêm giữa hai video (video đang làm xong rồi mới thêm). Khóa an toàn "cấu hình chiến dịch đã thay đổi" vẫn giữ nguyên với mọi thay đổi khác.
+- **Không dùng được khi:** link chỉ là danh sách video dán vào (không có link kênh); link đang chạy riêng một mình (bấm Dừng link này trước); một danh sách chạy lần lượt đang chạy; đang có video đơn hoặc cửa sổ đăng nhập; chiến dịch sẽ vượt 10.000 video. Tèo báo rõ lý do, không thêm gì.
+- **Không gọi AI** khi đọc kênh hay thêm video. Chỉ khi video chạy thì mới dùng Codex như mọi video khác.
+
+## Nút "Xếp lại theo giờ của Page…" trong tab Lịch đăng — 30/10/2026
+
+- **Để làm gì:** nhiều video đã qua giờ đăng (chưa gửi, tạm dừng, hoặc dừng ở bước chuẩn bị trước khi bấm Đăng) được xếp lại vào các giờ mới của Page và bật lịch chỉ bằng một lần bấm.
+- **Cách dùng:** chọn nhiều video trong bảng (Ctrl / Shift / Chọn tất cả) → **Xếp lại theo giờ của Page…**. Cửa sổ hiện sẵn các giờ đăng mỗi ngày lấy từ thiết lập AI của Page (có thể sửa) và ngày bắt đầu; bấm **Xem lịch mới** để xem từng video sẽ vào giờ nào; bấm **Lưu giờ mới và bật lịch** để áp dụng.
+- **Cách xếp:** theo thứ tự giờ cũ, chỉ vào giờ trong tương lai (không dồn bài cho giờ đã qua hôm nay), mỗi ngày tối đa bằng số giờ đã nhập (tính cả bài Page đã có hôm đó), hai bài không cùng một phút, trong vòng một năm. Giữ nguyên video và caption; không gọi AI.
+- **Video "Đã gửi — chưa xác minh" hoặc chưa rõ kết quả KHÔNG được xếp lại** (Tèo có thể đã bấm Đăng; đăng lại dễ trùng bài). Cửa sổ ghi lý do. Nếu bạn đã kiểm tra Facebook và chắc chắn chưa có bài thì dùng nút **Bỏ lượt cũ và tạo lịch mới…** có sẵn.
+- **Video dừng ở bước chuẩn bị** (chưa bấm Đăng) cần thêm hai ô xác nhận và đóng phiên Chrome cũ, giống nút Khôi phục: Tèo tạo bản nháp mới, giữ lịch sử lượt cũ.
+- **Nếu lịch trống thay đổi** giữa lúc xem trước và lúc lưu (ví dụ có bài khác chiếm giờ) thì Tèo không đổi gì và bảo bạn xem lại.
+- **Lưu ý:** xếp lại nhiều video làm lịch kéo dài; video mới từ chế độ tự động từ chiến dịch xếp phía sau vì chung số video mỗi ngày.
+
+## Ô "Caption mẫu để học phong cách" cho từng Page — 30/10/2026
+
+- **Ở đâu:** Quản lý Page → chọn Page → tab **Thiết lập**, ngay dưới ô **Mục tiêu phát triển**.
+- **Dùng thế nào:** dán caption của một Page khác mà bạn thích (mỗi caption một đoạn, cách nhau dòng trống), tối đa **8.000 ký tự** (khoảng 50 caption ngắn), rồi bấm **Lưu thiết lập & hẹn giờ**. Từ lượt AI sau (kể cả chế độ tự động từ chiến dịch), AI học giọng văn: độ dài, nhịp câu, cách mở đầu, cách dùng emoji/hashtag. Mỗi Page có bộ mẫu riêng.
+- **AI không đọc được link Facebook** (không mở web), nên phải dán chính chữ caption; chỉ dán link thì không có tác dụng.
+- **Giữ nguyên:** AI vẫn chỉ viết theo nội dung video của bạn, không chép câu/tên/số liệu trong mẫu, không bịa, không kêu gọi like/share, giữ mẫu caption/hashtag cố định của Page. Giờ đăng, kiểm tra kế hoạch, cách đăng bài không đổi.
+- **Để trống:** Page không có mẫu chạy y như trước (lời nhắc gửi AI không đổi một chữ). Xóa hết chữ trong ô rồi lưu là bỏ mẫu.
+- Đã kiểm tra bằng một video thật (không gọi AI): file `work/20261030-style-samples/preview/truoc.txt` và `sau.txt` là lời nhắc đầy đủ trước/sau.
+
 ## Page mới mở ra địa chỉ `facebook.com/people/<tên>/<số>/` không còn làm bài bị dừng — 30/10/2026
 
 - **Lỗi:** bài đến giờ đăng dừng sau vài giây với "Link đã lưu không phải địa chỉ Page" dù link Page đã lưu đúng. Facebook tự đổi địa chỉ của Page chưa có tên người dùng sang dạng `/people/<tên>/<số>/`, và Tèo chỉ biết `profile.php?id=`, `/<tên>` và `/pages/<tên>/<số>`. Chưa mở hộp viết bài, chưa tải video, chưa bấm Đăng.

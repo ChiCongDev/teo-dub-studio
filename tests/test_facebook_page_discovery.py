@@ -224,6 +224,74 @@ class FacebookDOMFixtureTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate(SNAPSHOT_SCRIPT)['items'], [
             dict(name='Page thật', url='https://www.facebook.com/actual', page_id='')])
 
+    # Layout seen on the owner's screen on 31/10/2026: heading "Pages <name> manages", the left menu repeats "Your Pages" and
+    # lists the same Pages as plain links, each card has Create post / Promote (a link) / a "..." menu.
+    def card_2026(self, name, href, avatar='<img alt=""/>'):
+        return (f'<div><div><a href="{href}">{avatar}</a><div><h3><a href="{href}">{name}</a></h3>'
+                f'<a href="{href}?sk=notifications">Notifications</a><a href="https://www.facebook.com/latest/inbox">Messages</a></div></div>'
+                f'<div><a href="{href}?create=post" role="button">Create post</a>'
+                '<a href="https://www.facebook.com/ad_center/create/boostpost/?page_id=1" role="button">Promote</a>'
+                '<div role="button" aria-label="More">...</div></div></div>')
+
+    PAGES_2026 = [('Du lịch toàn cầu', 'https://www.facebook.com/profile.php?id=111'),
+                  ('Thích ăn ngon', 'https://www.facebook.com/profile.php?id=222'),
+                  ('Minh châu sneaker', 'https://www.facebook.com/profile.php?id=333'),
+                  ('Demo 23-10', 'https://www.facebook.com/profile.php?id=444'),
+                  ('Phú thọ', 'https://www.facebook.com/profile.php?id=555')]
+
+    def sidebar_2026(self):
+        return ('<div role="navigation"><h1>Pages</h1><div><span>Your Pages</span></div>'
+                + ''.join(f'<a href="{href}">{name}</a>' for name, href in self.PAGES_2026[:4])
+                + '<a href="https://www.facebook.com/pages/?category=followed">See all Pages</a>'
+                '<a href="https://www.facebook.com/pages/?category=liked">Followed Pages</a></div>')
+
+    def test_layout_of_31_10_2026_reads_all_five_pages(self):
+        self.page.set_content(self.sidebar_2026()+'<div role="main"><h2>Pages Minh Châu manages</h2>'
+            + ''.join(self.card_2026(name, href) for name, href in self.PAGES_2026) + '</div>')
+        result = self.page.evaluate(SNAPSHOT_SCRIPT)
+        self.assertTrue(result['managed'])
+        self.assertEqual([row['name'] for row in result['items']], [name for name, _ in self.PAGES_2026])
+        self.assertEqual([row['page_id'] for row in result['items']], ['111', '222', '333', '444', '555'])
+
+    def test_vietnamese_heading_with_the_account_name(self):
+        self.page.set_content('<div role="main"><h2>Trang Minh Châu quản lý</h2>'
+            + self.card_2026('Page A', 'https://www.facebook.com/PageA').replace('Create post', 'Tạo bài viết').replace('Promote', 'Quảng bá') + '</div>')
+        result = self.page.evaluate(SNAPSHOT_SCRIPT)
+        self.assertTrue(result['managed'])
+        self.assertEqual([row['name'] for row in result['items']], ['Page A'])
+
+    def test_left_menu_your_pages_alone_gives_no_page(self):
+        """Only the menu (plain links, no Create post buttons): nothing may be imported from it."""
+        self.page.set_content(self.sidebar_2026()+'<div role="main"><h2>Pages Minh Châu manages</h2></div>')
+        result = self.page.evaluate(SNAPSHOT_SCRIPT)
+        self.assertEqual(result['items'], [])
+
+    def test_a_page_in_the_menu_but_not_in_the_list_is_not_imported(self):
+        self.page.set_content(self.sidebar_2026()+'<div role="main"><h2>Pages Minh Châu manages</h2>'
+            + self.card_2026(*self.PAGES_2026[0]) + '</div>')
+        self.assertEqual([row['name'] for row in self.page.evaluate(SNAPSHOT_SCRIPT)['items']], ['Du lịch toàn cầu'])
+
+    def test_promote_link_to_another_page_still_blocks_the_card(self):
+        card = self.card_2026('Page A', 'https://www.facebook.com/PageA').replace(
+            'https://www.facebook.com/ad_center/create/boostpost/?page_id=1', 'https://www.facebook.com/OtherPage')
+        self.page.set_content('<div role="main"><h2>Pages Minh Châu manages</h2>'+card+'</div>')
+        self.assertEqual(self.page.evaluate(SNAPSHOT_SCRIPT)['items'], [])
+
+    def test_card_with_only_create_post_and_promote_is_a_page(self):
+        """Promote counts as the card's second action, like Quảng cáo / Advertise before."""
+        self.page.set_content('<div role="main"><h2>Pages Minh Châu manages</h2><div>'
+            '<h3><a href="https://www.facebook.com/PageA">Page A</a></h3>'
+            '<button>Create post</button><button>Promote</button></div></div>')
+        self.assertEqual([row['name'] for row in self.page.evaluate(SNAPSHOT_SCRIPT)['items']], ['Page A'])
+
+    def test_scrolling_follows_the_list_not_the_left_menu(self):
+        self.page.set_content('<aside style="height:140px;overflow-y:auto">'+self.sidebar_2026()+'</aside>'
+            '<div role="main" style="height:200px;overflow-y:auto"><h2>Pages Minh Châu manages</h2>'
+            + self.card_2026(*self.PAGES_2026[0]) + '<div style="height:900px"></div></div>')
+        self.assertFalse(self.page.evaluate(SNAPSHOT_SCRIPT)['bottom'])
+        self.page.evaluate(SCROLL_SCRIPT)
+        self.assertGreater(self.page.locator('[role=main]').evaluate('(node) => node.scrollTop'), 0)
+
 
 if __name__ == '__main__':
     unittest.main()

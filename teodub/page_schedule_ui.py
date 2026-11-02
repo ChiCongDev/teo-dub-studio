@@ -351,6 +351,7 @@ class PageSchedulePanel(ttk.Frame):
         self.time_window = None
         self.add_window = None
         self.recovery_window = None
+        self.replan_window = None
         self.check_window = None
         self.now_window = None
         self.now_preview = None
@@ -423,6 +424,9 @@ class PageSchedulePanel(ttk.Frame):
                                          command=lambda: self.open_recovery(recreate=True))
         self.recreate_button.pack(side='left')
         ttk.Label(recreate_actions, text='Giữ video và caption; chọn giờ đăng mới.').pack(side='left', padx=8)
+        self.replan_button = ttk.Button(recreate_actions, text='Xếp lại theo giờ của Page…', command=self.open_replan,
+                                        state='disabled')
+        self.replan_button.pack(side='left', padx=(12, 0))
         self.show_removed_check = ttk.Checkbutton(recreate_actions, text='Hiện video đã xóa',
                                                  variable=self.show_removed, command=self.refresh)
         self.show_removed_check.pack(side='right')
@@ -482,6 +486,20 @@ class PageSchedulePanel(ttk.Frame):
                 raise ValueError('Chọn một hoặc nhiều lịch video cần khôi phục.')
             from teodub.page_schedule_recovery_ui import ScheduleRecoveryDialog
             self.recovery_window = ScheduleRecoveryDialog(self, selected, recreate=recreate)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.status.set(str(exc))
+
+    def open_replan(self):
+        """30/10/2026: move the selected video appointments onto the Page's daily times and arm them (preview first)."""
+        if self.replan_window is not None and self.replan_window.winfo_exists():
+            self.replan_window.lift()
+            return
+        try:
+            selected = list(self.tree.selection())
+            if not selected:
+                raise ValueError('Chọn một hoặc nhiều lịch video cần xếp lại.')
+            from teodub.page_schedule_replan_ui import ScheduleReplanDialog
+            self.replan_window = ScheduleReplanDialog(self, selected)
         except (OSError, ValueError, RuntimeError) as exc:
             self.status.set(str(exc))
 
@@ -598,6 +616,7 @@ class PageSchedulePanel(ttk.Frame):
         recoverable = bool(selected) and all(ident in self.rows and self.store.can_recover_schedule(self.rows[ident])
                                               for ident in selected)
         self.recreate_button.configure(state='normal' if recoverable and not self.bulk_busy else 'disabled')
+        self.replan_button.configure(state='normal' if selected and not self.bulk_busy else 'disabled')
         self.recovery_button.configure(state='normal' if recoverable else 'disabled')
         self.now_button.configure(state='normal' if single and row and not row['attempted_at']
             and not row['request_id'] and row['state'] in {'scheduled', 'armed', 'paused', 'needs_attention'}
@@ -983,5 +1002,7 @@ class PageSchedulePanel(ttk.Frame):
         self.close_now()
         if self.recovery_window is not None:
             self.recovery_window.destroy()
+        if self.replan_window is not None:
+            self.replan_window.destroy()
         if self.check_window is not None:
             self.check_window.destroy()

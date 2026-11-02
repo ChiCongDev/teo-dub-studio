@@ -188,6 +188,48 @@ class CampaignBatchController:
         self.start([directory], order='rotate')
         return 'started'
 
+    def append_videos(self, directory, records):
+        """Lấy thêm video mới (owner 30/10/2026): add `records` (videos of the link's channel no campaign has) after the
+        link's last video; returns how many were sent. It starts nothing: the owner's Chạy does (`run_link`).
+
+        While a rotation that has this link runs, the worker is the only writer: only a request is left and it adds the
+        videos between two turns. Otherwise nothing writes the campaign now and they are added here; the saved list
+        then keeps its guard (its row's identity is renewed, as the worker does).
+        """
+        from teodub.campaign_append import append_videos, request_append
+        directory = Path(directory).resolve()
+        if self._standalone(probe=True) == directory:
+            raise ValueError('Link này đang chạy riêng; bấm Dừng link này, đợi dừng xong rồi thêm video.')
+        if self.busy and self.directory is not None:
+            queue = self.rotation()
+            if queue is None:
+                raise ValueError('Một danh sách đang chạy lần lượt; đợi danh sách xong hoặc dừng nó rồi thêm video.')
+            if self.includes(directory, queue):
+                request_append(self.directory, directory, records)
+                return len(records)
+            return append_videos(directory, records)['count']
+        count = append_videos(directory, records)['count']
+        self._renew_identity(directory)
+        return count
+
+    def _renew_identity(self, target):
+        """Nothing runs and a saved list has this link: store the link's new identity in it (the desktop is the only
+        writer now). A list that cannot be read is left as it is; a failed write is not hidden."""
+        if self.directory is None:
+            return
+        from teodub.campaign_batch import _identity, _read
+        from teodub.common import atomic_json
+        try:
+            queue = read_json(self.directory/'queue.json')
+            rows = [row for row in queue.get('campaigns', []) if row.get('directory') == str(target)]
+            identity = _identity(_read(target/'campaign.json'), target) if rows else None
+        except (OSError, ValueError, AttributeError, TypeError):
+            return
+        if rows:
+            for row in rows:
+                row['config_identity'] = identity
+            atomic_json(self.directory/'queue.json', queue)
+
     def retry_link(self, directory):
         """Thử lại video lỗi on a link's tab (owner 24/10/2026): every video of the link failed now gets one more try in
         its turns, then the link runs like its Chạy, even while other links run. (how many, run_link's outcome); with

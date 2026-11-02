@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 
-from teodub import campaign
+from teodub import campaign, campaign_append
 from teodub.common import atomic_json, hash_file, protect_worker
 from teodub.pipeline import _job_lock
 
@@ -299,6 +299,33 @@ def _absorb_joins(directory, queue, data_dir):
     return notes
 
 
+def _absorb_appends(directory, queue, data_dir):
+    """Owner 30/10/2026: add the new videos a link's tab asked for (`append-*.json`) to that link's campaign. Only here,
+    between two turns, nothing else writes the campaign. The row's saved identity must still match the campaign as it
+    is (anything else changed it: refused, as at every turn); after the videos are added it is saved again, so the
+    guard keeps guarding. The link's turns come from its own Chạy (a join request), not from this."""
+    notes = []
+    for path in sorted(directory.glob(campaign_append.APPEND_REQUESTS), key=lambda item: (item.stat().st_mtime_ns, item.name)):
+        try:
+            _plain_path(path)
+            request = _read(path)
+            target = _campaign_path(data_dir, request.get('directory', ''))
+            row = next((row for row in queue['campaigns'] if row['directory'] == str(target)), None)
+            if row is None:
+                raise ValueError('link này không thuộc vòng xen kẽ đang chạy.')
+            if _identity(_read(target/'campaign.json'), target) != row['config_identity']:
+                raise ValueError(f'cấu hình chiến dịch {row["name"]} đã thay đổi.')
+            added = campaign_append.append_videos(target, request.get('records'))
+            row['config_identity'] = _identity(_read(target/'campaign.json'), target)
+            if added['count']:
+                notes.append(f'Đã thêm {added["count"]} video mới vào {row["name"]} (Video {added["first"]} trở đi).')
+        except (ValueError, OSError, TypeError, AttributeError, KeyError) as exc:
+            notes.append(f'Chưa thêm được video mới: {exc}')
+        finally:
+            path.unlink(missing_ok=True)
+    return notes
+
+
 def _next_turn(rows, start, now):
     """Index of the next link to take a turn from `start` on, skipping links that are done, stopped or still waiting
     for a download source; None when no link can take a turn now."""
@@ -336,7 +363,7 @@ def _run_rotation(directory, queue, runner, stop, data_dir):
     checked, started = set(), False
     try:
         while True:
-            notes = _absorb_joins(directory, queue, data_dir)
+            notes = _absorb_appends(directory, queue, data_dir)+_absorb_joins(directory, queue, data_dir)
             if notes:
                 queue['message'] = ' '.join(notes)
             atomic_json(directory/'queue.json', queue)
