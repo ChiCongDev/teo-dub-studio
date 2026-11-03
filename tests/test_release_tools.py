@@ -208,6 +208,9 @@ class TestGateTests(unittest.TestCase):
         results = [dict(failed=['a.A.t1', 'b.B.t2']), dict(failed=['w.W.t3'])]
         self.assertEqual(release.unexpected_failures(results, {'a.A.t1', 'w.W.t3'}), ['b.B.t2'])
         self.assertEqual(release.unexpected_failures(results, {'a.A.t1', 'b.B.t2', 'w.W.t3'}), [])
+        prefixed = [dict(failed=['tests.a.A.t1'])]
+        self.assertEqual(release.unexpected_failures(prefixed, {'a.A.t1'}), [])
+        self.assertEqual(release.unexpected_failures(prefixed, set()), ['a.A.t1'])
 
     def test_known_failures_file_ignores_comments(self):
         with tempfile.TemporaryDirectory() as folder:

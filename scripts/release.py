@@ -116,8 +116,13 @@ def run_group(python, group, project=PROJECT):
     raise ReleaseError(f'Không chạy được kiểm thử nhóm {group}: '+(done.stderr or done.stdout)[-300:])
 
 
+def test_name(name):
+    """The same test can be reported as 'tests.test_x.C.t' when another module imports it through the package."""
+    return name[len('tests.'):] if name.startswith('tests.') else name
+
+
 def unexpected_failures(results, known):
-    return sorted({name for result in results for name in result['failed']} - set(known))
+    return sorted({test_name(name) for result in results for name in result['failed']} - {test_name(name) for name in known})
 
 
 # ---- building the package ------------------------------------------------------------------------------------------
