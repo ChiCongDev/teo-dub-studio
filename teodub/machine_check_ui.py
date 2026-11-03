@@ -146,5 +146,9 @@ def offer_on_first_run(root, data_dir, project=PROJECT):
         elif found[0]:
             open_window(root, project)
 
-    threading.Thread(target=work, daemon=True).start()
-    root.after(2500, poll)
+    def start():
+        # Only once the window is up: building the UI must not start any process (tests rely on it too).
+        threading.Thread(target=work, daemon=True).start()
+        root.after(500, poll)
+
+    root.after(2500, start)
