@@ -44,6 +44,10 @@ NOTIFICATION_NAMES = re.compile(r'^(Thông báo|Notifications)(?:,.*)?$', re.I)
 OPEN_NAMES = re.compile(r"^(Create post|Create a post|Tạo bài viết|Bạn đang nghĩ gì(?: thế)?\??|.+ ơi, bạn đang nghĩ gì thế\??|What's on your mind(?:, .+)?\??)$", re.I)
 _HOSTS = {'facebook.com', 'www.facebook.com', 'm.facebook.com'}
 INSPECT_RESULT_WAIT_SECONDS = 20
+OPENER_WAIT_SECONDS = 20  # 02/11/2026: how long the Page's "Tạo bài viết" button is waited for before looking for "Chuyển ngay".
+PAGE_READY_SECONDS = 30  # 02/11/2026: was 12; the Page name/header of a slow Facebook page.
+REEL_WAIT_SECONDS = 30  # 02/11/2026: was 20; each reel wizard step.
+REEL_NEXT_CLICK_SECONDS = 30  # 02/11/2026: was 5; Facebook's overlay (a notice bar) can cover "Tiếp" for a while.
 INSPECT_RESULT_NAVIGATION_SECONDS = 15
 FINISHED_TAB_SECONDS = 3*60  # A post tab is closed (at the next post's start) this long after its Publish click.
 
@@ -1234,7 +1238,7 @@ class BrowserPagePublisher:
         return dialog, data
 
     def _wait_reel(self, tab, target, names, preview, *, cancel=None, finished=None):
-        deadline = time.monotonic()+20
+        deadline = time.monotonic()+REEL_WAIT_SECONDS
         while True:
             self._cancel(cancel, finished)
             try:
@@ -1254,10 +1258,10 @@ class BrowserPagePublisher:
             raise ValueError('Thước phim cần danh tính Page đã xác minh; giữ Chrome để kiểm tra.')
         self._cancel(cancel, finished)
         if not already_editing:
-            _one_visible(dialog.get_by_role('button', name=NEXT_NAMES), 'nút Tiếp của video đã tải').click(timeout=5000)
+            _one_visible(dialog.get_by_role('button', name=NEXT_NAMES), 'nút Tiếp của video đã tải').click(timeout=REEL_NEXT_CLICK_SECONDS*1000)
         edit, edited = self._wait_reel(tab, target, REEL_EDIT_NAMES, preview, cancel=cancel, finished=finished)
         self._cancel(cancel, finished)
-        _one_visible(edit.get_by_role('button', name=NEXT_NAMES), 'nút Tiếp của bước chỉnh thước phim').click(timeout=5000)
+        _one_visible(edit.get_by_role('button', name=NEXT_NAMES), 'nút Tiếp của bước chỉnh thước phim').click(timeout=REEL_NEXT_CLICK_SECONDS*1000)
         final, data = self._wait_reel(tab, target, REEL_SETTINGS_NAMES, edited['videos'], cancel=cancel, finished=finished)
         # File input may disappear in this wizard, so retain its actually observed
         # metadata plus the unchanged preview URI; no new upload or tab is allowed.
@@ -1346,7 +1350,7 @@ class BrowserPagePublisher:
                     raise
                 tab.wait_for_timeout(100)
 
-    def _page_ready(self, tab, target, *, cancel=None, finished=None, timeout=12):
+    def _page_ready(self, tab, target, *, cancel=None, finished=None, timeout=PAGE_READY_SECONDS):
         """The saved Page's main column, read again after any reload Facebook makes (26/10/2026: the reload
         after a profile switch failed a post with "Execution context was destroyed")."""
         from teodub.facebook_page_identity import _reloading
@@ -1370,6 +1374,32 @@ class BrowserPagePublisher:
                 continue
             tab.wait_for_timeout(100)
 
+    def _wait_openers(self, tab, target, main, *, cancel=None, finished=None, timeout=None):
+        """The saved Page's "Tạo bài viết" button, read again until it shows or `timeout` (OPENER_WAIT_SECONDS) passes.
+
+        02/11/2026: the Page was read once right after it loaded; on a slow Facebook the button was not there yet and Tèo
+        looked for "Chuyển ngay" instead and stopped. It returns at once when the button shows, or when the one "Chuyển ngay"
+        button shows (the switch path below needs exactly that). Read-only: it never clicks."""
+        from teodub.facebook_page_identity import _reloading
+        deadline = time.monotonic()+(OPENER_WAIT_SECONDS if timeout is None else timeout)
+        while True:
+            self._cancel(cancel, finished)
+            try:
+                visible = _page_openers(tab, target, main)
+                if visible:
+                    return visible
+                switch = main.get_by_role('button', name=SWITCH_NAMES)
+                if sum(switch.nth(i).is_visible() for i in range(switch.count())) == 1:
+                    return []
+            except Exception as exc:
+                if not _navigation_interrupted(exc) or time.monotonic() >= deadline:
+                    raise
+                _reloading(tab, deadline)
+                continue
+            if time.monotonic() >= deadline:
+                return []
+            tab.wait_for_timeout(250)
+
     def _open_composer(self, tab, target, *, cancel=None, finished=None):
         from teodub.facebook_page_identity import PROFILE_NAMES, _reloading, ensure_page_actor
         main = self._page_ready(tab, target, cancel=cancel, finished=finished)
@@ -1389,7 +1419,7 @@ class BrowserPagePublisher:
                             raise
                     _reloading(tab, deadline)
             main = self._page_ready(tab, target, cancel=cancel, finished=finished)
-        visible = _page_openers(tab, target, main)
+        visible = self._wait_openers(tab, target, main, cancel=cancel, finished=finished)
         if not visible:
             # Supported Page-identity switch is a single named button beside the
             # exact Page heading on its observed numeric URL. Never select any

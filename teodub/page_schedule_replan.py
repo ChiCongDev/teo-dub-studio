@@ -94,11 +94,11 @@ def classify(controller, rows):
             entry['reason'] = 'Đã đăng hoặc đã bỏ lịch.'
         elif not row['attempted_at'] and row['state'] in {'scheduled', 'paused', 'needs_attention'}:
             entry['kind'] = 'fresh'
+        elif controller.store.can_recover_schedule(row):
+            entry['kind'] = 'recover'  # Stopped in preparation, or at the last checks before Publish (never clicked).
         elif row['state'] == 'submitted' or row['phase'] in {'publish', 'verify'}:
             entry['reason'] = ('Tèo đã bấm Đăng hoặc chưa rõ kết quả: kiểm tra bài trên Facebook, không tự đăng lại. '
                                'Nếu chắc chắn chưa có bài, dùng nút "Bỏ lượt cũ và tạo lịch mới…".')
-        elif controller.store.can_recover_schedule(row):
-            entry['kind'] = 'recover'
         else:
             entry['reason'] = 'Lượt cũ không đủ điều kiện xếp lại tự động; kiểm tra Facebook rồi dùng "Bỏ lượt cũ và tạo lịch mới…".'
         result.append(entry)

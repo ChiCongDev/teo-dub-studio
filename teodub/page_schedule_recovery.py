@@ -36,14 +36,22 @@ def _target(store, row, post):
     return target
 
 
+def stopped_before_publish(row, post, events):
+    """02/11/2026: a post prepared in Chrome (preview 'review') that stopped at the last checks, before Tèo ever moved it to
+    'submitting': the Publish click was never made. Anything that reached submitting/processing/published is NOT this."""
+    return (row['phase'] == 'publish' and post['state'] == 'unknown' and any(event['state'] == 'review' for event in events)
+            and not any(event['state'] in {'submitting', 'processing', 'published'} for event in events))
+
+
 def _eligible(row, post, events):
+    late = stopped_before_publish(row, post, events)
     if (row['state'] not in {'paused', 'needs_attention'} or not row['attempted_at'] or row['finished_at']
-            or row['phase'] != 'prepare' or row['source'].get('kind') == 'text'
+            or (row['phase'] != 'prepare' and not late) or row['source'].get('kind') == 'text'
             or post['state'] not in {'failed', 'unknown'} or post['archived']
             or post['kind'] != 'video' or len(post['media']) != 1
             or post['delivery_mode'] != 'browser' or post['browser_finish_mode'] != 'tool'
-            or any(post.get(key) for key in _EVIDENCE)
-            or any(event['state'] in _SUBMITTED for event in events)):
+            or any(post.get(key) for key in _EVIDENCE if not (late and key == 'browser_review'))
+            or any(event['state'] in (_SUBMITTED-{'review'} if late else _SUBMITTED) for event in events)):
         raise ValueError('Chỉ khôi phục lượt chuẩn bị video đã dừng. Bài đã duyệt/gửi hoặc có kết quả đăng phải kiểm tra riêng.')
     if (row['post_id'] != post['id'] or row['body'] != post['body']
             or row['source_key'] != row['source'].get('key')

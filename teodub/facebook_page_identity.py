@@ -30,6 +30,7 @@ NOTIFICATIONS = re.compile(r',\s*\d+\s+(thông báo|notifications?)$', re.I)
 HOSTS = {'www.facebook.com', 'facebook.com', 'm.facebook.com'}
 TAB_CHECK_SECONDS = 3  # Each other tab gets this long to answer before a switch is refused.
 SWITCH_RELOAD_SECONDS = 5  # After choosing a profile, how long to look for Facebook's reload before reading.
+SELECTOR_SECONDS = 30  # 02/11/2026: was 12; the account button / profile list of a slow Facebook page (checked before Publish too).
 
 CHOICES_SCRIPT = r"""dialog => {
  const visible=e=>!!e.getClientRects().length && getComputedStyle(e).visibility!=='hidden'
@@ -142,7 +143,7 @@ def _choice(row):
     return dict(row, name=label.strip(), selected=selected)
 
 
-def _selector(tab, *, cancel=None, finished=None, timeout=12):
+def _selector(tab, *, cancel=None, finished=None, timeout=SELECTOR_SECONDS):
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
     deadline = time.monotonic()+timeout
     def checked(locator):

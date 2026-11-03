@@ -1,5 +1,15 @@
 # Tèo Dub Studio
 
+## Bài hẹn giờ ít bị dừng hơn khi Facebook tải chậm — 02/11/2026
+
+- **Vấn đề:** thỉnh thoảng bài đến giờ vẫn dừng "Cần kiểm tra" dù chưa có gì sai (nhất là khi nhiều bài chạy cùng lúc và máy đang làm video). Nhật ký cho thấy Tèo bỏ cuộc khi Facebook tải chậm hơn thời gian chờ: "Không xác định duy nhất nút Chuyển ngay" (hay gặp nhất), "không thấy tên Page", "không thấy menu Trang cá nhân", "Chưa đọc được danh tính", và nút Tiếp của thước phim bị thanh thông báo của Facebook che.
+- **Nay:**
+  - Sau khi mở/chuyển Page, Tèo đọc lại nút **Tạo bài viết** tới 20 giây (dừng ngay khi thấy nút, hoặc khi thấy đúng một nút Chuyển ngay) rồi mới kết luận.
+  - Chờ tên Page tới 30 giây (trước 12); chờ menu tài khoản/danh tính (kể cả bước kiểm tra cuối ngay trước khi bấm Đăng) tới 30 giây (trước 12); mỗi bước thước phim tới 30 giây (trước 20); nút **Tiếp** của thước phim chờ thanh che biến mất tới 30 giây (trước 5), vẫn chỉ một cú bấm, không bấm cưỡng ép.
+  - Bài dừng ở bước kiểm tra cuối mà **chưa bấm Đăng** hiện **"Dừng trước khi bấm Đăng — Facebook chưa nhận bài"** (trước đây hiện "Chưa xác minh đã đăng" gây hiểu nhầm).
+  - Loại bài đó xếp lại được bằng **Xếp lại theo giờ của Page…** (và Khôi phục / Bỏ lượt cũ), sau khi bạn xác nhận đã kiểm tra Facebook chưa có bài và đóng Chrome cũ. Bài đã đến bước "đang gửi" hoặc "đã bấm Đăng" thì vẫn không bao giờ được xếp lại.
+- **Không đổi:** mỗi lượt một lần bấm Đăng, không tự thử lại, không tự đăng lại. Không bảo đảm hết mọi lần dừng: nếu Facebook đổi giao diện hoặc mạng rất chậm, bài vẫn dừng an toàn như trước.
+
 ## "Load Page của tài khoản" đọc được giao diện Facebook mới — 31/10/2026
 
 - **Lỗi trước đó:** Facebook đổi trang "Your Pages": tiêu đề thành "Pages <tên tài khoản> manages", nút quảng cáo thành "Promote". Tèo không nhận ra tiêu đề mới, lại khớp nhầm chữ "Your Pages" ở menu trái (không có thẻ Page nào) nên báo "Chưa đọc được thẻ Page hợp lệ…".

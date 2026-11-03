@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from teodub.page_schedule import STATE_LABELS, display_time, parse_time
+from teodub.page_schedule_recovery import stopped_before_publish
 from teodub.page_publish_settings import result_checks_enabled
 
 
@@ -593,6 +594,9 @@ class PageSchedulePanel(ttk.Frame):
             try:
                 post = self.store.activity.post(row['account_id'], row['page_key'], row['post_id'])
                 if post['state'] == 'unknown':
+                    # 02/11/2026: stopped at the last checks, before the Publish click was ever made.
+                    if stopped_before_publish(row, post, self.store.activity.events(row['account_id'], row['page_key'], row['post_id'])):
+                        return 'Dừng trước khi bấm Đăng — Facebook chưa nhận bài'
                     return 'Chưa xác minh đã đăng'
             except (OSError, ValueError):
                 pass
@@ -648,6 +652,9 @@ class PageSchedulePanel(ttk.Frame):
                 self.summary.set(self.summary.get()+'\nĐã thực hiện thao tác Đăng; chưa xác nhận bài đã xuất hiện. Các bài khác đến giờ vẫn được xử lý.')
             if row['state'] == 'submitted':
                 self.summary.set(self.summary.get()+'\nĐã tạm dừng kiểm tra trạng thái sau khi gửi. Các bài tiếp theo vẫn chạy; lượt này không tự gửi lại.')
+            if self.row_state_label(row) == 'Dừng trước khi bấm Đăng — Facebook chưa nhận bài':
+                self.summary.set(self.summary.get()+'\nTèo dừng ở bước kiểm tra cuối và chưa bấm Đăng. Kiểm tra Facebook chưa có bài rồi dùng '
+                    '"Xếp lại theo giờ của Page…" hoặc "Bỏ lượt cũ và tạo lịch mới…".')
             if self.row_state_label(row) == 'Chưa xác minh đã đăng':
                 self.summary.set(self.summary.get()+'\nLượt cũ đã gửi nhưng chưa xác minh bài trên Facebook; không tự đăng lại.')
             if not row['attempted_at'] and row['state'] in {'scheduled', 'armed', 'paused'}:

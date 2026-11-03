@@ -9,7 +9,7 @@ from teodub.page_schedule_recovery_ui import ScheduleRecoveryDialog
 from teodub.page_schedule_replan import apply_plan, build_plan, page_times, parse_times
 from teodub.page_schedule_ui import future_time
 
-KIND_TEXT = {'fresh': 'chưa từng gửi', 'recover': 'dừng ở bước chuẩn bị, chưa bấm Đăng'}
+KIND_TEXT = {'fresh': 'chưa từng gửi', 'recover': 'dừng trước khi bấm Đăng'}
 
 
 class ScheduleReplanDialog(tk.Toplevel):
@@ -76,7 +76,7 @@ class ScheduleReplanDialog(tk.Toplevel):
         scroll.pack(side='right', fill='y')
         self.content.configure(yscrollcommand=scroll.set)
         self.check_one = ttk.Checkbutton(self.confirm_frame, variable=self.checked_unpublished,
-            text='Tôi đã kiểm tra Facebook: các video "dừng ở bước chuẩn bị" chưa được đăng hoặc hẹn giờ.')
+            text='Tôi đã kiểm tra Facebook: các video "dừng trước khi bấm Đăng" chưa được đăng hoặc hẹn giờ.')
         self.check_one.pack(anchor='w', pady=2)
         self.check_two = ttk.Checkbutton(self.confirm_frame, variable=self.closed_composer,
             text='Tôi đã lưu hoặc đồng ý bỏ phần soạn cũ trên Facebook để tạo lại lịch.')
