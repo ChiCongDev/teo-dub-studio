@@ -19,6 +19,9 @@ from teodub.page_publish_settings import result_checks_enabled
 from teodub.pipeline import _job_lock
 
 LOCAL_TIME = timezone(timedelta(hours=7))
+INTERRUPTED = 'Phiên Tèo trước đã dừng.'  # Starts the message of a row paused because Tèo was lost (crash, shutdown, restart).
+CLOSED = 'Tèo đã đóng;'  # Starts the message `close` leaves on an armed row. Both marks are re-armed; a hand pause has neither.
+RESUME_MARGIN_SECONDS = 60  # A time closer than this at reopening counts as passed.
 STATE_LABELS = {'scheduled':'Đã lưu, chưa bật', 'armed':'Đang chờ giờ đăng', 'paused':'Đã tạm dừng',
     'preparing':'Đang chuẩn bị trong Chrome', 'submitting':'Đang gửi tới Facebook',
     'verifying':'Đã gửi — đang xác minh', 'published':'Đã xác nhận đăng',
@@ -453,10 +456,56 @@ class PageScheduleController:
                     with self.guard(row['id']):
                         self.store.update(row['id'],expected={row['state']},
                             state='needs_attention' if row['attempted_at'] else 'paused',
-                            message='Phiên Tèo trước đã dừng. Kiểm tra kết quả nếu đã có lượt gửi; chưa tự chạy lại.')
+                            message=INTERRUPTED+(' Kiểm tra kết quả nếu đã có lượt gửi; chưa tự chạy lại.' if row['attempted_at']
+                                else ' Chưa gửi lần nào; Tèo sẽ tự bật lại.'))
                 except (OSError,ValueError):
                     pass  # Another process still owns the schedule.
+        self._resume_interrupted()
         self._restore_result_tracking()
+
+    def _resume_interrupted(self):
+        """03/11/2026 (owner): an appointment the owner had armed and Tèo lost before any send is armed again.
+
+        Only a row that was never touched (no attempt, no request) and still carries the INTERRUPTED or CLOSED mark qualifies; a row the
+        owner paused by hand has another message and stays paused. A time still ahead is kept; a time that passed while Tèo
+        was down moves to the Page's next free daily time (the `free_slots` of the bulk re-plan), or stays paused with the
+        reason when the Page has no daily times. `tick` still re-checks the snapshot before anything is sent."""
+        from teodub.page_schedule_replan import free_slots, page_times
+        wall = time.time()
+        groups = {}
+        for row in self.store.list():
+            if (row['state'] == 'paused' and not row['attempted_at'] and not row['request_id']
+                    and row['message'].startswith((INTERRUPTED,CLOSED))):
+                groups.setdefault((row['account_id'],row['page_key']),[]).append(row)
+        for (account_id,page_key),rows in groups.items():
+            rows.sort(key=lambda row:(row['due_at'],row['source'].get('number',0),row['id']))
+            late = [row for row in rows if row['due_at'] <= wall+RESUME_MARGIN_SECONDS
+                    and row['source'].get('kind') != 'text' and row['source'].get('path')]
+            slots = {}
+            times = page_times(self.store.data_dir,account_id,page_key) if late else []
+            if times:
+                moving = {row['id'] for row in late}
+                others = [row for row in self.store.list(account_id,page_key) if row['id'] not in moving]
+                try:
+                    slots = {row['id']:stamp for row,stamp in zip(late,free_slots(times,len(late),others,wall,wall))}
+                except ValueError:
+                    pass
+            for row in rows:
+                ident = row['id']
+                try:
+                    if ident in slots:
+                        self.store.reschedule(ident,slots[ident])
+                    elif row['due_at'] <= wall+RESUME_MARGIN_SECONDS:
+                        raise ValueError('Giờ đăng đã qua và Page chưa có giờ đăng mỗi ngày để dời; đổi giờ thủ công.')
+                    self.start(ident)
+                    self.store.update(ident,message='Tèo bị dừng ngang; đã tự bật lại'+(
+                        ' và dời sang '+display_time(slots[ident])+' (UTC+7).' if ident in slots else ', giữ giờ cũ.'))
+                except (OSError,ValueError,RuntimeError) as exc:
+                    try:
+                        self.store.update(ident,expected={'scheduled','paused'},state='paused',
+                            message=INTERRUPTED+' Chưa tự bật lại được: '+str(exc))
+                    except (OSError,ValueError):
+                        pass
 
     def _restore_result_tracking(self):
         """Resume only reads of recent submitted results, never a lost upload."""

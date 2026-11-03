@@ -205,8 +205,38 @@ class ScheduleTests(unittest.TestCase):
         self.controller.close()
         reopened = PageScheduleController(self.owner)
         self.addCleanup(reopened.close)
-        self.assertEqual(self.store.get(row['id'])['state'],'paused')
+        self.assertEqual(self.store.get(row['id'])['state'],'armed')  # 03/11: a never-touched armed row comes back by itself
         reopened.tick()
+        self.assertEqual(self.calls,[])
+
+    def test_reopening_rearms_only_untouched_rows_and_moves_passed_times(self):
+        future = self.schedule()
+        passed = self.schedule('b'*32)
+        by_hand = self.schedule('c'*32)
+        sent = self.schedule('d'*32)
+        for row in (future,passed,sent):
+            self.controller.start(row['id'])
+        self.controller.start(by_hand['id']); self.controller.pause(by_hand['id'])
+        self.store.update(sent['id'],attempted_at='synthetic attempted')
+        self.store.update(passed['id'],due_at=time.time()-3600)
+        self.controller.close()
+        reopened = PageScheduleController(self.owner)
+        self.addCleanup(reopened.close)
+        self.assertEqual(self.store.get(future['id'])['state'],'armed')
+        self.assertEqual(self.store.get(future['id'])['due_at'],future['due_at'])
+        self.assertEqual(self.store.get(by_hand['id'])['state'],'paused')  # the owner's own pause stays
+        self.assertEqual(self.store.get(sent['id'])['state'],'needs_attention')  # a touched row is never re-armed
+        self.assertEqual(self.store.get(passed['id'])['state'],'paused')  # no daily times saved for the Page: stays, with the reason
+        self.assertIn('giờ đăng mỗi ngày',self.store.get(passed['id'])['message'])
+        with patch('teodub.page_schedule_replan.page_times',return_value=['09:00','21:00']):
+            self.store.update(passed['id'],state='paused',message='Phiên Tèo trước đã dừng. Chưa gửi lần nào; Tèo sẽ tự bật lại.')
+            reopened.close()
+            again = PageScheduleController(self.owner)
+            self.addCleanup(again.close)
+        row = self.store.get(passed['id'])
+        self.assertEqual(row['state'],'armed')
+        self.assertGreater(row['due_at'],time.time()+240)
+        self.assertEqual(datetime.fromtimestamp(row['due_at']).strftime('%M'),'00')
         self.assertEqual(self.calls,[])
 
     def test_pause_preparation_does_not_automatically_publish_when_reply_arrives(self):
