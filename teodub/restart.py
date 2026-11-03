@@ -257,8 +257,9 @@ def restart_command(data_dir, token, web_data_dir=None):
     if getattr(sys,'frozen',False):
         command = [sys.executable]
     else:
-        python = project/'.venv'/'Scripts'/'pythonw.exe'
-        if not python.is_file():
+        from .runtime_paths import find_python
+        python = find_python(project, windowed=True)
+        if python is None:
             raise ValueError('Thiếu môi trường Tèo; giữ ứng dụng hiện tại để kiểm tra.')
         command = [str(python),'-X','utf8','-B',str(project/'launch.py')]
     command += ['--data-dir',str(Path(data_dir).resolve()),'--restart-token',token]

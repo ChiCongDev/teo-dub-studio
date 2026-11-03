@@ -48,6 +48,25 @@ class RuntimeLaunchTests(unittest.TestCase):
             self.assertIsNone(launch.bootstrap_environment([], self.project))
             spawn.assert_not_called()
 
+    def test_bundled_runtime_is_used_when_there_is_no_venv(self):
+        import shutil
+        shutil.rmtree(self.project/'.venv')
+        bundled = self.project/'runtime'/'python'
+        bundled.mkdir(parents=True)
+        (bundled/'python.exe').touch()
+        (bundled/'pythonw.exe').touch()
+        with patch.object(launch.subprocess, 'Popen') as spawn:
+            self.assertEqual(launch.bootstrap_environment([], self.project), 0)
+        self.assertEqual(spawn.call_args.args[0][0], str(bundled/'pythonw.exe'))
+
+    def test_project_venv_wins_over_bundled_runtime(self):
+        bundled = self.project/'runtime'/'python'
+        bundled.mkdir(parents=True)
+        (bundled/'pythonw.exe').touch()
+        with patch.object(launch.subprocess, 'Popen') as spawn:
+            launch.bootstrap_environment([], self.project)
+        self.assertEqual(spawn.call_args.args[0][0], str(self.scripts/'pythonw.exe'))
+
     def test_redirect_happens_before_loading_ui_or_workers(self):
         with patch.object(launch, 'bootstrap_environment', return_value=7), patch('teodub.app.main') as ui, patch('teodub.pipeline.main') as worker:
             self.assertEqual(launch.main(['--worker', '--config', 'request.json']), 7)

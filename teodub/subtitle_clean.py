@@ -46,6 +46,11 @@ def verify_clean_source(source, settings):
             raise ValueError('Vùng xóa Sub được lưu cho video khác hoặc nguồn đã thay đổi. Chưa chạy dịch/lồng tiếng.')
 
 
+def installed():
+    """Whether the optional GPU subtitle remover is set up on this PC (the UI hides it when it is not)."""
+    return PYTHON.is_file()
+
+
 def runtime_ready():
     if not PYTHON.is_file() or not MODEL.is_file():
         raise ValueError('Chưa cài bộ xóa chữ GPU. Chạy tools/setup_inpaint.ps1 trong thư mục Tèo.')

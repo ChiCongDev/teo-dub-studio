@@ -12,6 +12,11 @@ from teodub.web_tracking import (LOCAL_URL, PERIODS, STATES, date_text, job_dire
                                  output_folder, snapshot, web_data_root, PROJECT)
 
 
+def web_installed():
+    """Teo Web is an optional extra: the tab is shown only where its environment exists."""
+    return (PROJECT/'.venv-web'/'Scripts'/'python.exe').is_file()
+
+
 class WebTrackingTab(ttk.Frame):
     def __init__(self, parent, root=None, *, autostart=True):
         super().__init__(parent, padding=12)

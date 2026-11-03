@@ -103,6 +103,10 @@ def find_codex():
                 binaries = list((package_root / name).glob('**/codex.exe'))
                 if binaries:
                     return str(binaries[0].resolve())
+    # The copy shipped inside the standalone bundle is the last resort.
+    bundled = Path(__file__).resolve().parents[1] / 'tools/codex' / ('codex.exe' if os.name == 'nt' else 'codex')
+    if bundled.is_file():
+        return str(bundled)
     raise ValueError('Chưa tìm thấy Codex CLI. Cài Codex trên máy này và đăng nhập bằng tài khoản ChatGPT, rồi chạy lại.')
 
 

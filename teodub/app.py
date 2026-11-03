@@ -58,12 +58,11 @@ def worker_command(config_path):
     if getattr(sys, 'frozen', False):
         prefix = [sys.executable]
     else:
+        from .runtime_paths import find_python
         project = Path(__file__).resolve().parents[1]
-        python = project/'.venv'/'Scripts'/'python.exe'
-        if os.name != 'nt':
-            python = project/'.venv'/'bin'/'python'
-        if not python.is_file():
-            raise ValueError('Chưa có môi trường chạy .venv. Cài đặt Tèo Dub Studio trên máy này trước khi chạy.')
+        python = find_python(project)
+        if python is None:
+            raise ValueError('Chưa có môi trường chạy Python của Tèo (.venv hoặc runtime\\python). Cài đặt Tèo Dub Studio trên máy này trước khi chạy.')
         prefix = [str(python), '-X', 'utf8', '-B', str(project/'launch.py')]
     return prefix + ['--worker', '--config', str(Path(config_path).resolve())]
 
@@ -265,8 +264,12 @@ class Studio(ttk.Frame):
         self.clean_check = ttk.Checkbutton(clean_row, text='Xóa Sub gốc trước khi chèn Sub Việt (GPU)',
                                            variable=self.clean_enabled, command=self.toggle_clean)
         self.clean_check.pack(side='left', padx=10)
-        ttk.Label(options, textvariable=self.clean_summary, wraplength=990).grid(
-            row=10, column=0, columnspan=3, sticky='w', pady=(3, 0))
+        clean_label = ttk.Label(options, textvariable=self.clean_summary, wraplength=990)
+        clean_label.grid(row=10, column=0, columnspan=3, sticky='w', pady=(3, 0))
+        from teodub.subtitle_clean import installed as inpaint_installed
+        if not inpaint_installed():  # the standalone bundle ships without the heavy GPU remover
+            clean_row.grid_remove()
+            clean_label.grid_remove()
         subtitle_row = ttk.Frame(options)
         subtitle_row.grid(row=11, column=0, columnspan=3, sticky='ew', pady=(8, 0))
         self.subtitle_check = ttk.Checkbutton(subtitle_row, text='Ghi Sub Việt trực tiếp vào hình',
@@ -1596,7 +1599,8 @@ def main(args=None):
     root = tk.Tk()
     if options.restart_token:
         root.withdraw()  # Build every tab before ACK; do not dispatch timers yet.
-    root.title('Tèo Dub Studio')
+    from teodub.version import label as version_label
+    root.title('Tèo Dub Studio — '+version_label())
     root.geometry('1120x860')
     root.minsize(1050, 850)
     style = ttk.Style(root)
@@ -1627,9 +1631,11 @@ def main(args=None):
     facebook_tab = FacebookTab(notebook, studio)
     studio.facebook_tab = facebook_tab
     notebook.add(facebook_tab, text='Quản lý Page')
-    from teodub.web_tracking_ui import WebTrackingTab
-    studio.web_tracking_tab = WebTrackingTab(notebook, options.web_data_dir)
-    notebook.add(studio.web_tracking_tab, text='Công việc web & thống kê')
+    from teodub.web_tracking_ui import WebTrackingTab, web_installed
+    studio.web_tracking_tab = None
+    if web_installed():  # the standalone bundle has no Teo Web
+        studio.web_tracking_tab = WebTrackingTab(notebook, options.web_data_dir)
+        notebook.add(studio.web_tracking_tab, text='Công việc web & thống kê')
     from teodub.voice_learning_ui import VoiceLearningTab
     studio.voice_learning_tab = VoiceLearningTab(notebook, studio, campaign_tab=campaign_tab)
     notebook.add(studio.voice_learning_tab, text='Học giọng & phong cách')
@@ -1646,7 +1652,24 @@ def main(args=None):
     ttk.Button(restart_bar,text='Khởi động lại, giữ công việc',command=studio.restart_controller.request).pack(side='left')
     ttk.Button(restart_bar,text='Hủy khởi động lại',command=studio.restart_controller.cancel).pack(side='left',padx=6)
     ttk.Button(restart_bar,text='Chi tiết',command=studio.restart_controller.show_report).pack(side='left')
-    ttk.Label(restart_bar,textvariable=restart_status,wraplength=450).pack(side='left',padx=4)
+    from teodub.machine_check_ui import open_window as open_machine_check, offer_on_first_run
+    ttk.Button(restart_bar,text='Kiểm tra máy',command=lambda: open_machine_check(root)).pack(side='right')
+    if not options.restart_token:
+        offer_on_first_run(root,studio.data_dir)
+    def update_busy():
+        from teodub.restart import busy_reasons
+        from teodub.updater import running_workers
+        reasons = list(busy_reasons(studio,campaign_tab,facebook_tab))
+        if studio.process is not None:
+            reasons.append('đang xử lý một video')
+        if running_workers():
+            reasons.append('còn tiến trình lồng tiếng hoặc chiến dịch đang chạy (code cũ và mới không được chạy lẫn)')
+        return reasons
+    from teodub.updater_ui import install as install_updater
+    install_updater(root,restart_bar,studio,update_busy)
+    restart_label = ttk.Label(restart_bar,textvariable=restart_status,wraplength=450)
+    restart_label.pack(side='left',padx=4,fill='x',expand=True)
+    restart_label.bind('<Configure>',lambda event: restart_label.configure(wraplength=max(120,event.width-8)))
     if options.restart_token:
         from teodub.restart import accept_transfer
         transfer = accept_transfer(options.data_dir,options.restart_token)

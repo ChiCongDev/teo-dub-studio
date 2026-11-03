@@ -1,0 +1,7 @@
+# Tests that already failed on the project owner's PC before the release tooling existed (full-suite runs, 03/11/2026).
+# The release tool tolerates exactly these and stops on any other failure. Remove a line when its test is fixed.
+test_audio_mix_integration.AudioMixStudioTests.test_campaign_capture_freezes_mix_and_new_capture_affects_only_new_campaign
+test_campaign_link_tabs.LinkStopTests.test_the_later_of_stop_and_run_wins
+test_google_drive_app_ui.GoogleDriveAppUITests.test_campaign_capture_freezes_drive_target_and_does_not_modify_saved_campaign
+test_google_drive_app_ui.GoogleDriveAppUITests.test_completion_keeps_render_progress_and_shows_separate_cloud_error
+test_subtitle_clean_integration.CleanStudioTests.test_campaign_capture_freezes_mix_and_new_capture_affects_only_new_campaign

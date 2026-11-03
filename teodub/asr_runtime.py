@@ -29,6 +29,24 @@ def gpu_memory_mib():
         return None
 
 
+def gpu_usable():
+    """True only when an NVIDIA driver and the CUDA libraries Whisper needs can really be loaded.
+
+    Checked with plain library loads first, so a PC without NVIDIA never reaches CTranslate2's CUDA probe (it can
+    crash the whole process there) and a PC with a card but no CUDA libraries falls back to CPU instead of failing
+    later with 'cublas64_12.dll is not found'."""
+    try:
+        ctypes.WinDLL('nvcuda.dll') if os.name == 'nt' else ctypes.CDLL('libcuda.so.1')
+        if os.name != 'nt':
+            return True
+        from teodub.models import configure_models
+        configure_models()  # adds the pip-installed NVIDIA library folders to the DLL search path
+        ctypes.WinDLL('cublas64_12.dll')
+        return True
+    except (OSError, ImportError):
+        return False
+
+
 def _compute_type(backend, device):
     supported = backend.get_supported_compute_types(device)
     choices = (('int8_float16', 'int8_float32', 'int8', 'float16', 'float32')
@@ -44,7 +62,7 @@ def recognizer_runtime(requested_model, *, resolved_model=None, backend=None):
         raise ValueError('Mô hình nhận dạng đã lưu không khớp lựa chọn.')
     if backend is None:
         import ctranslate2 as backend
-    cuda = bool(backend.get_cuda_device_count())
+    cuda = gpu_usable() and bool(backend.get_cuda_device_count())
     gpu_type = _compute_type(backend, 'cuda') if cuda else None
     memory = gpu_memory_mib() if gpu_type else None
     multiplier = 1 if gpu_type and gpu_type.startswith('int8') else 2

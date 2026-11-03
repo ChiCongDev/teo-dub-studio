@@ -18,7 +18,8 @@ def backend(types=('float32', 'int8', 'int8_float32'), count=1):
 
 class RuntimeTests(unittest.TestCase):
     def resolve(self, requested='auto', memory=2048, ct=None, **kwargs):
-        with patch.object(asr_runtime, 'gpu_memory_mib', return_value=memory):
+        with patch.object(asr_runtime, 'gpu_memory_mib', return_value=memory), \
+             patch.object(asr_runtime, 'gpu_usable', return_value=True):
             return asr_runtime.recognizer_runtime(requested, backend=ct or backend(), **kwargs)
 
     def test_gtx1050_auto_uses_small_and_supported_gpu_precision(self):
@@ -50,6 +51,18 @@ class RuntimeTests(unittest.TestCase):
             runtime = self.resolve(requested, memory=None)
             self.assertEqual(runtime['device'], 'cpu')
             self.assertIn('Chưa xác định', runtime['note'])
+
+    def test_unusable_gpu_libraries_fall_back_to_cpu_without_cuda_probe(self):
+        ct = backend(count=1)
+        with patch.object(asr_runtime, 'gpu_usable', return_value=False), \
+             patch.object(asr_runtime, 'gpu_memory_mib', side_effect=AssertionError('no GPU query')):
+            runtime = asr_runtime.recognizer_runtime('auto', backend=ct)
+        self.assertEqual((runtime['model'], runtime['device']), ('medium', 'cpu'))
+        ct.get_cuda_device_count.assert_not_called()
+
+    def test_gpu_usable_is_false_when_the_driver_is_missing(self):
+        with patch.object(asr_runtime.ctypes, 'WinDLL', side_effect=OSError('no driver'), create=True),              patch.object(asr_runtime.ctypes, 'CDLL', side_effect=OSError('no driver')):
+            self.assertFalse(asr_runtime.gpu_usable())
 
     def test_cpu_only_auto_does_not_query_gpu(self):
         ct = backend(count=0)
@@ -92,6 +105,7 @@ class RecognitionRoutingTests(unittest.TestCase):
         self.enterContext(patch.object(asr, 'configure_models', return_value=self.root))
         self.enterContext(patch('teodub.models.configure_models', return_value=self.root))
         self.enterContext(patch.object(asr_runtime, 'gpu_memory_mib', return_value=2048))
+        self.enterContext(patch.object(asr_runtime, 'gpu_usable', return_value=True))
 
     def test_new_asr_request_and_completed_cache_record_actual_1050_runtime(self):
         result = asr.transcribe(self.source, self.output)

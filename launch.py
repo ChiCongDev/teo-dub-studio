@@ -12,13 +12,12 @@ def bootstrap_environment(args, project=None):
     project = Path(project or __file__).resolve()
     if project.is_file():
         project = project.parent
-    environment = project/'.venv'
-    if Path(sys.prefix).resolve() == environment:
+    from teodub.runtime_paths import environment_prefix, find_python
+    environment = environment_prefix(project)
+    if environment is None or Path(sys.prefix).resolve() == environment:
         return None
-    console = environment/'Scripts'/'python.exe'
-    windowed = environment/'Scripts'/'pythonw.exe'
-    if not console.is_file():
-        return None
+    console = find_python(project)
+    windowed = find_python(project, windowed=True)
     worker = any(flag in args for flag in ('--worker', '--campaign-worker', '--campaign-batch-worker'))
     executable = console if worker or not windowed.is_file() else windowed
     command = [str(executable), '-X', 'utf8', '-B', str(project/'launch.py'), *args]
