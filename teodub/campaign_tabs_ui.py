@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from teodub.campaign import read_json, requested_retries, totals
-from teodub.campaign_tracking import campaign_notice, tracking_row
+from teodub.campaign_tracking import campaign_notice, posting_label, row_tag, tracking_row
 from teodub.common import atomic_json
 from teodub.subtitle_style import SUBTITLE_BOXES
 
@@ -311,8 +311,9 @@ class CampaignLinkTab(ttk.Frame):
         self.tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
         self.tree.bind('<Double-1>', self.open_item)
         for tag, color in (('completed', '#237637'), ('review_required', '#8a6000'), ('retrying', '#8a6000'),
-                           ('failed', '#b12727'), ('running', '#065ca8'), ('cancelled', '#777777'), ('excluded', '#9a9a9a')):
+                           ('failed', '#b12727'), ('running', '#065ca8'), ('cancelled', '#777777')):
             self.tree.tag_configure(tag, foreground=color)
+        self.tree.tag_configure('excluded', foreground='#5f5f5f', background='#dedede')  # Loại trừ / Không đăng: the whole row greyed.
         ttk.Progressbar(self, variable=self.progress, maximum=100).grid(row=7, column=0, sticky='ew', pady=6)
         ttk.Label(self, textvariable=self.message, wraplength=1000).grid(row=8, column=0, sticky='w')
         ttk.Label(self, wraplength=1000, text=(
@@ -369,7 +370,8 @@ class CampaignLinkTab(ttk.Frame):
         current = next((item for item in manifest['items'] if item.get('status') == 'running'), None)
         text = (f'{line} · Xong {counts["completed"]}/{counts["total"]} · Lỗi {counts["failed"]}'
                 +(f' (chờ thử lại {len(retrying)})' if retrying else '')+f' · Chờ {counts["waiting"]}'
-                +(f' · Loại trừ {counts["excluded"]}' if counts['excluded'] else ''))
+                +(f' · Loại trừ {counts["excluded"]}' if counts['excluded'] else '')
+                +(f' · Không đăng {counts["no_post"]}' if counts['no_post'] else ''))
         if current is not None and active:
             row = tracking_row(current, active=True)
             text += f' · {row[0]}: {row[3]}'+(f' {row[4]}' if row[4] != '—' else '')
@@ -400,10 +402,10 @@ class CampaignLinkTab(ttk.Frame):
         for item in manifest['items']:
             queued = item['number'] in retrying
             row = tracking_row(item, active=active, retrying=queued)
-            posting = self.posting.get(item['number'], {}).get('label', 'Cần kiểm tra')
+            posting = posting_label(item, self.posting)
             drive = self.drive.get(item['number'], {}).get('label', 'Cần kiểm tra')
             values = row[:-1]+(posting, drive, row[-1])
-            key, tags = str(item['number']), ('retrying',) if queued else (item['status'],)
+            key, tags = str(item['number']), (row_tag(item, queued),)
             if self.tree.exists(key):
                 self.tree.item(key, values=values, tags=tags)
             else:

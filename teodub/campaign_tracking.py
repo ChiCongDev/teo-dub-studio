@@ -105,12 +105,32 @@ def latest_progress(job):
     return latest, percent
 
 
+NOT_POSTED = 'Không đăng'  # 04/11/2026 (owner): a finished video the owner excluded is never posted.
+
+
+def is_skipped(item):
+    """A video the owner excluded: not made (status excluded) or finished but never posted (`no_post`)."""
+    return item.get('status') == 'excluded' or bool(item.get('no_post'))
+
+
+def row_tag(item, retrying=False):
+    """The table tag of a row: its own grey background for an excluded video, else the colour of its status."""
+    return 'retrying' if retrying else ('excluded' if is_skipped(item) else item['status'])
+
+
+def posting_label(item, statuses):
+    """The "Trạng thái đăng bài" cell: Không đăng for an excluded video, else what the Page schedule says."""
+    return NOT_POSTED if is_skipped(item) else statuses.get(item['number'], {}).get('label', 'Cần kiểm tra')
+
+
 def tracking_row(item, active=True, retrying=False):
     status = item['status']
     event, percent = latest_progress(item.get('execution_job') or item['job']) if item.get('job') and status not in ('pending', 'excluded') else ({}, None)
     label = STATUS.get(status, status)
     if status == 'failed' and (retrying or item.get('retry_once') is True):
         label = RETRYING
+    elif item.get('no_post') and status in ('completed', 'review_required'):
+        label += ' · '+NOT_POSTED
     message = item.get('message', '')
     if status == 'running':
         label = STAGES.get(event.get('stage'), label) if active else 'Gián đoạn · Tiếp tục'

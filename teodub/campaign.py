@@ -205,7 +205,8 @@ def absorb_exclusions(directory, manifest):
 def totals(manifest):
     items = manifest['items']
     excluded = sum(x['status'] == EXCLUDED for x in items)
-    return dict(total=len(items)-excluded, excluded=excluded, completed=sum(x['status'] in DONE for x in items),
+    return dict(total=len(items)-excluded, excluded=excluded, no_post=sum(bool(x.get('no_post')) for x in items),
+                completed=sum(x['status'] in DONE for x in items),
                 failed=sum(x['status'] == 'failed' for x in items),
                 running=sum(x['status'] == 'running' for x in items),
                 waiting=sum(x['status'] in ('pending', 'cancelled') for x in items))

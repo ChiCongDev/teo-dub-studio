@@ -12,7 +12,7 @@ from tkinter import filedialog, ttk
 
 from teodub.campaign import (ROTATION_REQUEST, ROTATION_WAIT, auto_resume_due, create_campaign, is_running,
                             read_json, totals)
-from teodub.campaign_tracking import STATUS, tracking_row, campaign_notice, processing_time
+from teodub.campaign_tracking import STATUS, tracking_row, campaign_notice, processing_time, posting_label, row_tag, is_skipped
 from teodub.campaign_posting import campaign_posting_statuses
 from teodub.drive_delivery import drive_upload_summary
 from teodub.channel_browser import BROWSER_LABELS, profile_directory
@@ -246,8 +246,9 @@ class CampaignTab(ttk.Frame):
         ttk.Button(links, text='Xem chi tiết / nguyên nhân', command=lambda: self.show_item(detail_only=True)).pack(side='left', padx=3)
         ttk.Label(links, text='Nhấp đôi để xem chi tiết / mở thành phẩm.').pack(side='left', padx=5)
         for tag, color in (('completed', '#237637'), ('review_required', '#8a6000'),
-                           ('failed', '#b12727'), ('running', '#065ca8'), ('cancelled', '#777777'), ('excluded', '#9a9a9a')):
+                           ('failed', '#b12727'), ('running', '#065ca8'), ('cancelled', '#777777')):
             self.tree.tag_configure(tag, foreground=color)
+        self.tree.tag_configure('excluded', foreground='#5f5f5f', background='#dedede')  # Loại trừ / Không đăng: the whole row greyed.
         ttk.Progressbar(self, variable=self.progress, maximum=100).grid(row=11, column=0, columnspan=3, sticky='ew', pady=6)
         ttk.Label(self, wraplength=1000, text='Video 1, Video 2… được đánh số theo danh sách đã chốt, kèm ngày tạo chiến dịch. '
                   'Quét kênh chỉ đọc video công khai mà trang tải được; có thể cần đăng nhập. '
@@ -917,7 +918,7 @@ class CampaignTab(ttk.Frame):
                 label = 'Chờ chạy xen kẽ (sau video đang làm)'
         self.status.set(f'{manifest["name"]}: {label} · Xong {counts["completed"]}/{counts["total"]} · '
                         f'Lỗi {counts["failed"]} · Chờ {counts["waiting"]}'+(f' · Loại trừ {counts["excluded"]}' if counts['excluded'] else '')
-                        +'. '+manifest.get('message', ''))
+                        +(f' · Không đăng {counts["no_post"]}' if counts['no_post'] else '')+'. '+manifest.get('message', ''))
         if active and handoff and in_rotation:
             self.status.set(self.status.get()+' Làm xong video đang chạy, Tèo chạy xen kẽ: mỗi chiến dịch một video, lần lượt.')
         discovery = manifest.get('discovery') or {}
@@ -962,13 +963,13 @@ class CampaignTab(ttk.Frame):
             self.tree.delete(key)
         for item in manifest['items']:
             row = tracking_row(item, active=active)
-            posting = self.posting_statuses.get(item['number'], {}).get('label', 'Cần kiểm tra')
+            posting = posting_label(item, self.posting_statuses)
             values = row[:-1]+(posting, self.drive_statuses[item['number']]['label'], row[-1])
             key = str(item['number'])
             if self.tree.exists(key):
-                self.tree.item(key, values=values, tags=(item['status'],))
+                self.tree.item(key, values=values, tags=(row_tag(item),))
             else:
-                self.tree.insert('', 'end', iid=key, values=values, tags=(item['status'],))
+                self.tree.insert('', 'end', iid=key, values=values, tags=(row_tag(item),))
 
     def display_big_table(self, manifest, active, expected):
         """The table of a campaign with thousands of videos: rows are read a few at a time, never all at once.
@@ -1014,20 +1015,20 @@ class CampaignTab(ttk.Frame):
         written = self.big_written
         for item in items:
             known = rows.get(item['number'])
-            posting = self.posting_statuses.get(item['number'], {}).get('label', 'Cần kiểm tra')
+            posting = posting_label(item, self.posting_statuses)
             if known is None:
                 values = (f'Video {item["number"]}', item.get('title') or '(Chưa có tiêu đề)', item['url'],
                           STATUS.get(item['status'], item['status']), '…', '—', posting, 'Đang đọc…', '')
             else:
                 values = known[1][:-1]+(posting, known[2]['label'], known[1][-1])
             key = str(item['number'])
-            stamp = (values, item['status'])
+            stamp = (values, row_tag(item))
             if written.get(key) == stamp:
                 continue
             if self.tree.exists(key):
-                self.tree.item(key, values=values, tags=(item['status'],))
+                self.tree.item(key, values=values, tags=(row_tag(item),))
             else:
-                self.tree.insert('', 'end', iid=key, values=values, tags=(item['status'],))
+                self.tree.insert('', 'end', iid=key, values=values, tags=(row_tag(item),))
             written[key] = stamp
 
     def refresh_buttons(self):
@@ -1246,7 +1247,9 @@ class CampaignTab(ttk.Frame):
                     +f'\nThời gian hoàn thành: {row[5]}\nTổng thời gian xử lý: {processing_time(item)}'
                     +'\n\n'+detail)
             posting = self.posting_statuses.get(number)
-            if posting:
+            if is_skipped(item):
+                text += '\n\nTrạng thái đăng bài: Không đăng (đã loại trừ; Tèo không xếp lịch đăng video này).'
+            elif posting:
                 text += '\n\nTrạng thái đăng bài: '+posting['label']+'\n'+posting['details']
             drive = self.drive_statuses.get(number)
             if drive:
