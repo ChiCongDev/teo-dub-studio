@@ -6,6 +6,7 @@ web : only test_web_* modules             (run with .venv-web, which has Flask)"
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -38,6 +39,9 @@ def main(argv=None):
     group = argv[0] if argv else 'main'
     if group not in ('main', 'web'):
         raise SystemExit('Dùng: run_tests.py main|web')
+    # A Windows user name with a space gives a short 8.3 TEMP (CHUNGP~1); tests compare resolved paths, so start
+    # from the long one (04/11/2026: 44 false failures stopped the 1.0.2 release).
+    tempfile.tempdir = str(Path(tempfile.gettempdir()).resolve())
     suite = load(group)
     result = unittest.TextTestRunner(stream=sys.stderr, verbosity=0).run(suite)
     failed = sorted({test.id() for test, _ in result.failures + result.errors})
