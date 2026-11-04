@@ -1,5 +1,12 @@
 # Tèo Dub Studio — 29/10/2026
 
+## 03/11/2026 — Version 1.0.1 published on GitHub; full update loop proven over the network (Claude Code)
+
+Owner typed "PHAT HANH". Token: fine-grained, repo `teo-dub-studio` only, Contents read/write, **expires 01/02/2027** (then create a new one and run `release.py --set-token`). The first paste was saved twice (186 chars, 401 Bad credentials); stored the single copy, verified push permission. Commits: `4b66417` (phase 1-4), `2148d05` (owner's page-schedule re-arm, committed separately on the owner's word), `b90daf5` (release gate: known failures also match with a `tests.` prefix), `2a82a6d` (first-run machine check starts only 2.5 s after the window shows: `test_main_mounts_all_eight_tabs_without_starting_work` caught the startup process; this fix is in the live folder and loads at the next restart), `2983cca` "Phiên bản 1.0.1" by the release tool. First release attempt stopped on that test (nothing pushed); second passed 2915 tests and published `v1.0.1` with `teo-code-1.0.1.zip` + `.sha256`, notes `work/20261103-ban-phat-hanh/ghi-chu-1.0.1.txt`.
+
+Proven: `updater.check('1.0.0')` -> newer 1.0.1 with the notes; download + SHA256 OK; the extracted bundle at 1.0.0 shows "Có bản mới 1.0.1 – Xem" by itself (`work/20261103-ban-phat-hanh/anh/6-co-ban-moi-1.0.1.png`); updating it over the network (check, download, apply) -> 1.0.1, backup `versions/1.0.0-2`, Tèo reopened. The UI busy-refusal and the "Cập nhật" click itself were exercised only by tests, not clicked by hand. Bundle zip `D:/TeoBundle/TeoDubStudio-1.0.0.zip` stays valid: a new user installs 1.0.0 and is offered 1.0.1.
+
+
 ## 03/11/2026 — Bundle: one real video dubbed end to end from the extracted bundle (Claude Code)
 
 Owner allowed using this PC's logged-in Codex account for one video. `D:/TeoTest/Teo` (bundle 1.0.0, bundled Python/Codex/models only), mode `full`, voice Mai Anh, CPU: a 698 s Douyin video (copy of `Teo-original-0c08...` in Downloads) -> **1060 s total (about 1.5x the video length)**: recognition (Whisper medium, CPU) 460 s, translation (bundled Codex) 88 s, voice (VieNeu) 368 s, render 139 s. Result: completed, `technical_pass` true, 345 lines, mp4 12:55 h264 1024x576 + aac stereo + soft Vietnamese subtitles, audio mean -24.3 dB / peak -3.3 dB, SRT in Vietnamese; `human_review_required` (nobody listened to the voice or read the translation closely). Two other sample mp4s in Downloads (50 s and 88 s) have no recognisable speech: Tèo stops with "Chưa nhận được lời nói trong video" in the bundle AND in the owner's .venv (not a bundle bug).
@@ -1587,3 +1594,11 @@ Worker được Windows Job Object bảo vệ: khi dừng cưỡng bức chỉ k
 - https://learn.chatgpt.com/docs/non-interactive-mode
 
 `requirements-lock.txt` ghi versions đã cài. Không đưa `.venv/`, models, video người dùng, work hoặc dữ liệu đăng nhập lên kho mã.
+
+## 04/11/2026 - Sub Viet vao hinh cho tung link (da cai, chua phat hanh)
+- Tab moi link (Chien dich hang loat) co them hang: "Ghi Sub Viet vao hinh" + "Khung che Sub goc" + nut "Ap dung cho video chua xong".
+- Code: `teodub/campaign_tabs_ui.py` (hang dieu khien, `read_subtitles`, `apply_subtitles`), `teodub/campaign_settings.py` (`next_subtitle_settings`, `save_next_subtitle_settings` - chi doi Sub, giu cac cau hinh cho khac, dung co che next-settings co san).
+- Chi ap cho video chua xong; video dang lam va da xong giu nguyen. Chua co cach lam lai video da xong.
+- Test: 4 test moi trong test_campaign_next_settings + 1 trong test_campaign_link_tabs; 37 test chien dich qua.
+- Ban sao truoc khi cai: work/20261104-sub-viet-chien-dich/truoc-khi-cai/. Anh: work/20261104-sub-viet-chien-dich/anh/.
+- Chua phat hanh 1.0.2: cho chu du an noi "PHAT HANH" (hoac bam Phat hanh phien ban.cmd).

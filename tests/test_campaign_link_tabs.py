@@ -352,5 +352,34 @@ class LinkTabsUITests(unittest.TestCase):
             library.destroy()
 
 
+    def test_subtitle_row_shows_the_next_video_and_applies_only_after_confirmation(self):
+        from teodub.campaign_settings import next_subtitle_settings
+        a = self.create('https://www.douyin.com/video/111\nhttps://www.douyin.com/video/112', 'Kênh A')
+        link = self.area.links[str(a)]
+        link.refresh(full=True)
+        self.assertEqual(str(link.subtitle_button['state']), 'disabled')
+        link.burn.set(True)
+        link.box_label.set('Khung trắng · chữ đen')
+        link.subtitle_edited()
+        link.refresh(full=True)
+        self.assertTrue(link.burn.get(), 'a choice not applied yet must survive the 2 s refresh')
+        self.assertEqual(str(link.subtitle_button['state']), 'normal')
+        with patch('teodub.campaign_tabs_ui.messagebox.askyesno', return_value=False):
+            link.apply_subtitles()
+        manifest = campaign.read_json(a/'campaign.json')
+        self.assertFalse((a/'next-settings.json').exists())
+        with patch('teodub.campaign_tabs_ui.messagebox.askyesno', return_value=True) as ask:
+            link.apply_subtitles()
+        self.assertIn('khung trắng', ask.call_args.args[1])
+        self.assertEqual(next_subtitle_settings(a, manifest), dict(burn_subtitles=True, subtitle_box='white'))
+        self.assertFalse(link.subtitle_dirty)
+        self.assertEqual(str(link.subtitle_button['state']), 'disabled')
+        link.burn.set(False)
+        link.subtitle_edited()
+        with patch('teodub.campaign_tabs_ui.messagebox.askyesno', return_value=True):
+            link.apply_subtitles()
+        self.assertEqual(next_subtitle_settings(a, manifest), dict(burn_subtitles=False, subtitle_box='none'))
+
+
 if __name__ == '__main__':
     unittest.main()

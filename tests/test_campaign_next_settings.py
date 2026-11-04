@@ -244,3 +244,46 @@ class FutureSettingsUITests(unittest.TestCase):
         self.assertEqual(self.tab.creation_settings_frame.winfo_manager(), 'pack')
         self.tab.toggle_creation_settings()
         self.assertFalse(self.tab.creation_settings_frame.winfo_manager())
+
+
+class NextSubtitleSettingsTests(unittest.TestCase):
+    setUp = fixtures.CampaignTests.setUp
+    runner = fixtures.CampaignTests.runner
+
+    def test_subtitle_choice_reaches_unfinished_videos_and_keeps_other_settings(self):
+        from teodub.campaign_settings import next_subtitle_settings, save_next_subtitle_settings
+        manifest = campaign.read_json(self.directory/'campaign.json')
+        save_next_subtitle_settings(self.root, self.directory, False, 'none')
+        self.assertEqual(next_subtitle_settings(self.directory, manifest),
+                         dict(burn_subtitles=False, subtitle_box='none'))
+        save_next_subtitle_settings(self.root, self.directory, True, 'white')
+        self.assertEqual(next_subtitle_settings(self.directory, manifest),
+                         dict(burn_subtitles=True, subtitle_box='white'))
+        configs = []
+        def run(path, stop):
+            configs.append(campaign.read_json(path))
+            return self.runner(path, stop)
+        result = campaign.run_campaign(self.directory, runner=run)
+        self.assertEqual(result['status'], 'completed', result.get('message'))
+        for config in configs:
+            self.assertTrue(config['burn_subtitles'])
+            self.assertEqual(config['subtitle_box'], 'white')
+            self.assertEqual(config['voice'], self.settings['voice'])
+
+    def test_turning_it_off_and_a_second_change_keeps_the_first(self):
+        from teodub.campaign_settings import next_subtitle_settings, save_next_subtitle_settings, save_next_settings
+        save_next_settings(self.root, self.directory, dict(self.settings, voice_speed=1.15))
+        save_next_subtitle_settings(self.root, self.directory, True, 'black')
+        save_next_subtitle_settings(self.root, self.directory, False, 'black')
+        manifest = campaign.read_json(self.directory/'campaign.json')
+        self.assertEqual(next_subtitle_settings(self.directory, manifest),
+                         dict(burn_subtitles=False, subtitle_box='none'))
+        self.assertEqual(next_video_config(self.directory, manifest)['config']['voice_speed'], 1.15)
+
+    def test_finished_campaign_has_nothing_to_change(self):
+        from teodub.campaign_settings import next_subtitle_settings, save_next_subtitle_settings
+        campaign.run_campaign(self.directory, runner=self.runner)
+        manifest = campaign.read_json(self.directory/'campaign.json')
+        self.assertIsNone(next_subtitle_settings(self.directory, manifest))
+        with self.assertRaises(ValueError):
+            save_next_subtitle_settings(self.root, self.directory, True, 'white')

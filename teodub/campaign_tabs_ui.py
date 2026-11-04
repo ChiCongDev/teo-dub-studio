@@ -16,6 +16,7 @@ from tkinter import messagebox, ttk
 from teodub.campaign import read_json, requested_retries, totals
 from teodub.campaign_tracking import campaign_notice, tracking_row
 from teodub.common import atomic_json
+from teodub.subtitle_style import SUBTITLE_BOXES
 
 TABS_FILE = 'campaign-tabs.json'
 REFRESH_MS = 2000
@@ -237,12 +238,15 @@ class CampaignLinkTab(ttk.Frame):
         self.status = tk.StringVar(self)
         self.notice = tk.StringVar(self)
         self.message = tk.StringVar(self)
+        self.subtitle_note = tk.StringVar(self)
+        self.subtitle_dirty = False
+        self.subtitle_seen = None
         self.progress = tk.DoubleVar(self, value=0)
         self.build()
 
     def build(self):
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(5, weight=1)
+        self.rowconfigure(6, weight=1)
         ttk.Label(self, textvariable=self.header, font=('Segoe UI', 16, 'bold')).grid(row=0, column=0, sticky='w')
         ttk.Label(self, textvariable=self.source, wraplength=1000).grid(row=1, column=0, sticky='w', pady=(2, 4))
         ttk.Label(self, textvariable=self.status, wraplength=1000, foreground='#164b78').grid(row=2, column=0, sticky='w')
@@ -263,8 +267,25 @@ class CampaignLinkTab(ttk.Frame):
         ttk.Button(buttons, text='Đóng tab', command=self.close).pack(side='left', padx=(18, 0))
         self.channel_button = ttk.Button(buttons, text='Mở kênh', command=self.open_channel, state='disabled')
         self.channel_button.pack(side='left', padx=(6, 0))
+        # Owner 04/11/2026: Sub Việt in the picture, per link. It reaches only videos not finished yet.
+        subtitles = ttk.Frame(self)
+        subtitles.grid(row=5, column=0, sticky='ew', pady=(0, 6))
+        self.burn = tk.BooleanVar(self, value=False)
+        self.box_label = tk.StringVar(self, value=SUBTITLE_BOXES['none']['label'])
+        self.burn_check = ttk.Checkbutton(subtitles, text='Ghi Sub Việt vào hình', variable=self.burn,
+                                          command=self.subtitle_edited)
+        self.burn_check.pack(side='left')
+        ttk.Label(subtitles, text='Khung che Sub gốc').pack(side='left', padx=(16, 6))
+        self.box_picker = ttk.Combobox(subtitles, textvariable=self.box_label, state='readonly', width=22,
+                                       values=[item['label'] for item in SUBTITLE_BOXES.values()])
+        self.box_picker.pack(side='left')
+        self.box_picker.bind('<<ComboboxSelected>>', self.subtitle_edited)
+        self.subtitle_button = ttk.Button(subtitles, text='Áp dụng cho video chưa xong', command=self.apply_subtitles,
+                                          state='disabled')
+        self.subtitle_button.pack(side='left', padx=(12, 0))
+        ttk.Label(subtitles, textvariable=self.subtitle_note, foreground='#164b78').pack(side='left', padx=(10, 0))
         table = ttk.Frame(self)
-        table.grid(row=5, column=0, sticky='nsew')
+        table.grid(row=6, column=0, sticky='nsew')
         table.columnconfigure(0, weight=1)
         table.rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(table, columns=('name', 'title', 'url', 'state', 'percent', 'completed_at', 'posting',
@@ -286,8 +307,8 @@ class CampaignLinkTab(ttk.Frame):
         for tag, color in (('completed', '#237637'), ('review_required', '#8a6000'), ('retrying', '#8a6000'),
                            ('failed', '#b12727'), ('running', '#065ca8'), ('cancelled', '#777777')):
             self.tree.tag_configure(tag, foreground=color)
-        ttk.Progressbar(self, variable=self.progress, maximum=100).grid(row=6, column=0, sticky='ew', pady=6)
-        ttk.Label(self, textvariable=self.message, wraplength=1000).grid(row=7, column=0, sticky='w')
+        ttk.Progressbar(self, variable=self.progress, maximum=100).grid(row=7, column=0, sticky='ew', pady=6)
+        ttk.Label(self, textvariable=self.message, wraplength=1000).grid(row=8, column=0, sticky='w')
         ttk.Label(self, wraplength=1000, text=(
             'Mỗi tab là một link. "Dừng link này" chỉ dừng link này, các link khác vẫn chạy. Máy làm một video '
             'một lúc nên các link đang chạy làm xen kẽ, mỗi link một video. "Chạy" bỏ qua video lỗi; "Thử lại video '
@@ -295,7 +316,7 @@ class CampaignLinkTab(ttk.Frame):
             '"Lấy thêm video mới…" đọc lại kênh của link và chỉ thêm vào cuối link những video chưa có trong chiến dịch nào. '
             '"Mở kênh" mở link kênh trong Chrome của Tèo (đã đăng nhập Douyin) để bạn xem; đóng cửa sổ Chrome đó khi xong. '
             'Đóng tab không dừng link. Nhấp đôi một video để mở thành phẩm hoặc xem lỗi.')).grid(
-                row=8, column=0, sticky='w', pady=(4, 0))
+                row=9, column=0, sticky='w', pady=(4, 0))
 
     def title(self, manifest=None, counts=None, word=''):
         manifest = manifest or self.manifest
@@ -361,6 +382,7 @@ class CampaignLinkTab(ttk.Frame):
         self.more_button.configure(state='normal' if channel and not busy else 'disabled')
         # Owner 31/10/2026: opening the channel to look needs only a channel link; it never touches a running video.
         self.channel_button.configure(state='normal' if channel else 'disabled')
+        self.read_subtitles(manifest)
         if time.monotonic()-self.slow_at >= SLOW_S or not self.posting:
             self.slow_at = time.monotonic()
             self.read_slow_columns(manifest)
@@ -378,6 +400,54 @@ class CampaignLinkTab(ttk.Frame):
                 self.tree.item(key, values=values, tags=tags)
             else:
                 self.tree.insert('', 'end', iid=key, values=values, tags=tags)
+
+    def read_subtitles(self, manifest):
+        """Show what the next video will use; never overwrite a choice the owner is still making."""
+        from teodub.campaign_settings import next_subtitle_settings
+        try:
+            current = next_subtitle_settings(self.directory, manifest)
+        except (OSError, ValueError, TypeError, KeyError):
+            current = None
+        self.subtitle_seen = current
+        if current is None:
+            self.burn_check.configure(state='disabled')
+            self.box_picker.configure(state='disabled')
+            self.subtitle_button.configure(state='disabled')
+            self.subtitle_note.set('Không còn video chưa xong.')
+            return
+        self.burn_check.configure(state='normal')
+        self.box_picker.configure(state='readonly' if self.burn.get() else 'disabled')
+        if not self.subtitle_dirty:
+            self.burn.set(current['burn_subtitles'])
+            self.box_label.set(SUBTITLE_BOXES[current['subtitle_box']]['label'])
+            self.box_picker.configure(state='readonly' if current['burn_subtitles'] else 'disabled')
+            self.subtitle_note.set('')
+        self.subtitle_button.configure(state='normal' if self.subtitle_dirty else 'disabled')
+
+    def subtitle_edited(self, _event=None):
+        self.subtitle_dirty = True
+        self.box_picker.configure(state='readonly' if self.burn.get() else 'disabled')
+        self.subtitle_button.configure(state='normal')
+        self.subtitle_note.set('Chưa áp dụng.')
+
+    def apply_subtitles(self):
+        from teodub.campaign_settings import save_next_subtitle_settings
+        box = next((key for key, item in SUBTITLE_BOXES.items() if item['label'] == self.box_label.get()), 'none')
+        burn = bool(self.burn.get())
+        question = ('Ghi Sub Việt vào hình' + (' với '+SUBTITLE_BOXES[box]['label'].lower() if box != 'none' else ', không khung')
+                    if burn else 'Không ghi Sub Việt vào hình (chỉ có Sub bật/tắt)')
+        if not messagebox.askyesno('Sub Việt', question+'\n\nÁp dụng cho các video chưa xong của link này '
+                                   '(kể cả video lỗi khi thử lại). Video đang làm và video đã xong giữ nguyên. Áp dụng?',
+                                   parent=self):
+            return
+        try:
+            save_next_subtitle_settings(self.studio.data_dir, self.directory, burn, box)
+        except (OSError, ValueError) as exc:
+            self.message.set('Chưa áp dụng Sub: '+str(exc))
+            return
+        self.subtitle_dirty = False
+        self.message.set('Đã lưu. Sub mới áp dụng cho các video chưa xong; video đang làm làm xong theo cấu hình cũ.')
+        self.refresh(full=True)
 
     def read_slow_columns(self, manifest):
         from teodub.campaign_posting import campaign_posting_statuses

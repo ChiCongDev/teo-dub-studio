@@ -128,6 +128,33 @@ def save_next_voice_settings(data_dir, directory, selection):
     return save_next_settings(data_dir, directory, settings)
 
 
+def next_subtitle_settings(directory, manifest):
+    """Sub Việt in the picture and the box, as the link's next video will make them; None when nothing is left."""
+    from teodub.campaign_preview import next_video_config
+    from teodub.subtitle_style import validate_subtitle_style
+    preview = next_video_config(directory, manifest, retry_failed=True)
+    if preview is None:
+        return None
+    subtitles = validate_subtitle_style(preview['config'])
+    return dict(burn_subtitles=subtitles['burn_subtitles'], subtitle_box=subtitles.get('subtitle_box', 'none'))
+
+
+def save_next_subtitle_settings(data_dir, directory, burn_subtitles, subtitle_box):
+    """Owner 04/11/2026: switch Sub Việt in the picture per link; every other pending setting stays as it is."""
+    from teodub.campaign_batch import _campaign_path
+    from teodub.campaign import read_json
+    from teodub.campaign_preview import next_video_config
+    directory = _campaign_path(Path(data_dir).resolve(), Path(directory).resolve())
+    manifest = read_json(directory/'campaign.json')
+    preview = next_video_config(directory, manifest, retry_failed=True, active=True)
+    if preview is None:
+        raise ValueError('Chiến dịch đã hoàn tất; không còn video để áp dụng Sub mới.')
+    update = next_settings(directory)
+    settings = dict(update['settings'] if update else preview['config'])
+    settings.update(burn_subtitles=burn_subtitles, subtitle_box=subtitle_box)
+    return save_next_settings(data_dir, directory, settings)
+
+
 def proposed_config(directory, item, config, update):
     from teodub.campaign import CONFIG_KEYS
     if not update:
