@@ -1,6 +1,13 @@
 """Loại trừ video (owner 04/11/2026): videos of a link marked by their links are never dubbed, do not hold the link back, and come
 back with "Bỏ loại trừ". Local fixtures only; no worker process, network, Chrome or AI."""
-from teodub import campaign, campaign_append, campaign_batch, campaign_exclude
+from pathlib import Path
+import time
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+from teodub import campaign, campaign_append, campaign_batch, campaign_exclude, page_schedule
+from teodub.facebook_accounts import FacebookAccounts
+from teodub.page_schedule import PageScheduleController, campaign_video_source
 from teodub.campaign_tracking import tracking_row
 from teodub.pipeline import _job_lock
 from tests.test_campaign_rotation import Fixture, SETTINGS
@@ -36,9 +43,10 @@ class ExcludeTests(Base):
         campaign._run_campaign_locked(a, runner=self.video, max_videos=1)  # Video 1 done
         before = (a/'campaign.json').read_bytes()
         plan = campaign_exclude.build_plan(a, f'{link(1)} {link(2)} {link(2)} {link(99)} nonsense')
-        self.assertEqual([(e['number'], e['kind']) for e in plan['entries']], [(1, 'skip'), (2, 'mark'), (None, 'skip')])
+        self.assertEqual([(e['number'], e['kind'], e['nopost']) for e in plan['entries']],
+                         [(1, 'mark', True), (2, 'mark', False), (None, 'skip', False)])  # A finished video becomes Không đăng.
         self.assertEqual(plan['unreadable'], ['nonsense'])
-        self.assertEqual(plan['marked'], 1)
+        self.assertEqual(plan['marked'], 2)
         self.assertEqual((a/'campaign.json').read_bytes(), before)
 
     def test_excluded_videos_are_never_made_and_the_link_completes_without_them(self):
@@ -55,16 +63,33 @@ class ExcludeTests(Base):
         campaign_batch._completed_unchanged(a, manifest)  # A finished link with excluded videos still verifies.
         self.assertEqual(tracking_row(manifest['items'][1])[3], 'Đã loại trừ')
 
-    def test_a_finished_video_is_not_touched_and_a_retry_does_not_bring_an_excluded_one_back(self):
+    def test_a_finished_video_is_never_made_again_and_a_retry_does_not_bring_an_excluded_one_back(self):
         a = self.make_link(3)
         self.outcomes[('A', 2)] = dict(status='failed', message='lỗi thử', outputs={})
         campaign._run_campaign_locked(a, runner=self.video)
-        self.assertEqual(campaign_exclude.apply(a, [1, 2])['changed'], [2])  # 1 is finished, 2 failed -> excluded
+        before = campaign.read_json(a/'campaign.json')['items'][0]
+        self.assertEqual(campaign_exclude.apply(a, [1, 2])['changed'], [1, 2])  # 1 finished -> Không đăng, 2 failed -> excluded
         self.videos.clear()
         campaign._run_campaign_locked(a, retry_failed=True, runner=self.video)
         self.assertEqual(self.videos, [])
         self.assertEqual(self.numbers(a), {1: 'completed', 2: 'excluded', 3: 'completed'})
+        item = campaign.read_json(a/'campaign.json')['items'][0]
+        self.assertTrue(item.pop('no_post'))
+        self.assertEqual(item, before)  # Output, hashes and status of the finished video are exactly as they were.
         self.assertEqual(campaign.read_json(a/'campaign.json')['status'], 'completed')
+
+    def test_a_finished_video_marked_not_to_post_is_refused_by_page_posting_and_restore_lifts_it(self):
+        a = self.make_link(2)
+        campaign._run_campaign_locked(a, runner=self.video)
+        self.assertEqual(page_schedule.campaign_video_source(self.root, a, 1)['number'], 1)
+        campaign_exclude.apply(a, [1])
+        with self.assertRaises(ValueError):
+            page_schedule.campaign_video_source(self.root, a, 1)
+        self.assertEqual(page_schedule.campaign_video_source(self.root, a, 2)['number'], 2)  # The other one is still free.
+        campaign_batch._completed_unchanged(a, campaign.read_json(a/'campaign.json'))
+        self.assertEqual(campaign_exclude.apply(a, [1], restore=True)['changed'], [1])
+        self.assertEqual(campaign.read_json(a/'campaign.json')['status'], 'completed')  # Lifting it does not reopen the link.
+        self.assertEqual(page_schedule.campaign_video_source(self.root, a, 1)['number'], 1)
 
     def test_restore_brings_a_video_back_and_reopens_a_completed_link(self):
         a = self.make_link(2)
@@ -110,3 +135,43 @@ class ExcludeTests(Base):
             campaign_exclude.apply(a, [])
         with _job_lock(a):
             self.assertEqual(campaign_exclude.apply(a, [1])['mode'], 'request')
+
+
+class NotToPostTests(Base):
+    """A finished video set to Không đăng: its Page schedules that were never sent are cancelled, the others only reported."""
+    def setUp(self):
+        super().setUp()
+        self.accounts = FacebookAccounts(self.root)
+        self.account = self.accounts.add_account('Fixture A')['id']
+        self.page = self.accounts.save_page(self.account, 'Fixture Page', 'facebook.com/profile.php?id=100', '100')['id']
+        owner = SimpleNamespace(studio=SimpleNamespace(data_dir=self.root), sessions={}, status=Mock())
+        owner.submit_page_browser = Mock(return_value='request')
+        self.controller = PageScheduleController(owner)
+        self.addCleanup(self.controller.close)
+
+    def schedule(self, directory, number, hours):
+        source = campaign_video_source(self.root, directory, number)
+        return self.controller.store.create(self.account, self.page, source, f'Caption {number}', '#tag',
+                                            time.time()+hours*3600)['id']
+
+    def test_unsent_schedules_are_cancelled_and_sent_ones_are_only_reported(self):
+        a = self.make_link(4)
+        campaign._run_campaign_locked(a, runner=self.video)
+        armed, saved, sent, other = (self.schedule(a, n, n+1) for n in (1, 2, 3, 4))
+        self.controller.start(armed)
+        self.controller.store.update(sent, state='needs_attention', attempted_at='synthetic attempted')
+        plan = campaign_exclude.build_plan(a, f'{link(1)} {link(2)} {link(3)}')
+        self.assertEqual({e['number']: [s['unsent'] for s in e['schedules']] for e in plan['entries']}, {1: [True], 2: [True], 3: [False]})
+        campaign_exclude.apply(a, [1, 2, 3])
+        result = campaign_exclude.cancel_unsent(self.controller, a.name, [1, 2, 3])
+        self.assertEqual((len(result['cancelled']), [state for _, state in result['kept']], result['failed']),
+                         (2, ['needs_attention'], []))
+        store = self.controller.store
+        self.assertEqual([store.get(i)['state'] for i in (armed, saved, sent, other)],
+                         ['cancelled', 'cancelled', 'needs_attention', 'scheduled'])  # Video 4 was not asked for: untouched.
+        self.assertNotIn(armed, self.controller.active)
+        self.controller.owner.submit_page_browser.assert_not_called()
+        with self.assertRaises(ValueError):  # Nothing can schedule the video again until the mark is lifted.
+            self.schedule(a, 1, 9)
+        campaign_exclude.apply(a, [1], restore=True)
+        self.assertEqual(store.get(self.schedule(a, 1, 9))['state'], 'scheduled')

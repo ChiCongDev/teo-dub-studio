@@ -314,7 +314,7 @@ class PageAIStore:
                 data = read_json(folder/'campaign.json')
                 if data.get('id') != folder.name or data.get('archived_at'):
                     continue
-                count = sum(i.get('status') == 'completed' for i in data.get('items', []) if isinstance(i, dict))
+                count = sum(i.get('status') == 'completed' and not i.get('no_post') for i in data.get('items', []) if isinstance(i, dict))
                 rows.append(dict(id=folder.name, name=str(data.get('name', ''))[:150], completed=count))
             except (ValueError, OSError, TypeError):
                 continue
@@ -432,7 +432,7 @@ class PageAIStore:
             for item in data.get('items',[])[:1000]:
                 key=campaign+':'+str(item.get('number'))
                 subtitle=(item.get('outputs') or {}).get('subtitles')
-                if item.get('status')=='completed' and key not in used and subtitle and Path(subtitle).is_file():
+                if item.get('status')=='completed' and not item.get('no_post') and key not in used and subtitle and Path(subtitle).is_file():
                     keys.append(key)
         return keys
 
@@ -547,7 +547,7 @@ class PageAIStore:
                 raise ValueError('Nguồn chiến dịch đã thay đổi.')
             for item in data.get('items', [])[:1000]:
                 key = campaign+':'+str(item.get('number'))
-                if item.get('status') != 'completed' or key in used:
+                if item.get('status') != 'completed' or item.get('no_post') or key in used:
                     continue
                 source = self.plans._video_source(key)
                 dialogue = ''

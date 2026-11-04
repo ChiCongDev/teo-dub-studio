@@ -53,6 +53,8 @@ def campaign_video_source(data_dir, directory, number):
     item = next((item for item in manifest['items'] if item['number'] == int(number)), None)
     if not item or item.get('status') != 'completed':
         raise ValueError('Chỉ xếp lịch video đã hoàn tất. Video còn cần duyệt bản dịch hoặc đang xử lý phải kiểm tra trước.')
+    if item.get('no_post'):  # 04/11/2026 (owner): "Loại trừ" on a finished video also means never posted.
+        raise ValueError('Video này đã được đặt Không đăng (Loại trừ video). Bỏ loại trừ ở tab chiến dịch nếu muốn đăng.')
     job = directory/'jobs'/f'{int(number):04}'
     if Path(item['job']).resolve() != job or job.is_symlink():
         raise ValueError('Phiên video không khớp chiến dịch.')

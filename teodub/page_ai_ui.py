@@ -450,7 +450,7 @@ class PageAIPanel(ttk.Frame):
                 data=read_json(self.store.data_dir/'campaigns'/row['id']/'campaign.json')
                 destination=Path(data['output_dir']).resolve()
                 for item in data.get('items',[])[:1000]:
-                    if not isinstance(item,dict) or item.get('status')!='completed':
+                    if not isinstance(item,dict) or item.get('status')!='completed' or item.get('no_post'):
                         continue
                     key=row['id']+':'+str(item.get('number'))
                     try:

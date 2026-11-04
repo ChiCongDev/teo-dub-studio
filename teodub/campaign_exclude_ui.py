@@ -3,9 +3,9 @@ subtitles them. "Kiểm tra" only reads; nothing changes until "Loại trừ" or
 import tkinter as tk
 from tkinter import ttk
 
-from teodub.campaign import EXCLUDED
-from teodub.campaign_exclude import apply, build_plan, pending_requests
+from teodub.campaign_exclude import apply, build_plan, cancel_unsent
 from teodub.campaign_tracking import STATUS
+from teodub.page_schedule import STATE_LABELS, display_time
 
 
 class ExcludeVideosDialog(tk.Toplevel):
@@ -23,9 +23,10 @@ class ExcludeVideosDialog(tk.Toplevel):
         shell.pack(fill='both', expand=True)
         ttk.Label(shell, text=f'Loại trừ video khỏi "{self.name}"', font=('Segoe UI', 16, 'bold')).pack(anchor='w')
         ttk.Label(shell, wraplength=840, text='Dán link video Douyin (mỗi dòng một link, hoặc nhiều link cách nhau bằng dấu cách) rồi bấm Kiểm tra. '
-                  'Video bị loại trừ sẽ KHÔNG bao giờ được lồng tiếng hay Vietsub, không giữ link lại khi hoàn tất, và "Lấy thêm video mới…" '
-                  'không thêm lại. Video đã xong giữ nguyên. Link đang chạy vẫn nhận: áp dụng từ video tiếp theo, video đang làm dở vẫn '
-                  'làm xong. Không xóa gì; muốn làm lại thì dán link và bấm Bỏ loại trừ.').pack(anchor='w', pady=(4, 8))
+                  'Video chưa xong bị loại trừ sẽ KHÔNG bao giờ được lồng tiếng hay Vietsub, không giữ link lại khi hoàn tất, và "Lấy thêm '
+                  'video mới…" không thêm lại. Video ĐÃ XONG không bị làm lại: nó được đặt KHÔNG ĐĂNG (Tèo không bao giờ xếp lịch đăng nó, '
+                  'lịch chưa gửi của nó bị bỏ; lịch đã gửi lên Facebook giữ nguyên, chỉ báo). Link đang chạy vẫn nhận: áp dụng từ video tiếp '
+                  'theo, video đang làm dở vẫn làm xong. Không xóa gì; muốn đổi ý thì dán link và bấm Bỏ loại trừ.').pack(anchor='w', pady=(4, 8))
         # The buttons and the notice are packed first, at the bottom, so a short window shrinks the lists, never the buttons.
         actions = ttk.Frame(shell)
         actions.pack(side='bottom', fill='x')
@@ -76,7 +77,15 @@ class ExcludeVideosDialog(tk.Toplevel):
         verb = 'bỏ loại trừ' if restore else 'loại trừ'
         lines = []
         for entry in plan['entries']:
-            if entry['kind'] == 'mark':
+            if entry['kind'] == 'mark' and entry['nopost']:
+                state = STATUS.get(entry['status'], entry['status'])
+                lines.append(f"✓ Video {entry['number']} ({state}) — " + ('sẽ bỏ dấu KHÔNG ĐĂNG (lịch đã bỏ không tự quay lại; thêm lại trong Quản lý Page nếu cần).'
+                             if restore else 'đã xong: sẽ đặt KHÔNG ĐĂNG (giữ video, không lồng tiếng lại).'))
+                for schedule in entry['schedules']:
+                    when = display_time(schedule['due_at'])
+                    lines.append(f"      ↳ lịch đăng {when}: " + (f"chưa gửi → sẽ BỎ lịch này." if schedule['unsent'] else
+                                 f"{STATE_LABELS.get(schedule['state'], schedule['state'])} → giữ nguyên, Tèo chỉ báo; kiểm tra trên Facebook."))
+            elif entry['kind'] == 'mark':
                 lines.append(f"✓ Video {entry['number']} ({STATUS.get(entry['status'], entry['status'])}) — sẽ {verb}.")
             elif entry['number'] is None:
                 lines.append(f"✕ …{entry['id'][-8:]} — {entry['reason']}")
@@ -106,11 +115,31 @@ class ExcludeVideosDialog(tk.Toplevel):
                        '(video đang làm dở vẫn làm xong).')
         else:
             message = f"Đã {verb} {len(outcome['changed'])} video."
+        if not restore:
+            message += self.cancel_schedules([entry['number'] for entry in plan['entries'] if entry['kind'] == 'mark' and entry['nopost']])
         self.tab.message.set(message)
         self.status.set(message)
         self.exclude_button.configure(state='disabled')
         self.studio.refresh_buttons()
         self.tab.refresh(full=True)
+
+    def cancel_schedules(self, numbers):
+        """Choice A of 04/11/2026: the Page schedules of the videos just set to Không đăng that were never sent are cancelled."""
+        if not numbers:
+            return ''
+        get = getattr(getattr(self.studio, 'facebook_tab', None), 'get_page_scheduler', None)
+        if get is None:
+            return ' Chưa bỏ được lịch đăng của các video đã xong: mở tab Quản lý Page rồi dán lại link và bấm Loại trừ.'
+        try:
+            result = cancel_unsent(get(), self.directory.name, numbers)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return ' Chưa bỏ được lịch đăng: '+str(exc)
+        text = f" Đã bỏ {len(result['cancelled'])} lịch đăng chưa gửi." if result['cancelled'] else ''
+        if result['kept']:
+            text += f" {len(result['kept'])} lịch đã gửi hoặc đang xử lý được giữ nguyên; kiểm tra trên Facebook."
+        if result['failed']:
+            text += f" {len(result['failed'])} lịch chưa bỏ được: {result['failed'][0][1]}"
+        return text
 
     def close(self):
         self.closed = True

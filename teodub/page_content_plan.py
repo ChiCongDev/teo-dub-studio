@@ -269,7 +269,7 @@ class ContentPlanStore:
                 if manifest.get('archived_at'):
                     continue
                 candidates = [item for item in manifest.get('items', [])[:1000]
-                    if isinstance(item, dict) and item.get('status') == 'completed']
+                    if isinstance(item, dict) and item.get('status') == 'completed' and not item.get('no_post')]
                 if candidates:
                     groups.append((str(manifest.get('name', ''))[:150], directory, iter(candidates)))
             except (OSError, ValueError, KeyError, TypeError):

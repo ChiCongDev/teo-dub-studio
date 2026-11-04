@@ -150,9 +150,11 @@ def is_running(directory):
 
 def mark_excluded(manifest, numbers, restore=False):
     """04/11/2026 (owner): mark these videos Loại trừ (or bring them back with restore=True). Edits `manifest` in place and
-    returns the numbers that changed. A finished video is never touched; a running one is marked only by a caller that knows
-    no worker has it (the desktop holding the lock, or a worker between two videos)."""
-    wanted, changed = {number for number in numbers if type(number) is int}, []
+    returns the numbers that changed. A finished video is never dubbed again: it only gets (or loses) `no_post`, "Không đăng",
+    which Page posting honours. A running one is marked only by a caller that knows no worker has it (the desktop holding the
+    lock, or a worker between two videos)."""
+    wanted, changed, remade = {number for number in numbers if type(number) is int}, [], 0
+    stamp = datetime.now().astimezone().isoformat(timespec='seconds')
     for item in manifest['items']:
         if item['number'] not in wanted:
             continue
@@ -161,17 +163,24 @@ def mark_excluded(manifest, numbers, restore=False):
                 item.update(status='pending', message='Chờ xử lý (đã bỏ loại trừ)')
                 item.pop('excluded_at', None)
                 changed.append(item['number'])
-        elif item['status'] not in DONE and item['status'] != EXCLUDED:
-            item.update(status=EXCLUDED, message='Đã loại trừ: không lồng tiếng hay Vietsub video này.',
-                        excluded_at=datetime.now().astimezone().isoformat(timespec='seconds'))
+                remade += 1
+            elif item.get('no_post'):  # A finished video: only its "Không đăng" mark goes; nothing is made again.
+                item.pop('no_post')
+                changed.append(item['number'])
+        elif item['status'] in DONE:
+            if not item.get('no_post'):  # 04/11/2026: finished but never posted. The output stays; Page posting skips it.
+                item['no_post'] = stamp
+                changed.append(item['number'])
+        elif item['status'] != EXCLUDED:
+            item.update(status=EXCLUDED, message='Đã loại trừ: không lồng tiếng hay Vietsub video này.', excluded_at=stamp)
             item.pop('retry_once', None)
             changed.append(item['number'])
     if changed and manifest.get('status') != 'running':
         everything = all(x['status'] in DONE or x['status'] == EXCLUDED for x in manifest['items'])
         if not restore and everything:
             manifest['status'], manifest['message'] = 'completed', 'Đã hoàn tất: các video còn lại đã xong hoặc được loại trừ.'
-        elif restore and manifest.get('status') == 'completed':
-            manifest['status'], manifest['message'] = 'paused', f'Đã bỏ loại trừ {len(changed)} video; bấm Chạy để làm tiếp.'
+        elif restore and remade and manifest.get('status') == 'completed':
+            manifest['status'], manifest['message'] = 'paused', f'Đã bỏ loại trừ {remade} video; bấm Chạy để làm tiếp.'
     return changed
 
 

@@ -1,7 +1,8 @@
 """Loại trừ video on a link's tab (owner 04/11/2026): paste video links, and Tèo marks those videos of THIS link "Đã loại trừ" — they
 are never dubbed or subtitled, do not hold the link back from completing, and "Lấy thêm video mới…" does not add them again.
-Nothing is deleted: the Video number, job folder and any downloaded file stay. A finished video is never touched. "Bỏ loại trừ"
-brings a video back as pending. No AI call.
+Nothing is deleted: the Video number, job folder and any downloaded file stay. A video already finished is not made again; it is
+marked `no_post` ("Không đăng"): Page posting never lists or schedules it, and its Page schedules not sent yet are cancelled
+(`cancel_unsent`; one already sent is left alone). "Bỏ loại trừ" brings a video back as pending, or lifts "Không đăng". No AI call.
 
 While the link's worker runs it is the only writer of campaign.json, so only a request (`exclude-*.json` in the campaign folder)
 is left; the worker marks the videos between two videos (`campaign.absorb_exclusions`): a video already being made is made to the
@@ -48,27 +49,68 @@ def build_plan(directory, text, *, restore=False):
     entries = []
     for ident in ids:
         item = by_id.get(ident)
-        entry = dict(id=ident, number=None, status=None, kind='skip', reason='')
+        entry = dict(id=ident, number=None, status=None, kind='skip', reason='', nopost=False, schedules=[])
         if item is None:
             entry['reason'] = 'Link này không có video đó.'
         else:
             entry.update(number=item['number'], status=item['status'])
             if restore:
-                if item['status'] == EXCLUDED:
-                    entry['kind'] = 'mark'
+                if item['status'] == EXCLUDED or item.get('no_post'):
+                    entry.update(kind='mark', nopost=item['status'] in DONE)
                 else:
                     entry['reason'] = 'Video này chưa bị loại trừ.'
             elif item['status'] == EXCLUDED:
                 entry['reason'] = 'Đã loại trừ từ trước.'
             elif item['status'] in DONE:
-                entry['reason'] = 'Đã xong; giữ nguyên.'
+                # A finished video is never dubbed again; "loại trừ" means Không đăng: it is never posted from now on.
+                if item.get('no_post'):
+                    entry['reason'] = 'Đã đặt Không đăng từ trước.'
+                else:
+                    entry.update(kind='mark', nopost=True)
             elif item['status'] == 'running' and working:
                 entry['reason'] = 'Đang làm dở; Tèo làm xong video này (không loại trừ được).'
             else:
                 entry['kind'] = 'mark'
+            if entry['nopost'] and not restore:
+                entry['schedules'] = schedules_of(directory.parent.parent, manifest['id'], item['number'])
         entries.append(entry)
     return dict(entries=entries, unreadable=unreadable, restore=restore,
                 marked=sum(entry['kind'] == 'mark' for entry in entries))
+
+
+UNSENT = {'scheduled', 'armed', 'paused', 'needs_attention'}  # With no attempt yet: the same rows "Bỏ lịch chưa gửi" accepts.
+
+
+def schedules_of(data_dir, campaign_id, number):
+    """Read only: the Page schedules of one campaign video, as dict(id, label, state, due_at, unsent). Cancelled and removed
+    ones are not listed."""
+    from teodub.page_schedule import PageScheduleStore
+    store = PageScheduleStore(data_dir)
+    key = f'{campaign_id}:{number}'
+    return [dict(id=row['id'], label=row['source'].get('label', ''), state=row['state'], due_at=row['due_at'],
+                 unsent=not row['attempted_at'] and row['state'] in UNSENT)
+            for row in store.list() if row['source_key'] == key and row['state'] not in ('cancelled', 'removed')]
+
+
+def cancel_unsent(controller, campaign_id, numbers):
+    """04/11/2026 (owner, choice A): cancel the Page schedules of these videos that Tèo has never sent anywhere ("Bỏ lịch chưa
+    gửi", history and video kept). One already sent, being sent or published is left alone and only reported.
+    Returns dict(cancelled=[label], kept=[(label, state)], failed=[(label, reason)])."""
+    keys = {f'{campaign_id}:{number}' for number in numbers}
+    result = dict(cancelled=[], kept=[], failed=[])
+    for row in controller.store.list():
+        if row['source_key'] not in keys or row['state'] in ('cancelled', 'removed'):
+            continue
+        label = row['source'].get('label', row['id'])
+        if row['attempted_at'] or row['state'] not in UNSENT:
+            result['kept'].append((label, row['state']))
+            continue
+        try:
+            controller.cancel(row['id'])
+            result['cancelled'].append(label)
+        except (OSError, ValueError, RuntimeError) as exc:
+            result['failed'].append((label, str(exc)))
+    return result
 
 
 def apply(directory, numbers, *, restore=False):

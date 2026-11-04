@@ -24,7 +24,8 @@ def campaign_choices(data_dir):
             if manifest.get('id') != directory.name or manifest.get('archived_at'):
                 continue
             items = [dict(number=item['number'], title=str(item.get('title', ''))[:160])
-                     for item in manifest.get('items', []) if isinstance(item, dict) and item.get('status') == 'completed']
+                     for item in manifest.get('items', [])
+                     if isinstance(item, dict) and item.get('status') == 'completed' and not item.get('no_post')]
             if items:
                 result.append(dict(directory=str(directory), name=manifest['name'], items=items))
         except (OSError, ValueError, KeyError, TypeError):
