@@ -18,6 +18,8 @@ from teodub.pipeline import _job_lock
 from teodub.wording import validate_wording
 
 DONE = {'completed', 'review_required'}
+EXCLUDED = 'excluded'  # 04/11/2026 (owner): a video the owner marked "Loại trừ"; never dubbed or subtitled, does not hold the link back.
+EXCLUDE_REQUESTS = 'exclude-*.json'  # Left by the desktop while the link's worker runs; the worker marks the videos between two videos.
 CONFIG_KEYS = ('voice_provider', 'voice', 'reference_audio', 'reference_sha256',
                'reading_style', 'voice_speed', 'speed', 'original_gain', 'voice_gain',
                'asr_model', 'translation_model', 'translation_effort', 'tts_model',
@@ -27,7 +29,25 @@ CONFIG_KEYS = ('voice_provider', 'voice', 'reference_audio', 'reference_sha256',
 
 def should_process(item, *, retry_failed=False):
     """One selection rule shared by the worker and its read-only GUI preview."""
-    return item['status'] not in DONE and (retry_failed or item['status'] != 'failed' or item.get('retry_once') is True)
+    return (item['status'] not in DONE and item['status'] != EXCLUDED
+            and (retry_failed or item['status'] != 'failed' or item.get('retry_once') is True))
+
+
+def likes_of(row):
+    value = row.get('likes')
+    return value if type(value) is int and value >= 0 else None
+
+
+def likes_first(rows):
+    """Most liked first; a row without a known count goes after the others; ties keep their order (a stable sort)."""
+    return sorted(rows, key=lambda row: (likes_of(row) is None, -(likes_of(row) or 0)))
+
+
+def run_order(manifest):
+    """03/11/2026 (owner): the order videos are picked in. `order: likes` = most liked first WITHOUT renumbering: numbers, job
+    folders, outputs and Page schedules stay tied to their Video number, only the picking order changes."""
+    items = manifest['items']
+    return likes_first(items) if manifest.get('order') == 'likes' else items
 
 
 def read_json(path):
@@ -128,16 +148,62 @@ def is_running(directory):
         return True
 
 
+def mark_excluded(manifest, numbers, restore=False):
+    """04/11/2026 (owner): mark these videos Loại trừ (or bring them back with restore=True). Edits `manifest` in place and
+    returns the numbers that changed. A finished video is never touched; a running one is marked only by a caller that knows
+    no worker has it (the desktop holding the lock, or a worker between two videos)."""
+    wanted, changed = {number for number in numbers if type(number) is int}, []
+    for item in manifest['items']:
+        if item['number'] not in wanted:
+            continue
+        if restore:
+            if item['status'] == EXCLUDED:
+                item.update(status='pending', message='Chờ xử lý (đã bỏ loại trừ)')
+                item.pop('excluded_at', None)
+                changed.append(item['number'])
+        elif item['status'] not in DONE and item['status'] != EXCLUDED:
+            item.update(status=EXCLUDED, message='Đã loại trừ: không lồng tiếng hay Vietsub video này.',
+                        excluded_at=datetime.now().astimezone().isoformat(timespec='seconds'))
+            item.pop('retry_once', None)
+            changed.append(item['number'])
+    if changed and manifest.get('status') != 'running':
+        everything = all(x['status'] in DONE or x['status'] == EXCLUDED for x in manifest['items'])
+        if not restore and everything:
+            manifest['status'], manifest['message'] = 'completed', 'Đã hoàn tất: các video còn lại đã xong hoặc được loại trừ.'
+        elif restore and manifest.get('status') == 'completed':
+            manifest['status'], manifest['message'] = 'paused', f'Đã bỏ loại trừ {len(changed)} video; bấm Chạy để làm tiếp.'
+    return changed
+
+
+def absorb_exclusions(directory, manifest):
+    """Apply the requests the desktop left while this campaign's worker ran (`exclude-*.json`), then save the manifest and only
+    after that remove them (a crash in between applies them again, no harm). Returns the numbers that changed."""
+    changed = []
+    paths = sorted(Path(directory).glob(EXCLUDE_REQUESTS))
+    for path in paths:
+        try:
+            request = read_json(path)
+            changed += mark_excluded(manifest, request.get('numbers', []), restore=request.get('action') == 'restore')
+        except (OSError, ValueError, AttributeError, TypeError):
+            continue  # A damaged request is dropped below; nothing is marked from it.
+    if changed:
+        atomic_json(Path(directory)/'campaign.json', manifest)
+    for path in paths:
+        path.unlink(missing_ok=True)
+    return changed
+
+
 def totals(manifest):
     items = manifest['items']
-    return dict(total=len(items), completed=sum(x['status'] in DONE for x in items),
+    excluded = sum(x['status'] == EXCLUDED for x in items)
+    return dict(total=len(items)-excluded, excluded=excluded, completed=sum(x['status'] in DONE for x in items),
                 failed=sum(x['status'] == 'failed' for x in items),
                 running=sum(x['status'] == 'running' for x in items),
                 waiting=sum(x['status'] in ('pending', 'cancelled') for x in items))
 
 
 def create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery=None, *, prevent_duplicates=False,
-                    progress=None):
+                    progress=None, order=None):
     """Serialize GUI creation and reuse an identical, recently created campaign."""
     from teodub.drive_delivery import drive_delivery_settings
     settings = dict(settings, wording=validate_wording(settings),
@@ -145,12 +211,14 @@ def create_campaign(data_dir, name, records, settings, original_dir, output_dir,
     if settings['drive_upload']['enabled']:
         settings['drive_data_dir'] = str(Path(data_dir).resolve())
     if not prevent_duplicates:
-        return _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery, progress)
+        return _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery, progress, order)
     records = list(records)
     request = dict(name=name.strip(), records=records,
                    settings={key: settings[key] for key in CONFIG_KEYS if key in settings},
                    original_dir=str(Path(original_dir).resolve()), output_dir=str(Path(output_dir).resolve()),
                    discovery=discovery)
+    if order:
+        request['order'] = order
     fingerprint = hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()
     lock = Path(data_dir).resolve()/'campaign-creation'
     lock.mkdir(parents=True, exist_ok=True)
@@ -164,15 +232,15 @@ def create_campaign(data_dir, name, records, settings, original_dir, output_dir,
                     return path.parent
             except (OSError, ValueError, KeyError, TypeError):
                 continue
-        directory = _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery, progress)
+        directory = _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery, progress, order)
         manifest = read_json(directory/'campaign.json')
         manifest['creation_fingerprint'] = fingerprint
         atomic_json(directory/'campaign.json', manifest)
         return directory
 
 
-def _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery=None, progress=None):
-    """Create only local records; never start paid/network/model work here."""
+def _create_campaign(data_dir, name, records, settings, original_dir, output_dir, discovery=None, progress=None, order=None):
+    """Create only local records; never start paid/network/model work here. order='likes' numbers the videos most liked first."""
     if not name.strip():
         raise ValueError('Đặt tên chiến dịch trước.')
     for value in (original_dir, output_dir):
@@ -183,7 +251,11 @@ def _create_campaign(data_dir, name, records, settings, original_dir, output_dir
         url = share_url(row['url'])
         if url not in seen:
             unique.append(dict(url=url, title=str(row.get('title', ''))[:300]))
+            if likes_of(row) is not None:
+                unique[-1]['likes'] = likes_of(row)
             seen.add(url)
+    if order == 'likes':
+        unique = likes_first(unique)
     if not unique or len(unique) > MAX_CAMPAIGN_VIDEOS:
         raise ValueError('Chiến dịch cần từ 1 đến 10.000 video.')
     from teodub.ai_models import validate_models
@@ -220,6 +292,8 @@ def _create_campaign(data_dir, name, records, settings, original_dir, output_dir
         atomic_json(job/'config.json', config)
         items.append(dict(number=number, title=row['title'], url=row['url'], config_sha256=hash_file(job/'config.json'),
                           job=str(job), status='pending', message='Chờ xử lý', outputs={}))
+        if 'likes' in row:
+            items[-1]['likes'] = row['likes']
         if progress is not None and number % CREATE_PROGRESS_EVERY == 0:
             progress(number, len(unique))
     manifest = dict(schema=1, id=ident, name=name.strip(), created_at=datetime.now().isoformat(),
@@ -341,9 +415,11 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
             path.unlink(missing_ok=True)
         atomic_json(directory/'campaign-runtime.json', dict(future_settings=1))
         try:
-            for item in manifest['items']:
+            absorb_exclusions(directory, manifest)
+            for item in run_order(manifest):
                 if stop.exists():
                     break
+                absorb_exclusions(directory, manifest)  # Loại trừ asked for while this link runs: before the next video starts.
                 job = directory/'jobs'/f'{item["number"]:04}'
                 if Path(item['job']).resolve() != job or job.is_symlink():
                     raise ValueError('Đường dẫn video trong chiến dịch không hợp lệ.')
@@ -432,7 +508,8 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                     manifest['message'] = item['message']
                     break
             else:
-                manifest['status'] = 'completed' if all(x['status'] in DONE for x in manifest['items']) else 'needs_attention'
+                manifest['status'] = ('completed' if all(x['status'] in DONE or x['status'] == EXCLUDED for x in manifest['items'])
+                                      else 'needs_attention')
                 if manifest['status'] == 'needs_attention':
                     manifest['message'] = 'Chiến dịch còn video lỗi. Chọn dòng lỗi để xem nguyên nhân; bấm Thử lại video lỗi khi đã xử lý.'
             if turn_over and not stop.exists():

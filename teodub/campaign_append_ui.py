@@ -6,6 +6,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
+from teodub.campaign import likes_first
 from teodub.campaign_append import known_urls, split_known
 from teodub.channel_browser import BROWSER_LABELS, profile_directory
 from teodub.channel_discovery import MAX_SCAN_VIDEOS, scan_channel
@@ -165,6 +166,7 @@ class AppendVideosDialog(tk.Toplevel):
             return
         known = known_urls(self.studio.data_dir)
         self.fresh, already = split_known(value['items'], known)
+        self.fresh = likes_first(self.fresh)  # The same order `append_videos` numbers them in.
         self.status.set(value['message'])
         self.summary.set(f'Đọc được {len(value["items"])} video · {already} đã có trong Tèo · {len(self.fresh)} video mới.'
                          +('' if self.fresh else ' Không có gì để thêm.'))

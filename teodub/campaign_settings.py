@@ -56,7 +56,7 @@ def save_next_settings(data_dir, directory, settings):
     manifest = read_json(directory/'campaign.json')
     if manifest.get('archived_at'):
         raise ValueError('Khôi phục chiến dịch trước khi đổi cấu hình.')
-    remaining = [row for row in manifest['items'] if row['status'] not in DONE]
+    remaining = [row for row in manifest['items'] if row['status'] not in DONE and row['status'] != 'excluded']
     if not remaining:
         raise ValueError('Chiến dịch đã hoàn tất; không còn video để áp dụng cấu hình mới.')
     if is_running(directory):

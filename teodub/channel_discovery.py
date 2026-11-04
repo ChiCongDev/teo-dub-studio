@@ -61,6 +61,13 @@ def resolved_video_url(url):
     return 'https://www.douyin.com/video/'+ident if ident.isdigit() else None
 
 
+def post_likes(post):
+    """03/11/2026 (owner): Douyin's like count of one post, or None. The play count is hidden (always 0) on the web."""
+    statistics = post.get('statistics')
+    value = statistics.get('digg_count') if isinstance(statistics, dict) else None
+    return value if type(value) is int and value >= 0 else None
+
+
 class ChannelPosts:
     def __init__(self, owner, limit):
         self.owner, self.limit = owner, limit
@@ -87,9 +94,15 @@ class ChannelPosts:
             if post.get('images') or not post.get('video'):
                 self.skipped.add(ident)
                 continue
-            if ident not in self.items and len(self.items) < self.limit:
+            likes = post_likes(post)
+            if ident in self.items:
+                if likes is not None:  # Found first in the page's links: the answer still gives its likes.
+                    self.items[ident].setdefault('likes', likes)
+            elif len(self.items) < self.limit:
                 self.items[ident] = dict(url='https://www.douyin.com/video/'+ident,
                                         title=str(post.get('desc', ''))[:300])
+                if likes is not None:
+                    self.items[ident]['likes'] = likes
         # A terminal page is evidence only if the caller has not truncated it.
         if payload.get('has_more') in (0, False) and len(self.items) < self.limit:
             self.complete = True

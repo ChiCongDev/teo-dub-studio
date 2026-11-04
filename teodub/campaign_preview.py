@@ -3,14 +3,14 @@ import hashlib
 import json
 from pathlib import Path
 
-from teodub.campaign import should_process
+from teodub.campaign import run_order, should_process
 
 
 def next_video_config(directory, manifest, *, retry_failed=False, active=False):
     items = manifest['items']
     item = next((row for row in items if row['status'] == 'running'), None) if active else None
     if item is None:
-        item = next((row for row in items if should_process(row, retry_failed=retry_failed)), None)
+        item = next((row for row in run_order(manifest) if should_process(row, retry_failed=retry_failed)), None)
     if item is None:
         return None
     directory = Path(directory).resolve()

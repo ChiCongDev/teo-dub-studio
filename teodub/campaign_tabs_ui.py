@@ -233,6 +233,8 @@ class CampaignLinkTab(ttk.Frame):
         self.slow_at = 0.
         self.posting, self.drive = {}, {}
         self.more_window = None
+        self.likes_window = None
+        self.exclude_window = None
         self.header = tk.StringVar(self)
         self.source = tk.StringVar(self)
         self.status = tk.StringVar(self)
@@ -262,6 +264,10 @@ class CampaignLinkTab(ttk.Frame):
         self.retry_button.pack(side='left')
         self.more_button = ttk.Button(buttons, text='Lấy thêm video mới…', command=self.open_more, state='disabled')
         self.more_button.pack(side='left', padx=6)
+        self.likes_button = ttk.Button(buttons, text='Xếp theo lượt thích…', command=self.open_likes, state='disabled')
+        self.likes_button.pack(side='left')
+        self.exclude_button = ttk.Button(buttons, text='Loại trừ video…', command=self.open_exclude)
+        self.exclude_button.pack(side='left', padx=6)
         ttk.Button(buttons, text='Mở video gốc', command=lambda: self.open_folder('original_dir')).pack(side='left', padx=6)
         ttk.Button(buttons, text='Mở thành phẩm', command=lambda: self.open_folder('output_dir')).pack(side='left')
         ttk.Button(buttons, text='Đóng tab', command=self.close).pack(side='left', padx=(18, 0))
@@ -305,7 +311,7 @@ class CampaignLinkTab(ttk.Frame):
         self.tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
         self.tree.bind('<Double-1>', self.open_item)
         for tag, color in (('completed', '#237637'), ('review_required', '#8a6000'), ('retrying', '#8a6000'),
-                           ('failed', '#b12727'), ('running', '#065ca8'), ('cancelled', '#777777')):
+                           ('failed', '#b12727'), ('running', '#065ca8'), ('cancelled', '#777777'), ('excluded', '#9a9a9a')):
             self.tree.tag_configure(tag, foreground=color)
         ttk.Progressbar(self, variable=self.progress, maximum=100).grid(row=7, column=0, sticky='ew', pady=6)
         ttk.Label(self, textvariable=self.message, wraplength=1000).grid(row=8, column=0, sticky='w')
@@ -362,7 +368,8 @@ class CampaignLinkTab(ttk.Frame):
         self.source.set(('Link kênh: '+channel) if channel else 'Danh sách link video')
         current = next((item for item in manifest['items'] if item.get('status') == 'running'), None)
         text = (f'{line} · Xong {counts["completed"]}/{counts["total"]} · Lỗi {counts["failed"]}'
-                +(f' (chờ thử lại {len(retrying)})' if retrying else '')+f' · Chờ {counts["waiting"]}')
+                +(f' (chờ thử lại {len(retrying)})' if retrying else '')+f' · Chờ {counts["waiting"]}'
+                +(f' · Loại trừ {counts["excluded"]}' if counts['excluded'] else ''))
         if current is not None and active:
             row = tracking_row(current, active=True)
             text += f' · {row[0]}: {row[3]}'+(f' {row[4]}' if row[4] != '—' else '')
@@ -380,6 +387,7 @@ class CampaignLinkTab(ttk.Frame):
         self.retry_button.configure(state='normal' if failed-retrying and not busy else 'disabled')
         # Owner 30/10/2026: only a link made from a channel has one to read again.
         self.more_button.configure(state='normal' if channel and not busy else 'disabled')
+        self.likes_button.configure(state='normal' if channel and not busy else 'disabled')
         # Owner 31/10/2026: opening the channel to look needs only a channel link; it never touches a running video.
         self.channel_button.configure(state='normal' if channel else 'disabled')
         self.read_subtitles(manifest)
@@ -531,6 +539,32 @@ class CampaignLinkTab(ttk.Frame):
         except (OSError, ValueError, RuntimeError) as exc:
             self.message.set(str(exc))
 
+    def open_likes(self):
+        """Xếp theo lượt thích (owner 03/11/2026): read this link's channel again, set the picking order by Douyin's likes."""
+        if self.likes_window is not None and self.likes_window.winfo_exists():
+            self.likes_window.lift()
+            return
+        workspace = getattr(self.area, 'campaign_tab', None)
+        if self.studio.process is not None or getattr(self.studio, 'login_pending', False) or getattr(workspace, 'scanning', False):
+            self.message.set('Đang có video đơn, cửa sổ đăng nhập hoặc một lượt đọc kênh khác. Đợi xong rồi bấm Xếp theo lượt thích.')
+            return
+        try:
+            from teodub.campaign_likes_ui import LikesOrderDialog
+            self.likes_window = LikesOrderDialog(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.message.set(str(exc))
+
+    def open_exclude(self):
+        """Loại trừ video (owner 04/11/2026): paste links, mark those videos of this link so they are never dubbed."""
+        if self.exclude_window is not None and self.exclude_window.winfo_exists():
+            self.exclude_window.lift()
+            return
+        try:
+            from teodub.campaign_exclude_ui import ExcludeVideosDialog
+            self.exclude_window = ExcludeVideosDialog(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.message.set(str(exc))
+
     def open_channel(self):
         """Mở kênh (owner 31/10/2026): open this link's channel in Tèo's Chrome, signed in as "Đăng nhập Chrome" left it."""
         try:
@@ -571,6 +605,10 @@ class CampaignLinkTab(ttk.Frame):
         messagebox.showinfo(f'Video {item["number"]}', str(item.get('message') or 'Chưa có thông tin.'), parent=self)
 
     def close(self):
+        if self.exclude_window is not None and self.exclude_window.winfo_exists():
+            self.exclude_window.close()
+        if self.likes_window is not None and self.likes_window.winfo_exists():
+            self.likes_window.close()
         if self.more_window is not None and self.more_window.winfo_exists():
             self.more_window.close()
         self.area.close_link(self)

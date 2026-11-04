@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 import uuid
 
-from teodub.campaign import CONFIG_KEYS, MAX_CAMPAIGN_VIDEOS, read_json
+from teodub.campaign import CONFIG_KEYS, MAX_CAMPAIGN_VIDEOS, likes_first, likes_of, read_json
 from teodub.common import atomic_json, hash_file
 from teodub.downloaders.video_download import share_url
 from teodub.pipeline import _job_lock
@@ -71,6 +71,8 @@ def split_known(records, known):
             continue
         seen.add(url)
         fresh.append(dict(url=url, title=str(row.get('title', ''))[:300]))
+        if likes_of(row) is not None:
+            fresh[-1]['likes'] = likes_of(row)
     return fresh, already
 
 
@@ -96,6 +98,7 @@ def append_videos(directory, records):
         items = manifest['items']
         have = {url for url in (_normal(item.get('url', '')) for item in items) if url}
         fresh, skipped = split_known(records, have)
+        fresh = likes_first(fresh)  # 03/11/2026 (owner): the new videos go in most liked first (no change without counts)
         if not fresh:
             return dict(first=None, count=0, skipped=skipped)
         if len(items)+len(fresh) > MAX_CAMPAIGN_VIDEOS:
@@ -113,6 +116,8 @@ def append_videos(directory, records):
             atomic_json(job/'config.json', config)
             added.append(dict(number=number, title=row['title'], url=row['url'], config_sha256=hash_file(job/'config.json'),
                               job=str(job), status='pending', message='Chờ xử lý', outputs={}))
+            if 'likes' in row:
+                added[-1]['likes'] = row['likes']
         manifest['items'] = items+added
         manifest.setdefault('appended', []).append(
             dict(at=datetime.now().astimezone().isoformat(timespec='seconds'), first=first, count=len(added)))

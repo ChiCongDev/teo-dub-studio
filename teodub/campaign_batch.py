@@ -205,10 +205,12 @@ def read_batch(directory):
 
 def _completed_unchanged(directory, manifest):
     """Verify previously completed outputs without invoking their pipeline."""
-    if manifest.get('status') != 'completed' or any(item.get('status') not in campaign.DONE
+    if manifest.get('status') != 'completed' or any(item.get('status') not in campaign.DONE | {campaign.EXCLUDED}
                                                     for item in manifest['items']):
         raise ValueError('Chiến dịch đã xong có trạng thái thay đổi; chưa chạy lại.')
     for item in manifest['items']:
+        if item.get('status') == campaign.EXCLUDED:
+            continue  # Never made; nothing to verify.
         job = directory/'jobs'/f'{item["number"]:04}'
         config = _plain_path(job/'config.json')
         if hash_file(config) != item['config_sha256']:

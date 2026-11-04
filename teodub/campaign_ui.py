@@ -62,6 +62,7 @@ class CampaignTab(ttk.Frame):
         self.visible = tk.BooleanVar(self, value=True)
         self.browser_label = tk.StringVar(self, value=BROWSER_LABELS['chrome'])
         self.reverse = tk.BooleanVar(self, value=False)
+        self.likes_first = tk.BooleanVar(self, value=False)
         self.original_dir = tk.StringVar(self, value=studio.fields['original_dir'].get())
         self.output_dir = tk.StringVar(self, value=studio.fields['output_dir'].get())
         self.status = tk.StringVar(self, value='Dán link kênh: tự lấy link từng video. Dán nhiều link: tự lập danh sách.')
@@ -190,6 +191,7 @@ class CampaignTab(ttk.Frame):
         self.create_button = ttk.Button(actions, text='Tạo chiến dịch mới', command=self.create)
         self.create_button.pack(side='left', padx=(0, 6))
         ttk.Checkbutton(actions, text='Đảo thứ tự danh sách trước khi tạo', variable=self.reverse).pack(side='left')
+        ttk.Checkbutton(actions, text='Video nhiều lượt thích làm trước', variable=self.likes_first).pack(side='left', padx=(8, 0))
         self.start_button = ttk.Button(actions, text='Chạy / Tiếp tục', command=self.start)
         self.start_button.pack(side='left', padx=6)
         self.retry_button = ttk.Button(actions, text='Thử lại video lỗi', command=lambda: self.start(retry=True))
@@ -244,7 +246,7 @@ class CampaignTab(ttk.Frame):
         ttk.Button(links, text='Xem chi tiết / nguyên nhân', command=lambda: self.show_item(detail_only=True)).pack(side='left', padx=3)
         ttk.Label(links, text='Nhấp đôi để xem chi tiết / mở thành phẩm.').pack(side='left', padx=5)
         for tag, color in (('completed', '#237637'), ('review_required', '#8a6000'),
-                           ('failed', '#b12727'), ('running', '#065ca8'), ('cancelled', '#777777')):
+                           ('failed', '#b12727'), ('running', '#065ca8'), ('cancelled', '#777777'), ('excluded', '#9a9a9a')):
             self.tree.tag_configure(tag, foreground=color)
         ttk.Progressbar(self, variable=self.progress, maximum=100).grid(row=11, column=0, columnspan=3, sticky='ew', pady=6)
         ttk.Label(self, wraplength=1000, text='Video 1, Video 2… được đánh số theo danh sách đã chốt, kèm ngày tạo chiến dịch. '
@@ -717,7 +719,7 @@ class CampaignTab(ttk.Frame):
                 self.update_idletasks()
             directory = create_campaign(self.data_dir, self.name.get(), records, self.settings,
                                         self.original_dir.get(), self.output_dir.get(), discovery, prevent_duplicates=True,
-                                        progress=saving)
+                                        progress=saving, order='likes' if self.likes_first.get() else None)
             self.save_campaign_preferences()
             self.directory = directory
             self.records = list(records)
@@ -914,7 +916,8 @@ class CampaignTab(ttk.Frame):
             elif handoff:
                 label = 'Chờ chạy xen kẽ (sau video đang làm)'
         self.status.set(f'{manifest["name"]}: {label} · Xong {counts["completed"]}/{counts["total"]} · '
-                        f'Lỗi {counts["failed"]} · Chờ {counts["waiting"]}. '+manifest.get('message', ''))
+                        f'Lỗi {counts["failed"]} · Chờ {counts["waiting"]}'+(f' · Loại trừ {counts["excluded"]}' if counts['excluded'] else '')
+                        +'. '+manifest.get('message', ''))
         if active and handoff and in_rotation:
             self.status.set(self.status.get()+' Làm xong video đang chạy, Tèo chạy xen kẽ: mỗi chiến dịch một video, lần lượt.')
         discovery = manifest.get('discovery') or {}

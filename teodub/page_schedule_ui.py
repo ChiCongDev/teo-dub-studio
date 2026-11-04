@@ -353,6 +353,7 @@ class PageSchedulePanel(ttk.Frame):
         self.add_window = None
         self.recovery_window = None
         self.replan_window = None
+        self.likes_window = None
         self.check_window = None
         self.now_window = None
         self.now_preview = None
@@ -428,6 +429,8 @@ class PageSchedulePanel(ttk.Frame):
         self.replan_button = ttk.Button(recreate_actions, text='Xếp lại theo giờ của Page…', command=self.open_replan,
                                         state='disabled')
         self.replan_button.pack(side='left', padx=(12, 0))
+        self.likes_button = ttk.Button(recreate_actions, text='Xếp theo lượt thích…', command=self.open_likes)
+        self.likes_button.pack(side='left', padx=(12, 0))
         self.show_removed_check = ttk.Checkbutton(recreate_actions, text='Hiện video đã xóa',
                                                  variable=self.show_removed, command=self.refresh)
         self.show_removed_check.pack(side='right')
@@ -501,6 +504,20 @@ class PageSchedulePanel(ttk.Frame):
                 raise ValueError('Chọn một hoặc nhiều lịch video cần xếp lại.')
             from teodub.page_schedule_replan_ui import ScheduleReplanDialog
             self.replan_window = ScheduleReplanDialog(self, selected)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.status.set(str(exc))
+
+    def open_likes(self):
+        """03/11/2026: the Page's armed videos take its posting times most liked first (preview first)."""
+        if self.likes_window is not None and self.likes_window.winfo_exists():
+            self.likes_window.lift()
+            return
+        if self.bulk_busy:
+            self.status.set('Đang xử lý nhiều lịch; đợi xong rồi bấm Xếp theo lượt thích.')
+            return
+        try:
+            from teodub.page_schedule_likes_ui import ScheduleLikesDialog
+            self.likes_window = ScheduleLikesDialog(self)
         except (OSError, ValueError, RuntimeError) as exc:
             self.status.set(str(exc))
 
@@ -1011,5 +1028,7 @@ class PageSchedulePanel(ttk.Frame):
             self.recovery_window.destroy()
         if self.replan_window is not None:
             self.replan_window.destroy()
+        if self.likes_window is not None:
+            self.likes_window.destroy()
         if self.check_window is not None:
             self.check_window.destroy()

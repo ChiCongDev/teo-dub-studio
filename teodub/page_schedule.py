@@ -107,6 +107,9 @@ class PageScheduleStore:
               CREATE TABLE IF NOT EXISTS immediate_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,schedule_id TEXT NOT NULL,
                 at TEXT NOT NULL,previous TEXT NOT NULL,new_due_at REAL NOT NULL);
+              CREATE TABLE IF NOT EXISTS schedule_reorders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,schedule_id TEXT NOT NULL,
+                at TEXT NOT NULL,previous_due_at REAL NOT NULL,new_due_at REAL NOT NULL);
               CREATE TABLE IF NOT EXISTS schedule_removals (
                 schedule_id TEXT PRIMARY KEY,at TEXT NOT NULL,previous TEXT NOT NULL,
                 source_released INTEGER NOT NULL);
@@ -306,6 +309,29 @@ class PageScheduleStore:
             conn.execute("UPDATE schedules SET due_at=?,state='armed',phase='',message=? WHERE id=?",
                 (due_at, 'Đăng ngay: đã nhận bài đã duyệt; đang chờ kiểm tra video và Chrome của tài khoản.', ident))
         return self.get(ident)
+
+    def reorder_times(self, account_id, page_key, assignments, expected):
+        """03/11/2026 (owner, likes): hand the SAME set of posting times to other armed, never-touched appointments of this Page.
+
+        `assignments` = {id: new due_at}, `expected` = {id: the due_at the owner saw}. One transaction: every row must still be
+        armed with that time and untouched (no attempt, request or result) or nothing changes. Video, caption, draft and state
+        stay as they are; only `due_at` moves. The old times are kept in `schedule_reorders`."""
+        if set(assignments) != set(expected) or not assignments:
+            raise ValueError('Không có lịch nào để đổi giờ.')
+        with self.database() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            for ident, due_at in assignments.items():
+                row = conn.execute('SELECT * FROM schedules WHERE id=?', (ident,)).fetchone()
+                if (not row or (row['account_id'], row['page_key']) != (account_id, page_key) or row['state'] != 'armed'
+                        or row['due_at'] != expected[ident] or row['attempted_at'] or row['request_id'] or row['finished_at']):
+                    raise ValueError('Một lịch đã đổi trạng thái hoặc giờ từ lúc xem trước; chưa đổi lịch nào. Bấm Xem lại.')
+                if not time.time()+5 < float(due_at) < time.time()+366*86400:
+                    raise ValueError('Giờ đăng mới không còn trong tương lai; chưa đổi lịch nào.')
+            for ident, due_at in assignments.items():
+                conn.execute('INSERT INTO schedule_reorders (schedule_id,at,previous_due_at,new_due_at) VALUES (?,?,?,?)',
+                    (ident, now(), expected[ident], float(due_at)))
+                conn.execute('UPDATE schedules SET due_at=?,message=? WHERE id=?',
+                    (float(due_at), 'Đã xếp lại theo lượt thích: giờ đăng mới '+display_time(due_at)+' (UTC+7). Giữ Tèo chạy và Chrome có phiên đăng nhập.', ident))
 
     def immediate_history(self, ident):
         with self.database() as conn:
