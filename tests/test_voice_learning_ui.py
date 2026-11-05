@@ -73,13 +73,16 @@ class VoiceLearningUITests(unittest.TestCase):
     def test_save_select_restore_and_campaign_use_same_frozen_sample(self):
         from teodub.campaign_ui import CampaignTab
         p = self.install()
-        # Saving is now sufficient; no second manual apply action.
+        # Owner 05/11/2026: saving only learns the voice; using it is a separate choice.
+        self.assertNotEqual(self.studio.voice_selection().get('reference_audio'), p['reference_audio'])
+        self.assertIn('Chưa áp dụng cho nơi nào', self.tab.status.get())
+        self.tab.apply_profile(p['id'], single=True)
         selection = self.studio.voice_selection()
         self.assertEqual(selection['reference_audio'], p['reference_audio'])
         self.assertEqual(selection['reference_sha256'], p['reference_sha256'])
         self.assertIn('Giọng thử', self.studio.fields['voice'].get())
         self.assertEqual(self.notebook.select(), self.notebook.tabs()[0])
-        self.assertIn('Đã tự chọn', self.tab.status.get())
+        self.assertIn('Đã áp dụng cho: Video đơn', self.studio.status.get())
         self.studio.restore()
         self.assertEqual(self.studio.voice_selection()['reference_audio'], p['reference_audio'])
         tab = CampaignTab(self.notebook, self.studio)
@@ -96,7 +99,7 @@ class VoiceLearningUITests(unittest.TestCase):
     def test_tampered_saved_audio_blocks_synthesis_does_not_pick_preset(self):
         from tests.test_voice_profiles import tone
         p = self.install()
-        self.tab.apply()
+        self.tab.apply_profile(p['id'], single=True)
         chosen = self.studio.fields['voice'].get()
         tone(p['reference_audio'], seconds=5, rate=48000)
         self.studio.start('preview')
@@ -142,6 +145,7 @@ class VoiceLearningUITests(unittest.TestCase):
         self.studio.fields['original_volume'].set('25')
         self.tab.tts_model.set('v3nano')
         p = self.install()
+        self.tab.apply_profile(p['id'], single=True)
         self.studio.restore()
         self.assertEqual(self.studio.fields['tts_model'].get(), 'v3nano')
         self.studio.input.insert('1.0', 'https://www.douyin.com/video/111')
@@ -158,14 +162,16 @@ class VoiceLearningUITests(unittest.TestCase):
         self.assertEqual(config['original_gain'], .25)
         self.f.spawn.assert_called_once()  # Only the explicit video start.
 
-    def test_saving_does_not_change_selected_campaign_without_opt_in(self):
+    def test_saving_changes_nothing_anywhere(self):
         campaign = self.make_campaign()
         files = [campaign.directory/'campaign.json', *campaign.directory.glob('jobs/*/config.json')]
         before = {p: p.read_bytes() for p in files}
+        voice = self.studio.voice_selection()
         self.install()
         self.assertEqual({p: p.read_bytes() for p in files}, before)
         self.assertFalse((campaign.directory/'next-settings.json').exists())
-        self.assertIn('Giọng thử', campaign.creation_summary.get())
+        self.assertEqual(self.studio.voice_selection(), voice)
+        self.assertNotIn('Giọng thử', campaign.creation_summary.get())
         self.f.spawn.assert_not_called()
 
     def test_campaign_opt_in_during_run_changes_only_future_voice_and_engine(self):
@@ -186,10 +192,10 @@ class VoiceLearningUITests(unittest.TestCase):
         self.studio.fields['translation_model'].set('gpt-5.6-terra')
         self.studio.fields['subtitle_size'].set(9)
         self.studio.campaign_busy = True
-        self.tab.use_campaign.set(True)
         self.tab.tts_model.set('v3nano')
+        p = self.install(report)
         with _job_lock(campaign.directory):
-            p = self.install(report)
+            self.tab.apply_profile(p['id'], single=True, directories=[campaign.directory])
         self.studio.campaign_busy = False
         update = next_settings(campaign.directory)
         self.assertNotEqual(update['id'], old['id'])
@@ -221,39 +227,73 @@ class VoiceLearningUITests(unittest.TestCase):
         self.assertTrue(all('voice' not in call.kwargs for call in calls))
         self.assertEqual({p: p.read_bytes() for p in frozen}, frozen)
         self.assertIn('Giọng thử', campaign.summary.get())
-        self.assertIn('từ video tiếp theo', self.tab.status.get())
+        self.assertIn('từ video tiếp theo', self.studio.status.get())
         self.f.spawn.assert_not_called()
 
-    def test_saved_profile_survives_auto_apply_failure_and_retries_without_duplicate(self):
+    def test_saved_profile_survives_apply_failure_and_retries_without_duplicate(self):
+        p = self.install()
         with patch.object(self.studio, 'apply_learned_voice', side_effect=ValueError('Tạm bận')):
-            p = self.install()
-        self.assertIn('Đã lưu', self.tab.status.get())
-        self.assertIn('chưa áp dụng xong', self.tab.status.get())
-        self.tab.apply()
+            with self.assertRaises(ValueError):
+                self.tab.apply_profile(p['id'], single=True)
+        self.assertEqual(len(lab.list_profiles(self.studio.data_dir)[0]), 1)
+        self.tab.apply_profile(p['id'], single=True)
         self.assertEqual(self.studio.voice_selection()['reference_audio'], p['reference_audio'])
         self.assertEqual(len(lab.list_profiles(self.studio.data_dir)[0]), 1)
         self.f.spawn.assert_not_called()
 
-    def test_switching_campaign_clears_opt_in_and_stale_target_cannot_apply(self):
+    def test_apply_needs_a_place_and_changes_only_the_ticked_campaign(self):
+        from teodub.campaign import create_campaign
+        from teodub.campaign_settings import next_settings
+        first = self.make_campaign()
+        second = create_campaign(self.studio.data_dir, 'Chiến dịch khác', [
+            dict(url='https://www.douyin.com/video/333', title='Video ba')], first.settings,
+            str(self.f.path/'gốc'), str(self.f.path/'thành phẩm'))
+        voice = self.studio.voice_selection()
+        p = self.install()
+        with self.assertRaises(ValueError):
+            self.tab.apply_profile(p['id'])
+        self.assertEqual(self.studio.voice_selection(), voice)
+        self.tab.apply_profile(p['id'], directories=[second])
+        self.assertEqual(next_settings(second)['settings']['reference_sha256'], p['reference_sha256'])
+        self.assertIsNone(next_settings(first.directory))
+        self.assertEqual(self.studio.voice_selection(), voice)
+
+    def test_dialog_lists_unfinished_campaigns_with_nothing_ticked(self):
+        from teodub.voice_apply_ui import ApplyVoiceDialog
         campaign = self.make_campaign()
         p = self.install()
-        self.tab.use_campaign.set(True)
-        campaign.directory = None
-        self.tab.apply()
-        self.assertFalse(self.tab.use_campaign.get())
-        self.assertIn('Chiến dịch đang chọn đã đổi', self.tab.status.get())
-        self.assertEqual(self.studio.voice_selection()['reference_audio'], p['reference_audio'])
+        dialog = ApplyVoiceDialog(self.tab, p['id'])
+        self.addCleanup(dialog.destroy)
+        self.assertFalse(dialog.single.get())
+        self.assertEqual([d for d, _ in dialog.choices], [campaign.directory])
+        self.assertFalse(any(v.get() for _, v in dialog.choices))
+        dialog.apply()
+        self.assertIn('Chưa tích', dialog.status.get())
+        self.assertFalse((campaign.directory/'next-settings.json').exists())
+        dialog.choices[0][1].set(True)
+        dialog.apply()
+        self.assertTrue((campaign.directory/'next-settings.json').exists())
+        self.assertFalse(dialog.winfo_exists())
 
-    def test_campaign_failure_reports_single_applied_keeps_profile_and_old_settings(self):
-        from teodub.campaign_settings import save_next_settings, next_settings
-        campaign = self.make_campaign()
-        old = save_next_settings(self.studio.data_dir, campaign.directory, campaign.settings)
-        self.tab.use_campaign.set(True)
-        with patch.object(campaign, 'apply_learned_voice_settings', side_effect=ValueError('Worker cũ')):
-            p = self.install()
-        self.assertEqual(self.studio.voice_selection()['reference_audio'], p['reference_audio'])
-        self.assertEqual(next_settings(campaign.directory)['id'], old['id'])
-        self.assertIn('chưa đổi giọng chiến dịch', self.tab.status.get())
+    def test_one_campaign_failure_is_reported_and_others_still_apply(self):
+        from teodub.campaign import create_campaign
+        from teodub.campaign_settings import next_settings
+        first = self.make_campaign()
+        second = create_campaign(self.studio.data_dir, 'Chiến dịch khác', [
+            dict(url='https://www.douyin.com/video/333', title='Video ba')], first.settings,
+            str(self.f.path/'gốc'), str(self.f.path/'thành phẩm'))
+        p = self.install()
+        real = __import__('teodub.campaign_settings', fromlist=['x']).save_next_voice_settings
+        def flaky(data_dir, directory, selection):
+            if Path(directory) == first.directory:
+                raise ValueError('Worker cũ')
+            return real(data_dir, directory, selection)
+        with patch('teodub.campaign_settings.save_next_voice_settings', flaky):
+            with self.assertRaises(ValueError) as caught:
+                self.tab.apply_profile(p['id'], directories=[first.directory, second])
+        self.assertIn('Worker cũ', str(caught.exception))
+        self.assertIsNone(next_settings(first.directory))
+        self.assertEqual(next_settings(second)['settings']['reference_sha256'], p['reference_sha256'])
         self.assertEqual(len(lab.list_profiles(self.studio.data_dir)[0]), 1)
 
     def test_analysis_history_survives_reopen(self):

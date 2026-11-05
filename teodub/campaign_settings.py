@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import re
+import shutil
 import uuid
 
 from teodub.common import atomic_json, hash_file
@@ -48,7 +49,7 @@ def validate_settings(settings):
     return selected
 
 
-def save_next_settings(data_dir, directory, settings):
+def save_next_settings(data_dir, directory, settings, *, allow_finished=False):
     from teodub.campaign_batch import _campaign_path, _plain_path
     from teodub.campaign import read_json, DONE, is_running
     from teodub.pipeline import _job_lock
@@ -57,7 +58,7 @@ def save_next_settings(data_dir, directory, settings):
     if manifest.get('archived_at'):
         raise ValueError('Khôi phục chiến dịch trước khi đổi cấu hình.')
     remaining = [row for row in manifest['items'] if row['status'] not in DONE and row['status'] != 'excluded']
-    if not remaining:
+    if not remaining and not allow_finished:  # allow_finished: finished videos are about to be made again (campaign_redo).
         raise ValueError('Chiến dịch đã hoàn tất; không còn video để áp dụng cấu hình mới.')
     if is_running(directory):
         try:
@@ -106,26 +107,116 @@ def next_settings(directory):
     return result
 
 
-def save_next_voice_settings(data_dir, directory, selection):
-    """Change only voice choices; retain this campaign's other pending settings."""
+def finished_config(directory, manifest):
+    """The settings the link's last finished video was made with (for a link with nothing left to make)."""
+    items = [item for item in manifest['items'] if item['status'] in ('completed', 'review_required')]
+    if not items:
+        raise ValueError('Chiến dịch chưa có video nào để lấy cấu hình.')
+    from teodub.campaign import read_json
+    return read_json(effective_job(directory, items[-1])/'config.json')
+
+
+def current_voice_config(data_dir, directory):
+    """Read only: the config the link's next video would use (a saved change included), or the last finished video's."""
     from teodub.campaign_batch import _campaign_path
     from teodub.campaign import read_json
     from teodub.campaign_preview import next_video_config
-    keys = {'voice_provider', 'voice', 'reference_audio', 'reference_sha256',
-            'reading_style', 'voice_speed', 'tts_model'}
-    if set(selection) != keys:
+    directory = _campaign_path(Path(data_dir).resolve(), Path(directory).resolve())
+    manifest = read_json(directory/'campaign.json')
+    update = next_settings(directory)
+    if update:
+        return dict(update['settings'])
+    preview = next_video_config(directory, manifest, retry_failed=True, active=True)
+    return dict(preview['config']) if preview else finished_config(directory, manifest)
+
+
+VOICE_KEYS = ('voice_provider', 'voice', 'reference_audio', 'reference_sha256', 'reading_style', 'voice_speed', 'tts_model')
+VOICE_DEFAULTS = dict(voice_provider='local', reference_audio='', reference_sha256='', reading_style='legacy', voice_speed=1.0,
+                      tts_model='v3turbo')
+
+
+def _voice_view(config):
+    """The voice choices of a job config, with what an older config leaves out filled by the defaults the pipeline uses."""
+    return {key: (config.get(key) if config.get(key) not in (None, '') else VOICE_DEFAULTS.get(key)) for key in VOICE_KEYS}
+
+
+def save_next_link_settings(data_dir, directory, *, selection=None, original_gain=None, voice_gain=None, allow_finished=False,
+                            what='giọng mới'):
+    """Change only the voice choice and/or the two export levels (the original sound, the dubbed voice; 0–2 = 0–200%) of one
+    link; every other pending setting is kept. `allow_finished` also accepts a link with nothing left to make (its finished
+    videos are going to be made again)."""
+    from teodub.campaign_batch import _campaign_path
+    from teodub.campaign import read_json
+    from teodub.campaign_preview import next_video_config
+    from teodub.audio_mix import validate_audio_mix
+    if selection is not None and set(selection) != set(VOICE_KEYS):
         raise ValueError('Cấu hình giọng phải có đúng mẫu, phong cách, tốc độ và bộ giọng.')
     directory = _campaign_path(Path(data_dir).resolve(), Path(directory).resolve())
     manifest = read_json(directory/'campaign.json')
     # Verify the actual job even when a queued override already exists. Do not
     # repair a broken campaign merely by installing another reference sample.
     preview = next_video_config(directory, manifest, retry_failed=True, active=True)
-    if preview is None:
-        raise ValueError('Chiến dịch đã hoàn tất; không còn video để áp dụng giọng mới.')
+    if preview is None and not allow_finished:
+        raise ValueError(f'Chiến dịch đã hoàn tất; không còn video để áp dụng {what}.')
     update = next_settings(directory)
-    settings = dict(update['settings'] if update else preview['config'])
-    settings.update(selection)
-    return save_next_settings(data_dir, directory, settings)
+    base = update['settings'] if update else (preview['config'] if preview else finished_config(directory, manifest))
+    settings = dict(base)
+    if selection is not None:
+        settings.update(selection)
+    levels = {key: value for key, value in (('original_gain', original_gain), ('voice_gain', voice_gain)) if value is not None}
+    if levels:
+        settings.update(validate_audio_mix(dict(settings, **levels)))  # Refuses anything outside 0–200%.
+    return save_next_settings(data_dir, directory, settings, allow_finished=allow_finished)
+
+
+def save_next_voice_settings(data_dir, directory, selection, *, allow_finished=False):
+    """Change only voice choices; retain this campaign's other pending settings. `allow_finished` also accepts a link with
+    nothing left to make (its finished videos are going to be made again)."""
+    if selection is None:
+        raise ValueError('Cấu hình giọng phải có đúng mẫu, phong cách, tốc độ và bộ giọng.')
+    return save_next_link_settings(data_dir, directory, selection=selection, allow_finished=allow_finished)
+
+
+def _spoken_cues(subtitles, reading_style):
+    """The lines the pipeline reads aloud, as it builds them from a supplied Vietnamese SRT (wording off)."""
+    from teodub.subtitles import read_vietnamese_srt
+    from teodub.speech_plan import build_speech_plan
+    cues = read_vietnamese_srt(subtitles)
+    if reading_style == 'legacy':
+        return cues
+    return [{key: group[key] for key in ('start_ms', 'end_ms', 'text')} for group in build_speech_plan(cues, reading_style)['groups']]
+
+
+def reuse_voice_cache(old_job, new_job, subtitles, reading_style):
+    """05/11/2026 (owner): the voice lines a finished video already has are copied into its new revision job, so changing only the
+    export levels needs no new voice (no GPU time). The caller knows the voice settings and the wording are unchanged; here the
+    cache must also be complete and have been made for exactly the lines the new job will read (same text, same times), else
+    nothing is copied and the voice is simply made again. Paths inside the saved reports are pointed at the copy; the reference
+    sample is not copied (it is normalized again to the same bytes). Returns True when it copied."""
+    old, new = Path(old_job)/'voice', Path(new_job)/'voice'
+    if not (old/'manifest.json').is_file() or not (old/'request.json').is_file() or new.exists():
+        return False
+    try:
+        if json.loads((old/'request.json').read_text(encoding='utf-8')).get('cues') != _spoken_cues(subtitles, reading_style):
+            return False
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    temporary = new.with_name('voice.copying')
+    if temporary.exists():
+        shutil.rmtree(temporary)
+    shutil.copytree(old, temporary, ignore=shutil.ignore_patterns('reference', '*.unpaced.wav', '*.writing.wav', '*.pending.json'))
+    for report in temporary.glob('*.json'):
+        if report.name == 'request.json':
+            continue
+        data = json.loads(report.read_text(encoding='utf-8'))
+        if report.name == 'manifest.json':
+            for clip in data['clips']:
+                clip['path'] = str(new/Path(clip['path']).name)
+        else:
+            data['path'] = str(new/Path(data['path']).name)
+        atomic_json(report, data)
+    temporary.rename(new)
+    return True
 
 
 def next_subtitle_settings(directory, manifest):
@@ -217,6 +308,11 @@ def prepare_next_job(directory, item):
         else:
             if reused:
                 atomic_json(target/'state.json', reused)
+            same_voice = (_voice_view(config) == _voice_view(proposed)
+                          and config.get('wording') == proposed.get('wording')
+                          and not (proposed.get('wording') or {}).get('enabled'))
+            if same_voice and 'subtitles_sha256' in proposed:  # Same lines, same voice: only the export levels changed.
+                reuse_voice_cache(job, target, proposed['subtitles'], proposed.get('reading_style', 'legacy'))
             atomic_json(path, proposed)
     item.update(execution_job=str(target), execution_config_sha256=hash_file(path),
                 settings_version=update['id'])

@@ -132,6 +132,11 @@ def tracking_row(item, active=True, retrying=False):
     elif item.get('no_post') and status in ('completed', 'review_required'):
         label += ' · '+NOT_POSTED
     message = item.get('message', '')
+    if item.get('redo') and status == 'completed':  # 05/11/2026: finished, being made again with a new voice; the old file stays.
+        label += ' · làm lại giọng'
+        message = 'Đang xếp/làm lại bằng giọng mới; bản cũ vẫn dùng được cho tới khi bản mới xong. '+str(event.get('message') or '')
+    elif item.get('redo_failed') and status == 'completed':
+        message = 'Lần làm lại giọng gần nhất chưa xong, giữ bản cũ: '+str(item['redo_failed'].get('message', ''))+' | '+message
     if status == 'running':
         label = STAGES.get(event.get('stage'), label) if active else 'Gián đoạn · Tiếp tục'
         message = str(event.get('message') or message)

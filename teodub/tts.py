@@ -160,7 +160,9 @@ def synthesize(cues, voice, directory, *, cancel=None, progress=None, provider='
                 if reference:
                     from teodub.voice_profiles import validate_reference
                     validate_reference(reference, source_sha256=reference_sha256, cancel=cancel)
-                    audio = model.infer(text, ref_audio=reference['path'], denoise=True, use_ref_codes=True)
+                    # Owner 05/11/2026 (listening test on real lines): the reference's own noise filter flattened the
+                    # delivery; the unfiltered sample sounded more natural. The sample is still normalized by prepare_reference.
+                    audio = model.infer(text, ref_audio=reference['path'], denoise=False, use_ref_codes=True)
                     validate_reference(reference, source_sha256=reference_sha256, cancel=cancel)
                 else:
                     audio = model.infer(text, voice=voice)

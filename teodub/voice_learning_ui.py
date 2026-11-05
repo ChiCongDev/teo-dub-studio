@@ -11,7 +11,7 @@ import winsound
 
 from teodub.common import atomic_json, hash_file
 from teodub.voice_learning import (MAX_FILES, STYLE_LABELS, checked_candidate, checked_profile,
-    analysis_text, library_root, list_profiles, profile_label, save_profile, video_links)
+    analysis_text, library_root, list_profiles, profile_label, profile_selection, save_profile, video_links)
 
 
 class VoiceLearningTab(ttk.Frame):
@@ -19,9 +19,6 @@ class VoiceLearningTab(ttk.Frame):
         super().__init__(parent, padding=14)
         self.studio = studio
         self.campaign_tab = campaign_tab
-        self.campaign_target = None
-        self.campaign_signature = None
-        self.campaign_available = False
         self.data_dir = studio.data_dir
         self.files = []
         self.link = tk.StringVar(self)
@@ -46,8 +43,7 @@ class VoiceLearningTab(ttk.Frame):
         self.start_s = tk.StringVar(self, '0')
         self.limit_s = tk.StringVar(self, '120')
         self.history_var = tk.StringVar(self)
-        self.use_campaign = tk.BooleanVar(self, False)
-        self.campaign_caption = tk.StringVar(self)
+        self.apply_dialog = None
         self.history = {}
         self.build()
         self.bind('<Destroy>', self.destroyed)
@@ -183,20 +179,16 @@ class VoiceLearningTab(ttk.Frame):
         self.replay_button = ttk.Button(row, text='Nghe lại', command=self.replay)
         self.replay_button.pack(side='left')
         ttk.Button(row, text='Dừng nghe', command=self.stop_audio).pack(side='left', padx=6)
-        self.apply_button = ttk.Button(row, text='Dùng để tạo video', command=self.apply)
+        self.apply_button = ttk.Button(row, text='Áp dụng giọng…', command=self.apply)
         self.apply_button.pack(side='right')
-        self.campaign_check = ttk.Checkbutton(preview, variable=self.use_campaign,
-            text='Áp dụng cả cho chiến dịch đang chọn (từ video tiếp theo)')
-        self.campaign_check.pack(anchor='w', pady=(6, 0))
-        ttk.Label(preview, textvariable=self.campaign_caption, wraplength=990).pack(anchor='w')
         row = ttk.Frame(self)
         row.grid(row=4, sticky='ew', pady=4)
         self.stop_button = ttk.Button(row, text='Dừng xử lý mẫu', command=self.stop, state='disabled')
         self.stop_button.pack(side='right')
         ttk.Label(row, textvariable=self.status, wraplength=840).pack(side='left', fill='x', expand=True)
         ttk.Progressbar(self, variable=self.progress, maximum=100).grid(row=5, sticky='ew')
-        self.voice_help = ttk.Label(self, text='Lưu hồ sơ sẽ tự chọn giọng và phong cách ở Video đơn, đồng thời dùng cho chiến dịch tạo mới. '
-            'Tick mục chiến dịch để đổi riêng giọng cho các video chạy tiếp theo của chiến dịch đang chọn. '
+        self.voice_help = ttk.Label(self, text='Lưu hồ sơ chỉ lưu giọng vào thư viện, không đổi Video đơn hay chiến dịch nào. '
+            'Khi muốn dùng: vào Giọng đã lưu, chọn giọng rồi bấm Áp dụng giọng… và tự tích nơi áp dụng. '
             'Phong cách theo mẫu có thể chưa giống hoàn toàn; nghe duyệt trước khi sản xuất.', wraplength=1020)
         self.voice_help.grid(row=6, sticky='ew', pady=5)
         from teodub.video_content_ui import VideoContentPanel
@@ -247,31 +239,6 @@ class VoiceLearningTab(ttk.Frame):
         # inference remains blocked while a campaign consumes the machine.
         return (self.busy or self.studio.voice_learning_busy or self.studio.process is not None or
             self.studio.closed or self.studio.closing or self.studio.restart_pending or self.studio.login_pending)
-
-    def refresh_campaign_target(self):
-        directory = self.campaign_tab.directory if self.campaign_tab is not None else None
-        if directory != self.campaign_target:
-            self.use_campaign.set(False)
-            self.campaign_target = directory
-            self.campaign_signature = None
-        if directory is None:
-            self.campaign_caption.set('Chưa chọn chiến dịch; giọng vẫn tự áp dụng cho Video đơn và chiến dịch tạo mới.')
-            self.campaign_available = False
-            return False
-        try:
-            path = directory/'campaign.json'
-            signature = (directory, path.stat().st_mtime_ns)
-            if signature == self.campaign_signature:
-                return self.campaign_available
-            manifest = json.loads(path.read_text(encoding='utf-8'))
-            self.campaign_caption.set('Chiến dịch: '+manifest['name']+'. Các cấu hình khác của chiến dịch được giữ nguyên.')
-            self.campaign_signature = signature
-            self.campaign_available = True
-            return True
-        except (OSError, ValueError, KeyError, TypeError):
-            self.campaign_caption.set('Chưa đọc được chiến dịch đang chọn; kiểm tra tại tab Chiến dịch hàng loạt.')
-            self.campaign_available = False
-            return False
 
     def choose_files(self):
         if self.blocked():
@@ -527,34 +494,46 @@ class VoiceLearningTab(ttk.Frame):
         except (OSError, ValueError) as exc:
             self.status.set('Chưa lưu hồ sơ: '+str(exc))
             return
-        # A failed form/campaign application must not misreport a durable saved
-        # profile as lost, or create a second profile automatically on retry.
-        try:
-            message = self.apply_profile(p['id'])
-            self.status.set('Đã lưu '+profile_label(p)+'. '+message)
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            self.status.set('Đã lưu '+profile_label(p)+'; chưa áp dụng xong: '+str(exc)+
-                ' Chọn hồ sơ rồi bấm Dùng để tạo video để thử lại.')
+        # Owner 05/11/2026: saving only learns the voice. Where it is used is a separate, explicit choice (apply_profile).
+        self.status.set('Đã lưu '+profile_label(p)+'. Chưa áp dụng cho nơi nào: chọn giọng trong Giọng đã lưu '
+                        'rồi bấm Áp dụng giọng… khi muốn dùng.')
 
-    def apply_profile(self, profile_id):
-        if self.use_campaign.get() and (self.campaign_tab is None or self.campaign_target is None or
-                self.campaign_tab.directory != self.campaign_target):
-            self.refresh_campaign_target()
-            raise ValueError('Chiến dịch đang chọn đã đổi; tick lại đúng chiến dịch rồi áp dụng.')
-        selection = self.studio.apply_learned_voice(profile_id, self.tts_model.get())
-        if self.campaign_tab is not None:
-            self.campaign_tab.capture_settings()  # New-campaign preview only.
-        message = 'Đã tự chọn giọng và phong cách tại Video đơn và cho chiến dịch tạo mới.'
-        if self.use_campaign.get():
+    def apply_profile(self, profile_id, *, single=False, directories=()):
+        """Use a saved voice only where asked: Video đơn + new campaigns, and/or the given campaign folders.
+        Campaigns take it from their next video; finished videos and every other setting stay."""
+        directories = [Path(d) for d in directories]
+        if not single and not directories:
+            raise ValueError('Chưa chọn nơi áp dụng giọng.')
+        from teodub.campaign import read_json
+        from teodub.campaign_settings import save_next_voice_settings
+        selection = profile_selection(self.data_dir, profile_id, self.tts_model.get())
+        done, failed = [], []
+        if single:
+            selection = self.studio.apply_learned_voice(profile_id, self.tts_model.get())
+            if self.campaign_tab is not None:
+                self.campaign_tab.capture_settings()  # New-campaign preview only.
+            done.append('Video đơn và chiến dịch tạo mới')
+        for directory in directories:
             try:
-                self.campaign_tab.apply_learned_voice_settings(selection)
+                name = read_json(directory/'campaign.json')['name']
+            except (OSError, ValueError, KeyError, TypeError):
+                name = directory.name
+            try:
+                save_next_voice_settings(self.data_dir, directory, selection)
+                done.append(name+' (từ video tiếp theo)')
+                if self.campaign_tab is not None and self.campaign_tab.directory == directory:
+                    self.campaign_tab.display(read_json(directory/'campaign.json'))
             except (OSError, ValueError, KeyError, TypeError) as exc:
-                self.studio.status.set(message+' Chưa đổi giọng chiến dịch: '+str(exc))
-                raise ValueError('Video đơn đã chọn giọng; chưa đổi giọng chiến dịch: '+str(exc)) from exc
-            message += ' Chiến dịch đang chọn sẽ dùng giọng này từ video tiếp theo.'
-        self.studio.status.set(message+' Tốc độ ban đầu 1,00×, giữ nhịp mẫu; có thể chỉnh tiếp.')
-        parent = self.master
-        parent.select(parent.tabs()[0])
+                failed.append(name+': '+str(exc))
+        message = ('Đã áp dụng cho: '+'; '.join(done)+'.') if done else 'Chưa áp dụng cho nơi nào.'
+        if failed:
+            message += ' Chưa đổi được — '+' | '.join(failed)
+        self.studio.status.set(message)
+        if single:
+            parent = self.master
+            parent.select(parent.tabs()[0])
+        if failed:
+            raise ValueError(message)
         return message
 
     def apply(self):
@@ -564,7 +543,12 @@ class VoiceLearningTab(ttk.Frame):
             target = self.active_target()
             if not target or target[0] != 'profile':
                 raise ValueError('Lưu hồ sơ trước, rồi chọn trong Giọng đã lưu.')
-            self.status.set(self.apply_profile(target[1]))
+            checked_profile(self.data_dir, target[1])
+            if self.apply_dialog is not None and self.apply_dialog.winfo_exists():
+                self.apply_dialog.lift()
+                return
+            from teodub.voice_apply_ui import ApplyVoiceDialog
+            self.apply_dialog = ApplyVoiceDialog(self, target[1])
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.status.set('Chưa áp dụng giọng: '+str(exc))
 
@@ -587,8 +571,6 @@ class VoiceLearningTab(ttk.Frame):
         for control in self.profile_controls:
             control.configure(state='disabled' if apply_blocked else 'normal')
         self.tts_picker.configure(state='disabled' if apply_blocked else 'readonly')
-        campaign_available = self.refresh_campaign_target()
-        self.campaign_check.configure(state='normal' if campaign_available and not apply_blocked else 'disabled')
         self.history_picker.configure(state='disabled' if blocked else 'readonly')
         self.preview_text.configure(state='disabled' if blocked else 'normal')
         target = self.active_target()
@@ -650,6 +632,8 @@ class VoiceLearningTab(ttk.Frame):
         if self.dead:
             return
         self.dead = True
+        if self.apply_dialog is not None and self.apply_dialog.winfo_exists():
+            self.apply_dialog.destroy()
         self.unbind_class(self.scroll_tag, '<MouseWheel>')
         self.stop_audio()
         if self.timer:

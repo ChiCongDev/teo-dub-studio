@@ -74,7 +74,7 @@ class CampaignVoiceConsistencyTests(unittest.TestCase):
         for call in calls:
             self.assertNotIn('voice', call.kwargs)
             self.assertTrue(call.kwargs['use_ref_codes'])
-            self.assertTrue(call.kwargs['denoise'])
+            self.assertFalse(call.kwargs['denoise'])  # Owner 05/11/2026: the unfiltered sample sounded more natural.
         self.assertEqual(hash_file(calls[0].kwargs['ref_audio']), hash_file(calls[1].kwargs['ref_audio']))
         for name in ('single', 'campaign'):
             report = json.loads((Path(self.temp.name)/name/'reference/reference.json').read_text(encoding='utf-8'))

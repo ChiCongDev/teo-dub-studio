@@ -15,6 +15,34 @@ YT = 'https://www.youtube.com/watch?v=BaW_jenozKc'
 FB = 'https://www.facebook.com/reel/123456789'
 
 
+class FormatChoiceTests(unittest.TestCase):
+    """The real yt-dlp selector on the formats a Facebook Reel offered (owner 05/11/2026); no network."""
+    def pick(self, formats):
+        from yt_dlp import YoutubeDL
+        with YoutubeDL(dict(format=module.FORMAT, quiet=True, no_warnings=True)) as ydl:
+            selector = ydl.build_format_selector(module.FORMAT)
+            chosen = list(selector(dict(formats=formats, incomplete_formats=False, has_merged_format=False)))
+        return [(f['format_id'], f.get('height')) for f in (chosen[0].get('requested_formats') or [chosen[0]])]
+
+    @staticmethod
+    def video(ident, width, height):
+        return dict(format_id=ident, ext='mp4', width=width, height=height, vcodec='av01', acodec='none', protocol='https', url='x')
+
+    AUDIO = dict(format_id='a', ext='m4a', vcodec='none', acodec='mp4a.40.5', protocol='https', url='x')
+
+    def test_portrait_reel_with_only_720x1280_and_1080x1920_is_chosen(self):
+        got = self.pick([self.video('v1080', 1080, 1920), self.video('v720', 720, 1280), self.AUDIO])
+        self.assertEqual(got, [('v720', 1280), ('a', None)])
+
+    def test_landscape_video_still_stops_at_720(self):
+        got = self.pick([self.video('v1080', 1920, 1080), self.video('v720', 1280, 720), self.AUDIO])
+        self.assertEqual(got, [('v720', 720), ('a', None)])
+
+    def test_only_larger_formats_still_download_something(self):
+        got = self.pick([self.video('v1080', 1080, 1920), self.AUDIO])
+        self.assertEqual(got, [('v1080', 1920), ('a', None)])
+
+
 class LearningURLTests(unittest.TestCase):
     def test_youtube_single_video_forms_canonicalize_to_same_identity(self):
         for url in ('https://youtu.be/BaW_jenozKc?si=tracking',

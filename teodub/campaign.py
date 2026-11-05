@@ -27,8 +27,14 @@ CONFIG_KEYS = ('voice_provider', 'voice', 'reference_audio', 'reference_sha256',
                'drive_upload', 'drive_data_dir', 'subtitle_clean')
 
 
+REDO_REQUESTS = 'redo-*.json'  # 05/11/2026 (owner): "make this finished video again with the link's newest voice".
+REDO_KEEP = ('outputs', 'message', 'completed_at', 'execution_job', 'execution_config_sha256', 'settings_version', 'google_drive')
+
+
 def should_process(item, *, retry_failed=False):
     """One selection rule shared by the worker and its read-only GUI preview."""
+    if item['status'] == 'completed' and item.get('redo'):
+        return True  # A finished video asked to be made again: it stays "completed" (with its old output) until the new one is ready.
     return (item['status'] not in DONE and item['status'] != EXCLUDED
             and (retry_failed or item['status'] != 'failed' or item.get('retry_once') is True))
 
@@ -195,6 +201,64 @@ def absorb_exclusions(directory, manifest):
             changed += mark_excluded(manifest, request.get('numbers', []), restore=request.get('action') == 'restore')
         except (OSError, ValueError, AttributeError, TypeError):
             continue  # A damaged request is dropped below; nothing is marked from it.
+    if changed:
+        atomic_json(Path(directory)/'campaign.json', manifest)
+    for path in paths:
+        path.unlink(missing_ok=True)
+    return changed
+
+
+def mark_redo(manifest, numbers):
+    """05/11/2026 (owner): ask for these FINISHED videos to be made again (with the link's newest saved settings, in a new
+    revision job: the downloaded video and the Vietnamese lines are reused, so no download and no AI call). A video stays
+    `completed` with its old output while it is made again; `redo` keeps what to put back if the new one does not finish. Edits
+    `manifest` in place and returns the numbers marked. A video marked Không đăng, not finished, or already asked for is skipped."""
+    wanted, changed = {number for number in numbers if type(number) is int}, []
+    stamp = datetime.now().astimezone().isoformat(timespec='seconds')
+    for item in manifest['items']:
+        if (item['number'] in wanted and item['status'] == 'completed' and item.get('outputs')
+                and not item.get('no_post') and not item.get('redo')):
+            item['redo'] = dict(at=stamp, previous={key: item[key] for key in REDO_KEEP if key in item})
+            item.pop('redo_failed', None)
+            changed.append(item['number'])
+    if changed and manifest.get('status') in ('completed', 'needs_attention'):
+        manifest['status'], manifest['message'] = 'paused', f'Đã xếp {len(changed)} video làm lại bằng giọng mới; bấm Chạy để làm.'
+    return changed
+
+
+def finish_redo(item, result):
+    """The new version is ready: it replaces the old output. What the old output was is kept in `redone` (Page schedules that
+    have not been sent follow the new file; see page_schedule_redo)."""
+    redo = item.pop('redo')
+    item.pop('redo_failed', None)
+    item['redone'] = dict(at=datetime.now().astimezone().isoformat(timespec='seconds'),
+                          previous_outputs=redo['previous'].get('outputs', {}))
+    item.update(status='completed', message=str(result.get('message') or ''), outputs=result.get('outputs', {}))
+    if result.get('google_drive') is not None:
+        item['google_drive'] = result['google_drive']
+
+
+def restore_redo(item, reason):
+    """The new version did not finish: the old finished video comes back exactly as it was, with the reason noted."""
+    redo = item.pop('redo')
+    for key in REDO_KEEP:
+        if key in redo['previous']:
+            item[key] = redo['previous'][key]
+        else:
+            item.pop(key, None)
+    item['status'] = 'completed'
+    item['redo_failed'] = dict(at=datetime.now().astimezone().isoformat(timespec='seconds'), message=reason[:500])
+
+
+def absorb_redo(directory, manifest):
+    """Apply the redo requests the desktop left while this campaign's worker ran, as `absorb_exclusions` does."""
+    changed = []
+    paths = sorted(Path(directory).glob(REDO_REQUESTS))
+    for path in paths:
+        try:
+            changed += mark_redo(manifest, read_json(path).get('numbers', []))
+        except (OSError, ValueError, AttributeError, TypeError):
+            continue
     if changed:
         atomic_json(Path(directory)/'campaign.json', manifest)
     for path in paths:
@@ -426,19 +490,22 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
         atomic_json(directory/'campaign-runtime.json', dict(future_settings=1))
         try:
             absorb_exclusions(directory, manifest)
+            absorb_redo(directory, manifest)
             for item in run_order(manifest):
                 if stop.exists():
                     break
                 absorb_exclusions(directory, manifest)  # Loại trừ asked for while this link runs: before the next video starts.
+                absorb_redo(directory, manifest)
                 job = directory/'jobs'/f'{item["number"]:04}'
                 if Path(item['job']).resolve() != job or job.is_symlink():
                     raise ValueError('Đường dẫn video trong chiến dịch không hợp lệ.')
                 if hash_file(job/'config.json') != item['config_sha256']:
                     raise ValueError(f'Cấu hình Video {item["number"]} đã bị thay đổi; chưa chạy tiếp.')
                 from teodub.campaign_settings import effective_job, prepare_next_job
-                if item['status'] in DONE and not verify_done:
+                redoing = item['status'] == 'completed' and bool(item.get('redo'))
+                if item['status'] in DONE and not redoing and not verify_done:
                     continue
-                if item['status'] in DONE:
+                if item['status'] in DONE and not redoing:
                     job = effective_job(directory, item)
                     if item.get('execution_job') and hash_file(job/'config.json') != item.get('execution_config_sha256'):
                         raise ValueError('Cấu hình đã chạy của video hoàn tất bị thay đổi.')
@@ -471,13 +538,21 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 if (max_videos is not None and processed >= max_videos) or hand_over:
                     turn_over = True
                     break
-                job = prepare_next_job(directory, item)
-                item.update(status='running', message='Đang tải và lồng tiếng')
+                try:
+                    job = prepare_next_job(directory, item)
+                except Exception:
+                    if redoing:
+                        restore_redo(item, 'Chưa chuẩn bị được bản làm lại; giữ bản cũ.')
+                        atomic_json(directory/'campaign.json', manifest)
+                    raise
+                if not redoing:  # A video made again stays "completed" with its old output until the new one is ready.
+                    item.update(status='running', message='Đang tải và lồng tiếng')
                 item.pop('retry_once', None)
                 attempt_started = time.monotonic()
                 item.setdefault('started_at', datetime.now().astimezone().isoformat(timespec='seconds'))
                 item['last_attempt_started_at'] = datetime.now().astimezone().isoformat(timespec='seconds')
-                item.pop('completed_at', None)
+                if not redoing:
+                    item.pop('completed_at', None)
                 atomic_json(directory/'campaign.json', manifest)
                 try:
                     result = runner(job/'config.json', stop)
@@ -491,6 +566,20 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 item['last_attempt_finished_at'] = datetime.now().astimezone().isoformat(timespec='seconds')
                 if not isinstance(result, dict) or result.get('status') not in DONE | {'failed', 'cancelled'}:
                     result = dict(status='failed', message='Video chưa trả kết quả kết thúc hợp lệ. Kiểm tra rồi thử lại video lỗi.')
+                if redoing:
+                    reason = str(result.get('message') or '')
+                    if result['status'] == 'completed' and result.get('outputs'):
+                        finish_redo(item, result)
+                        item['completed_at'] = item['last_attempt_finished_at']
+                    else:  # The old finished video stays exactly as it was; the link does not turn into a failure.
+                        restore_redo(item, reason or 'Bản làm lại chưa xong.')
+                    atomic_json(directory/'campaign.json', manifest)
+                    if result['status'] == 'cancelled' or (result['status'] != 'completed' and any(
+                            value in reason.lower() for value in ('hạn mức', 'quota', 'usage limit', 'rate limit', 'đăng nhập', 'login', 'credits'))):
+                        manifest['status'] = 'paused'
+                        manifest['message'] = reason or 'Đã dừng khi đang làm lại video bằng giọng mới; giữ bản cũ.'
+                        break
+                    continue
                 if result['status'] in DONE:
                     item['completed_at'] = item['last_attempt_finished_at']
                 item.update(status=result['status'], message=str(result.get('message') or ''), outputs=result.get('outputs', {}))

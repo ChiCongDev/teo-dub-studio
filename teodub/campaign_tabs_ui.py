@@ -235,6 +235,7 @@ class CampaignLinkTab(ttk.Frame):
         self.more_window = None
         self.likes_window = None
         self.exclude_window = None
+        self.voice_window = None
         self.header = tk.StringVar(self)
         self.source = tk.StringVar(self)
         self.status = tk.StringVar(self)
@@ -290,6 +291,9 @@ class CampaignLinkTab(ttk.Frame):
                                           state='disabled')
         self.subtitle_button.pack(side='left', padx=(12, 0))
         ttk.Label(subtitles, textvariable=self.subtitle_note, foreground='#164b78').pack(side='left', padx=(10, 0))
+        # Owner 05/11/2026: the voice and the two export levels of this link only, and optionally its finished videos made again.
+        self.voice_button = ttk.Button(subtitles, text='Giọng & âm lượng…', command=self.open_voice)
+        self.voice_button.pack(side='right')
         table = ttk.Frame(self)
         table.grid(row=6, column=0, sticky='nsew')
         table.columnconfigure(0, weight=1)
@@ -567,6 +571,17 @@ class CampaignLinkTab(ttk.Frame):
         except (OSError, ValueError, RuntimeError) as exc:
             self.message.set(str(exc))
 
+    def open_voice(self):
+        """Đổi giọng (owner 05/11/2026): this link's voice only, optionally making its finished videos again."""
+        if self.voice_window is not None and self.voice_window.winfo_exists():
+            self.voice_window.lift()
+            return
+        try:
+            from teodub.campaign_voice_ui import ChangeVoiceDialog
+            self.voice_window = ChangeVoiceDialog(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.message.set(str(exc))
+
     def open_channel(self):
         """Mở kênh (owner 31/10/2026): open this link's channel in Tèo's Chrome, signed in as "Đăng nhập Chrome" left it."""
         try:
@@ -607,6 +622,8 @@ class CampaignLinkTab(ttk.Frame):
         messagebox.showinfo(f'Video {item["number"]}', str(item.get('message') or 'Chưa có thông tin.'), parent=self)
 
     def close(self):
+        if self.voice_window is not None and self.voice_window.winfo_exists():
+            self.voice_window.close()
         if self.exclude_window is not None and self.exclude_window.winfo_exists():
             self.exclude_window.close()
         if self.likes_window is not None and self.likes_window.winfo_exists():

@@ -18,6 +18,10 @@ from teodub.common import Cancelled, atomic_json, check_cancel
 MAX_BYTES = 2 * 1024**3
 YT_ID = re.compile(r'[A-Za-z0-9_-]{11}')
 FB_TOKEN = r'[A-Za-z0-9_-]+'
+# 720 px on the short side: a portrait Reel (720x1280) is as acceptable as a landscape 1280x720 video. The final "/bv+ba/b" keeps a
+# video that only offers larger formats from failing outright (owner 05/11/2026: Facebook Reels offered only 720x1280 and 1080x1920).
+FORMAT = ('bv[ext=mp4][height<=720]+ba[ext=m4a]/bv[ext=mp4][width<=720]+ba[ext=m4a]/b[ext=mp4][height<=720]/b[ext=mp4][width<=720]'
+          '/bv[height<=720]+ba/bv[width<=720]+ba/b[height<=720]/b[width<=720]/bv+ba/b')
 
 
 def learning_url(text):
@@ -142,7 +146,7 @@ def download_learning_video(text, job_dir, *, cancel=None, progress=lambda *_a, 
 
     try:
         import imageio_ffmpeg
-        opts = dict(format='bv[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4][height<=720]/bv[height<=720]+ba/b[height<=720]',
+        opts = dict(format=FORMAT,
             outtmpl=str(folder/'video.%(ext)s'), merge_output_format='mp4',
             postprocessors=[dict(key='FFmpegVideoRemuxer', preferedformat='mp4')],
             ffmpeg_location=imageio_ffmpeg.get_ffmpeg_exe(), noplaylist=True,

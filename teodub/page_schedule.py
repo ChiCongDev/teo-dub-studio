@@ -112,6 +112,9 @@ class PageScheduleStore:
               CREATE TABLE IF NOT EXISTS schedule_reorders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,schedule_id TEXT NOT NULL,
                 at TEXT NOT NULL,previous_due_at REAL NOT NULL,new_due_at REAL NOT NULL);
+              CREATE TABLE IF NOT EXISTS schedule_video_replacements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,schedule_id TEXT NOT NULL,at TEXT NOT NULL,
+                previous_post_id TEXT NOT NULL,previous_source TEXT NOT NULL,new_source TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS schedule_removals (
                 schedule_id TEXT PRIMARY KEY,at TEXT NOT NULL,previous TEXT NOT NULL,
                 source_released INTEGER NOT NULL);
@@ -335,6 +338,65 @@ class PageScheduleStore:
                 conn.execute('UPDATE schedules SET due_at=?,message=? WHERE id=?',
                     (float(due_at), 'Đã xếp lại theo lượt thích: giờ đăng mới '+display_time(due_at)+' (UTC+7). Giữ Tèo chạy và Chrome có phiên đăng nhập.', ident))
 
+    REPLACEABLE = {'scheduled', 'armed', 'paused', 'needs_attention'}
+
+    def replace_video(self, ident, expected, new_source):
+        """05/11/2026 (owner, voice made again): the SAME untouched appointment (Page, time, caption, state) now posts the NEW
+        file of its campaign video. `expected` is the row as the caller read it; `new_source` is what `campaign_video_source`
+        reports for the new output. A new draft is saved for the new file, then the row is switched in one transaction (the old
+        source is kept in `schedule_video_replacements`); a row that was touched in between is left as it was."""
+        row = self.get(ident)
+        if row != expected:
+            raise ValueError('Lịch đã thay đổi từ lúc đọc; chưa đổi video.')
+        if (row['source'].get('kind') == 'text' or row['attempted_at'] or row['request_id'] or row['finished_at']
+                or row['state'] not in self.REPLACEABLE):
+            raise ValueError('Lịch đã có lượt chuẩn bị/gửi hoặc không phải bài video; không đổi video. Kiểm tra Facebook trước.')
+        if campaign_video_source(self.data_dir, new_source['campaign'], new_source['number']) != new_source:
+            raise ValueError('Thành phẩm mới đã thay đổi; chưa đổi video của lịch.')
+        old = self.activity.post(row['account_id'], row['page_key'], row['post_id'])
+        events = self.activity.events(row['account_id'], row['page_key'], row['post_id'])
+        if (old['archived'] or old['state'] not in {'draft', 'failed'}
+                or any(old.get(key) for key in ('browser_review', 'browser_receipt', 'browser_tracking', 'remote_assets',
+                                                'external_id', 'external_url', 'manual_url'))
+                or any(event['state'] in {'review', 'submitting', 'processing', 'published', 'unknown'} for event in events)):
+            raise ValueError('Bản nháp cũ đã có lượt xử lý. Kiểm tra Facebook trước; chưa đổi video.')
+        lock = self.path.parent/'schedule-creation'
+        lock.mkdir(parents=True, exist_ok=True)
+        with _job_lock(lock):
+            post = self.activity.save_draft(row['account_id'], row['page_key'], row['body'], [new_source['path']],
+                                            delivery_mode='browser', browser_finish_mode='tool')
+            try:
+                if (post['target_name'], post['target_url'], post['target_id']) != (old['target_name'], old['target_url'], old['target_id']):
+                    raise ValueError('Page đã đổi trong lúc chuyển video; chưa đổi lịch.')
+                snapshot = {key: post[key] for key in row['snapshot']}
+                with self.database() as conn:
+                    conn.execute('BEGIN IMMEDIATE')
+                    saved = conn.execute('SELECT * FROM schedules WHERE id=?', (ident,)).fetchone()
+                    if not saved or self.decode(saved) != row:
+                        raise ValueError('Lịch đã thay đổi trong lúc chuyển video; chưa đổi lịch.')
+                    conn.execute('INSERT INTO schedule_video_replacements (schedule_id,at,previous_post_id,previous_source,new_source) '
+                                 'VALUES (?,?,?,?,?)', (ident, now(), row['post_id'], json.dumps(row['source'], ensure_ascii=False),
+                                                        json.dumps(new_source, ensure_ascii=False)))
+                    conn.execute('UPDATE schedules SET post_id=?,source=?,snapshot=?,message=? WHERE id=?',
+                        (post['id'], json.dumps(new_source, ensure_ascii=False), json.dumps(snapshot, ensure_ascii=False),
+                         'Đã chuyển sang video làm lại bằng giọng mới; giữ nguyên giờ đăng, Page và caption.', ident))
+            except Exception:
+                try:
+                    self.activity.archive(row['account_id'], row['page_key'], post['id'])
+                except (OSError, ValueError, KeyError):
+                    pass
+                raise
+        try:
+            self.activity.archive(row['account_id'], row['page_key'], old['id'])
+        except (OSError, ValueError, KeyError):
+            pass  # The old draft is only a leftover; the row no longer points at it.
+        return self.get(ident)
+
+    def video_replacements(self, ident):
+        with self.database() as conn:
+            return [dict(event, previous_source=json.loads(event['previous_source']), new_source=json.loads(event['new_source']))
+                    for event in conn.execute('SELECT * FROM schedule_video_replacements WHERE schedule_id=? ORDER BY id', (ident,))]
+
     def immediate_history(self, ident):
         with self.database() as conn:
             return [dict(event, previous=json.loads(event['previous'])) for event in
@@ -469,6 +531,7 @@ class PageScheduleController:
         self.guards = {}
         self.validation = queue.Queue()
         self.last_tick = 0
+        self.redo_checked = 0
         # Only a continuously observed, locally owned wait can extend the
         # lateness allowance. These witnesses are deliberately never persisted.
         self.queue_waits = {}
@@ -1098,6 +1161,22 @@ class PageScheduleController:
                     return True
         return False
 
+    def _follow_redone_videos(self, clock, only=None):
+        """05/11/2026: a schedule never sent follows its video's new file (made again with a new voice). Every few seconds for
+        all, and at once for one that is due now. Returns that one's fresh row when it moved, else None."""
+        if only is None:
+            if clock-self.redo_checked < 20:
+                return None
+            self.redo_checked = clock
+        from teodub.page_schedule_redo import follow_new_files
+        moved, errors = follow_new_files(self.store, only=only)
+        for ident, message in errors:
+            try:
+                self.store.update(ident, message='Chưa chuyển được sang video làm lại: '+message[:300])
+            except ValueError:
+                pass
+        return self.store.get(only) if only is not None and only in moved else None
+
     def tick(self):
         clock = time.monotonic()
         if self.closed or clock-self.last_tick<1:
@@ -1105,6 +1184,7 @@ class PageScheduleController:
         self.last_tick = clock
         try:
             self._observe_queue(clock)
+            self._follow_redone_videos(clock)
             while True:
                 try:
                     ident,error = self.validation.get_nowait()
@@ -1224,6 +1304,7 @@ class PageScheduleController:
                     session = self.owner.sessions.get(row['account_id'])
                     if session and (session.loading_pages or any(x['state'] in {'queued','running'} for x in session.post_actions.values())):
                         continue
+                    row = self._follow_redone_videos(clock, only=ident) or row  # Its video was made again: post the new file.
                     self.store.update(ident,expected={'armed'},state='preparing',phase='validate',message='Đang kiểm tra nội dung đã duyệt trước khi đăng.')
                     try:
                         started_at = time.monotonic()
