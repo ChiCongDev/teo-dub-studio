@@ -32,9 +32,42 @@ def schedule_rows(data_dir, campaign_id):
     return rows
 
 
-def build_plan(directory, *, settings_id=None, now=None):
+def next_due(data_dir, campaign_id, now=None):
+    """Read only (no store is built, nothing initialised): {video number: the soonest FUTURE due time of its saved or armed
+    Page schedule}. Used to make first the finished videos that will be posted first."""
+    import re
+    from teodub.campaign_posting import _read_schedules
+    path = Path(data_dir)/'page-publishing'/'schedules.sqlite3'
+    now = time.time() if now is None else now
+    try:
+        rows = _read_schedules(path, campaign_id)
+    except Exception:  # No schedule file, a busy database...: the plain order is used.
+        return {}
+    result = {}
+    for row in rows:
+        match = re.fullmatch(re.escape(campaign_id)+r':([1-9][0-9]*)', str(row.get('source_key', '')))
+        due = row.get('due_at')
+        if match and row.get('state') in ('armed', 'scheduled') and type(due) in (int, float) and due >= now:
+            number = int(match.group(1))
+            result[number] = min(due, result.get(number, due))
+    return result
+
+
+def redo_priority(directory, manifest, now=None):
+    """Owner 06/11/2026: of the finished videos waiting to be made again, those whose Page schedule is soonest come first, in the
+    order of their due time; the others keep the link's usual order after them. Called before every video, so a time changed
+    while the link runs changes the order from the next video on."""
+    waiting = [item for item in manifest['items'] if item['status'] == 'completed' and item.get('redo')]
+    if not waiting:
+        return []
+    due = next_due(Path(directory).resolve().parent.parent, manifest['id'], now)
+    return sorted((item for item in waiting if item['number'] in due), key=lambda item: (due[item['number']], item['number']))
+
+
+def build_plan(directory, *, settings_id=None, now=None, unchanged=None):
     """Read only. `entries`: number, kind ('redo' or 'skip'), reason, scheduled (an unsent Page schedule will follow the new file).
-    `settings_id`: the saved settings the new versions would use; a video already made with them is skipped."""
+    `settings_id`: the saved settings the new versions would use; a video already made with them is skipped. `unchanged`: a
+    function of a video's job config; a video it accepts would come out the same, so it is skipped."""
     directory = Path(directory).resolve()
     manifest = read_json(directory/'campaign.json')
     now = time.time() if now is None else now
@@ -57,6 +90,8 @@ def build_plan(directory, *, settings_id=None, now=None):
             entry['reason'] = 'Sắp đến giờ đăng (dưới 30 phút); để Tèo đăng bản hiện có.'
         elif settings_id and _uses(directory, item, settings_id):
             entry['reason'] = 'Đã làm bằng giọng này.'
+        elif unchanged is not None and _accepts(directory, item, unchanged):
+            entry['reason'] = 'Đã có đúng Sub, giọng và âm lượng này.'
         else:
             entry.update(kind='redo', scheduled=bool(found))
         entries.append(entry)
@@ -69,6 +104,14 @@ def _uses(directory, item, settings_id):
     try:
         return read_json(effective_job(directory, item)/'config.json').get('campaign_settings_version') == settings_id
     except (OSError, ValueError, KeyError):
+        return False
+
+
+def _accepts(directory, item, unchanged):
+    from teodub.campaign_settings import effective_job
+    try:
+        return bool(unchanged(read_json(effective_job(directory, item)/'config.json')))
+    except (OSError, ValueError, KeyError, TypeError):
         return False
 
 

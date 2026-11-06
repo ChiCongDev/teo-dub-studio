@@ -236,7 +236,8 @@ class CampaignLinkTab(ttk.Frame):
         self.likes_window = None
         self.exclude_window = None
         self.voice_window = None
-        self.header = tk.StringVar(self)
+        self.subtitle_redo_window = None
+        self.header =tk.StringVar(self)
         self.source = tk.StringVar(self)
         self.status = tk.StringVar(self)
         self.notice = tk.StringVar(self)
@@ -279,7 +280,11 @@ class CampaignLinkTab(ttk.Frame):
         subtitles.grid(row=5, column=0, sticky='ew', pady=(0, 6))
         self.burn = tk.BooleanVar(self, value=False)
         self.box_label = tk.StringVar(self, value=SUBTITLE_BOXES['none']['label'])
-        self.burn_check = ttk.Checkbutton(subtitles, text='Ghi Sub Việt vào hình', variable=self.burn,
+        # Owner 05/11/2026: the voice and the two export levels of this link only, and optionally its finished videos made again.
+        # Packed first, so a narrow window cuts the note at the end of the row and never this button.
+        self.voice_button = ttk.Button(subtitles, text='Giọng & âm lượng…', command=self.open_voice)
+        self.voice_button.pack(side='right')
+        self.burn_check =ttk.Checkbutton(subtitles, text='Ghi Sub Việt vào hình', variable=self.burn,
                                           command=self.subtitle_edited)
         self.burn_check.pack(side='left')
         ttk.Label(subtitles, text='Khung che Sub gốc').pack(side='left', padx=(16, 6))
@@ -290,10 +295,11 @@ class CampaignLinkTab(ttk.Frame):
         self.subtitle_button = ttk.Button(subtitles, text='Áp dụng cho video chưa xong', command=self.apply_subtitles,
                                           state='disabled')
         self.subtitle_button.pack(side='left', padx=(12, 0))
+        # Owner 06/11/2026: the same Sub choice also for the finished videos that are not posted yet (soonest schedule first).
+        self.subtitle_redo_button = ttk.Button(subtitles, text='Áp dụng cho cả video đã xong chưa đăng…',
+                                               command=self.open_subtitle_redo, state='disabled')
+        self.subtitle_redo_button.pack(side='left', padx=(6, 0))
         ttk.Label(subtitles, textvariable=self.subtitle_note, foreground='#164b78').pack(side='left', padx=(10, 0))
-        # Owner 05/11/2026: the voice and the two export levels of this link only, and optionally its finished videos made again.
-        self.voice_button = ttk.Button(subtitles, text='Giọng & âm lượng…', command=self.open_voice)
-        self.voice_button.pack(side='right')
         table = ttk.Frame(self)
         table.grid(row=6, column=0, sticky='nsew')
         table.columnconfigure(0, weight=1)
@@ -423,6 +429,19 @@ class CampaignLinkTab(ttk.Frame):
         except (OSError, ValueError, TypeError, KeyError):
             current = None
         self.subtitle_seen = current
+        # Owner 06/11/2026: finished videos not posted yet can be made again with the Sub choice, so a link with nothing left to
+        # make still shows (and lets the owner change) the Sub its finished videos have.
+        finished = any(item['status'] == 'completed' and item.get('outputs') and not item.get('no_post') for item in manifest['items'])
+        none_left = current is None
+        if none_left and finished:
+            try:
+                from teodub.campaign_settings import finished_config
+                from teodub.subtitle_style import validate_subtitle_style
+                style = validate_subtitle_style(finished_config(self.directory, manifest))
+                current = dict(burn_subtitles=style['burn_subtitles'], subtitle_box=style.get('subtitle_box', 'none'))
+            except (OSError, ValueError, TypeError, KeyError):
+                finished = False
+        self.subtitle_redo_button.configure(state='normal' if finished else 'disabled')
         if current is None:
             self.burn_check.configure(state='disabled')
             self.box_picker.configure(state='disabled')
@@ -435,8 +454,8 @@ class CampaignLinkTab(ttk.Frame):
             self.burn.set(current['burn_subtitles'])
             self.box_label.set(SUBTITLE_BOXES[current['subtitle_box']]['label'])
             self.box_picker.configure(state='readonly' if current['burn_subtitles'] else 'disabled')
-            self.subtitle_note.set('')
-        self.subtitle_button.configure(state='normal' if self.subtitle_dirty else 'disabled')
+            self.subtitle_note.set('Không còn video chưa xong.' if none_left else '')
+        self.subtitle_button.configure(state='normal' if self.subtitle_dirty and not none_left else 'disabled')
 
     def subtitle_edited(self, _event=None):
         self.subtitle_dirty = True
@@ -571,6 +590,17 @@ class CampaignLinkTab(ttk.Frame):
         except (OSError, ValueError, RuntimeError) as exc:
             self.message.set(str(exc))
 
+    def open_subtitle_redo(self):
+        """Áp dụng cho cả video đã xong chưa đăng (owner 06/11/2026): this tab's Sub choice, also for finished videos not posted."""
+        if self.subtitle_redo_window is not None and self.subtitle_redo_window.winfo_exists():
+            self.subtitle_redo_window.lift()
+            return
+        try:
+            from teodub.campaign_subtitle_redo_ui import SubtitleRedoDialog
+            self.subtitle_redo_window = SubtitleRedoDialog(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.message.set(str(exc))
+
     def open_voice(self):
         """Đổi giọng (owner 05/11/2026): this link's voice only, optionally making its finished videos again."""
         if self.voice_window is not None and self.voice_window.winfo_exists():
@@ -622,6 +652,8 @@ class CampaignLinkTab(ttk.Frame):
         messagebox.showinfo(f'Video {item["number"]}', str(item.get('message') or 'Chưa có thông tin.'), parent=self)
 
     def close(self):
+        if self.subtitle_redo_window is not None and self.subtitle_redo_window.winfo_exists():
+            self.subtitle_redo_window.close()
         if self.voice_window is not None and self.voice_window.winfo_exists():
             self.voice_window.close()
         if self.exclude_window is not None and self.exclude_window.winfo_exists():

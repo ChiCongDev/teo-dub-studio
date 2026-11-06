@@ -144,7 +144,8 @@ class MakeAgainTests(Redo):
         self.assertEqual((row[3], row[4]), ('Hoàn tất · làm lại giọng', '100%'))
 
 
-class PageTests(Redo):
+class PageFixture(Redo):
+    """Page schedules for the finished videos of a link; the tests are in PageTests (and in test_campaign_subtitle_redo)."""
     def setUp(self):
         super().setUp()
         self.accounts = FacebookAccounts(self.root)
@@ -160,6 +161,8 @@ class PageTests(Redo):
         source = campaign_video_source(self.root, directory, number)
         return self.store.create(self.account, self.page, source, f'Caption {number}', '#tag', time.time()+hours*3600)['id']
 
+
+class PageTests(PageFixture):
     def test_the_plan_leaves_sent_and_soon_videos_alone_and_counts_unsent_schedules(self):
         a = self.finished(6)
         armed, saved, sent, soon, _ = (self.schedule(a, n, h) for n, h in ((1, 5), (2, 6), (3, 7), (4, .2), (5, 8)))

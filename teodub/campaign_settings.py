@@ -230,20 +230,43 @@ def next_subtitle_settings(directory, manifest):
     return dict(burn_subtitles=subtitles['burn_subtitles'], subtitle_box=subtitles.get('subtitle_box', 'none'))
 
 
-def save_next_subtitle_settings(data_dir, directory, burn_subtitles, subtitle_box):
-    """Owner 04/11/2026: switch Sub Việt in the picture per link; every other pending setting stays as it is."""
+def proposed_subtitle_settings(data_dir, directory, burn_subtitles, subtitle_box, *, allow_finished=False):
+    """Read only: the link's next settings with only Sub Việt in the picture and its box changed (nothing is saved)."""
     from teodub.campaign_batch import _campaign_path
     from teodub.campaign import read_json
     from teodub.campaign_preview import next_video_config
     directory = _campaign_path(Path(data_dir).resolve(), Path(directory).resolve())
     manifest = read_json(directory/'campaign.json')
     preview = next_video_config(directory, manifest, retry_failed=True, active=True)
-    if preview is None:
+    if preview is None and not allow_finished:
         raise ValueError('Chiến dịch đã hoàn tất; không còn video để áp dụng Sub mới.')
     update = next_settings(directory)
-    settings = dict(update['settings'] if update else preview['config'])
+    settings = dict(update['settings'] if update else (preview['config'] if preview else finished_config(directory, manifest)))
     settings.update(burn_subtitles=burn_subtitles, subtitle_box=subtitle_box)
-    return save_next_settings(data_dir, directory, settings)
+    return settings
+
+
+def save_next_subtitle_settings(data_dir, directory, burn_subtitles, subtitle_box, *, allow_finished=False):
+    """Owner 04/11/2026: switch Sub Việt in the picture per link; every other pending setting stays as it is. `allow_finished`
+    (owner 06/11/2026) also accepts a link with nothing left to make: its finished videos are going to be made again."""
+    settings = proposed_subtitle_settings(data_dir, directory, burn_subtitles, subtitle_box, allow_finished=allow_finished)
+    return save_next_settings(data_dir, directory, settings, allow_finished=allow_finished)
+
+
+def made_with(config, settings):
+    """True when a finished video's job config already has this Sub Việt choice, voice and the two export levels: making it
+    again with `settings` would give the same video. An unreadable config counts as different (make it again)."""
+    from teodub.audio_mix import validate_audio_mix
+    from teodub.subtitle_style import validate_subtitle_style
+
+    def picture(values):  # With no Sub in the picture its colour, size and box do not matter.
+        style = validate_subtitle_style(values)
+        return style if style['burn_subtitles'] else dict(burn_subtitles=False)
+    try:
+        return (picture(config) == picture(settings) and _voice_view(config) == _voice_view(settings)
+                and validate_audio_mix(config) == validate_audio_mix(settings))
+    except (ValueError, TypeError, KeyError):
+        return False
 
 
 def proposed_config(directory, item, config, update):

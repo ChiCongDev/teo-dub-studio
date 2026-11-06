@@ -56,6 +56,28 @@ def run_order(manifest):
     return likes_first(items) if manifest.get('order') == 'likes' else items
 
 
+def picking_order(directory, manifest):
+    """06/11/2026 (owner): the videos in the order a worker takes them, ONE AT A TIME so the order is looked at again before every
+    video: finished videos waiting to be made again whose Page schedule is soonest first (by due time), then the link's usual
+    `run_order`. Each video is given once per run. `manifest` is edited in place by the caller, so videos marked for a redo while
+    the link runs are seen here too."""
+    taken = set()
+    while True:
+        absorb_redo(directory, manifest)  # A redo asked for while the link runs is part of the order for the very next video.
+        try:
+            from teodub.campaign_redo import redo_priority
+            first = redo_priority(directory, manifest)
+        except Exception:  # The schedules cannot be read: the usual order, never a stopped link.
+            first = []
+        urgent = {item['number'] for item in first}
+        item = next((item for item in [*first, *(x for x in run_order(manifest) if x['number'] not in urgent)]
+                     if item['number'] not in taken), None)
+        if item is None:
+            return
+        taken.add(item['number'])
+        yield item
+
+
 def read_json(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
 
@@ -491,7 +513,7 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
         try:
             absorb_exclusions(directory, manifest)
             absorb_redo(directory, manifest)
-            for item in run_order(manifest):
+            for item in picking_order(directory, manifest):
                 if stop.exists():
                     break
                 absorb_exclusions(directory, manifest)  # Loại trừ asked for while this link runs: before the next video starts.
