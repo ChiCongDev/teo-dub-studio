@@ -489,7 +489,7 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
     """
     directory = Path(directory).resolve()
     runner = runner or run_child
-    processed, turn_over = 0, False
+    processed, turn_over, rest = 0, False, None
     with _job_lock(directory):
         manifest = read_json(directory/'campaign.json')
         if manifest.get('archived_at'):
@@ -554,6 +554,13 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                     continue
                 if not should_process(item, retry_failed=retry_failed):
                     continue
+                if not redoing:
+                    # 07/11/2026 (owner): "Số video mỗi ngày" — enough new videos today: rest until 0h. Videos made again come first in
+                    # the picking order, so none is left behind by this stop; a video already running was never cut off.
+                    from teodub.campaign_daily import rest_for
+                    rest = rest_for(directory, manifest)
+                    if rest is not None:
+                        break
                 # Another campaign's turn: never in the middle of a video, only before the next one starts. Only a
                 # campaign running on its own (no supervisor) hands over on request.
                 hand_over = external_stop is None and (directory/ROTATION_REQUEST).is_file()
@@ -604,6 +611,7 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                     continue
                 if result['status'] in DONE:
                     item['completed_at'] = item['last_attempt_finished_at']
+                    item['first_completed_at'] = item['completed_at']  # "Số video mỗi ngày" counts the day a video was first finished.
                 item.update(status=result['status'], message=str(result.get('message') or ''), outputs=result.get('outputs', {}))
                 if result.get('google_drive') is not None:
                     item['google_drive'] = result['google_drive']
@@ -633,7 +641,12 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                                       else 'needs_attention')
                 if manifest['status'] == 'needs_attention':
                     manifest['message'] = 'Chiến dịch còn video lỗi. Chọn dòng lỗi để xem nguyên nhân; bấm Thử lại video lỗi khi đã xử lý.'
-            if turn_over and not stop.exists():
+            if rest is not None and not stop.exists():
+                manifest['status'] = 'paused'
+                manifest['message'] = rest['message']
+                manifest['resume_after'] = rest['until']  # The desktop and the rotation start it again from this, as for a source wait.
+                manifest['resume_retry_failed'] = False
+            elif turn_over and not stop.exists():
                 manifest['status'] = 'paused'
                 manifest['message'] = ROTATION_WAIT
             elif stop.exists() or manifest['status'] == 'running':

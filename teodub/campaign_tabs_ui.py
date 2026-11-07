@@ -246,6 +246,9 @@ class CampaignLinkTab(ttk.Frame):
         self.subtitle_note = tk.StringVar(self)
         self.subtitle_dirty = False
         self.subtitle_seen = None
+        self.daily = tk.StringVar(self)
+        self.daily_note = tk.StringVar(self)
+        self.daily_dirty = False
         self.progress = tk.DoubleVar(self, value=0)
         self.build()
 
@@ -277,8 +280,20 @@ class CampaignLinkTab(ttk.Frame):
         self.channel_button = ttk.Button(buttons, text='Mở kênh', command=self.open_channel, state='disabled')
         self.channel_button.pack(side='left', padx=(6, 0))
         # Owner 04/11/2026: Sub Việt in the picture, per link. It reaches only videos not finished yet.
-        subtitles = ttk.Frame(self)
-        subtitles.grid(row=5, column=0, sticky='ew', pady=(0, 6))
+        options = ttk.Frame(self)
+        options.grid(row=5, column=0, sticky='ew', pady=(0, 6))
+        subtitles = ttk.Frame(options)
+        subtitles.pack(fill='x')
+        # Owner 07/11/2026: how many videos this link finishes a day; empty = all of them.
+        daily = ttk.Frame(options)
+        daily.pack(fill='x', pady=(6, 0))
+        ttk.Label(daily, text='Số video mỗi ngày').pack(side='left')
+        self.daily_entry = ttk.Entry(daily, textvariable=self.daily, width=6)
+        self.daily_entry.pack(side='left', padx=(8, 6))
+        self.daily_entry.bind('<KeyRelease>', self.daily_edited)
+        self.daily_button = ttk.Button(daily, text='Lưu', command=self.save_daily, state='disabled')
+        self.daily_button.pack(side='left')
+        ttk.Label(daily, textvariable=self.daily_note, foreground='#164b78').pack(side='left', padx=(10, 0))
         self.burn = tk.BooleanVar(self, value=False)
         self.box_label = tk.StringVar(self, value=SUBTITLE_BOXES['none']['label'])
         # Owner 05/11/2026: the voice and the two export levels of this link only, and optionally its finished videos made again.
@@ -407,6 +422,7 @@ class CampaignLinkTab(ttk.Frame):
         # Owner 31/10/2026: opening the channel to look needs only a channel link; it never touches a running video.
         self.channel_button.configure(state='normal' if channel else 'disabled')
         self.read_subtitles(manifest)
+        self.read_daily(manifest)
         if time.monotonic()-self.slow_at >= SLOW_S or not self.posting:
             self.slow_at = time.monotonic()
             self.read_slow_columns(manifest)
@@ -484,6 +500,38 @@ class CampaignLinkTab(ttk.Frame):
             return
         self.subtitle_dirty = False
         self.message.set('Đã lưu. Sub mới áp dụng cho các video chưa xong; video đang làm làm xong theo cấu hình cũ.')
+        self.refresh(full=True)
+
+    def read_daily(self, manifest):
+        """Show the saved number of videos a day and today's count; never overwrite a number the owner is still typing."""
+        from teodub.campaign_daily import note, read_limit
+        if self.daily_dirty:
+            return
+        limit = read_limit(self.directory)
+        self.daily.set('' if limit is None else str(limit))
+        self.daily_note.set(note(self.directory, manifest))
+
+    def daily_edited(self, _event=None):
+        from teodub.campaign_daily import read_limit
+        saved = read_limit(self.directory)
+        self.daily_dirty = self.daily.get().strip() != ('' if saved is None else str(saved))
+        self.daily_button.configure(state='normal' if self.daily_dirty else 'disabled')
+        if self.daily_dirty:
+            self.daily_note.set('Chưa lưu.')
+
+    def save_daily(self):
+        """Số video mỗi ngày (owner 07/11/2026): applies before the link's next video, also while it runs."""
+        from teodub.campaign_daily import write_limit
+        try:
+            value = write_limit(self.directory, self.daily.get())
+        except (OSError, ValueError) as exc:
+            self.message.set('Chưa lưu số video mỗi ngày: '+str(exc))
+            return
+        self.daily_dirty = False
+        self.daily_button.configure(state='disabled')
+        self.message.set('Đã bỏ giới hạn: link làm hết video của nó.' if value is None else
+                         f'Đã lưu: mỗi ngày link này chỉ làm {value} video, tới 0h làm tiếp. Video đang làm không bị cắt. '
+                         'Đang nghỉ mà muốn làm thêm ngay thì tăng số rồi bấm Chạy.')
         self.refresh(full=True)
 
     def read_slow_columns(self, manifest):

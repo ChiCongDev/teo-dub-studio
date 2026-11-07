@@ -342,9 +342,11 @@ def _waiting(row, now):
 
 
 def _source_wait(result):
-    """A campaign that paused only because no download source worked now, with the time to try again."""
+    """A campaign that paused only because no download source worked now, or because it made enough videos for today (07/11/2026,
+    "Số video mỗi ngày": it rests until 0h), with the time to try again."""
+    from teodub.campaign_daily import REST
     after = result.get('resume_after')
-    return (str(result.get('message') or '').startswith(campaign.WAITING_SOURCE)
+    return (str(result.get('message') or '').startswith((campaign.WAITING_SOURCE, REST))
             and type(after) in (int, float) and math.isfinite(after))
 
 
