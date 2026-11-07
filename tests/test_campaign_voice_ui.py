@@ -14,7 +14,8 @@ from teodub.campaign_voice_ui import ChangeVoiceDialog, voice_choices
 from teodub.common import atomic_json
 
 
-class ChangeVoiceTests(unittest.TestCase):
+class LinkFixture(unittest.TestCase):
+    """A link with four videos on a local data folder; no tests of its own (test_campaign_config_ui builds on it too)."""
     def setUp(self):
         from teodub.app import Studio
         from teodub.campaign_tabs_ui import CampaignArea
@@ -62,6 +63,8 @@ class ChangeVoiceTests(unittest.TestCase):
             manifest['status'] = 'completed'  # As the worker leaves a link with nothing left to make.
         atomic_json(self.directory/'campaign.json', manifest)
 
+
+class ChangeVoiceTests(LinkFixture):
     def dialog(self):
         window = ChangeVoiceDialog(self.link)
         self.addCleanup(lambda: window.winfo_exists() and window.close())

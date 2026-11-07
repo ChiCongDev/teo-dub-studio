@@ -269,6 +269,26 @@ def made_with(config, settings):
         return False
 
 
+LANGUAGE_MODEL_KEYS = (('asr_model', 'auto'), ('translation_model', 'default'), ('translation_effort', 'medium'))
+
+
+def same_language_models(config, settings):
+    """True when the recognition and translation choices are the same: only then a video made again keeps its Vietnamese lines
+    (no AI call); `prepare_next_job` applies this same rule."""
+    return all(config.get(key, default) == settings.get(key, default) for key, default in LANGUAGE_MODEL_KEYS)
+
+
+def made_with_everything(config, settings):
+    """`made_with` plus the picture speed and the wording table (owner 06/11/2026, Chỉnh sửa cấu hình): the choices that still
+    reach a finished video when it is rendered again. The AI models are not here: a finished video keeps its translation."""
+    from teodub.wording import validate_wording
+    try:
+        return (made_with(config, settings) and config.get('speed', .9) == settings.get('speed', .9)
+                and validate_wording(config) == validate_wording(settings))
+    except (ValueError, TypeError, KeyError):
+        return False
+
+
 def proposed_config(directory, item, config, update):
     from teodub.campaign import CONFIG_KEYS
     if not update:
@@ -317,9 +337,7 @@ def prepare_next_job(directory, item):
                 raise ValueError('Video nguồn đã thay đổi; chưa áp dụng cấu hình mới.')
             reused['source'] = source
         caption = state.get('captions')
-        same_language_models = all(config.get(key, default) == proposed.get(key, default) for key, default in
-            (('asr_model', 'auto'), ('translation_model', 'default'), ('translation_effort', 'medium')))
-        if source and caption and same_language_models:
+        if source and caption and same_language_models(config, proposed):
             if hash_file(caption['path']) != caption['sha256']:
                 raise ValueError('Lời Việt đã thay đổi; chưa dùng lại.')
             proposed.update(subtitles=caption['path'], subtitles_sha256=caption['sha256'],

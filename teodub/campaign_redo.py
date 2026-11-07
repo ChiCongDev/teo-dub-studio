@@ -64,10 +64,12 @@ def redo_priority(directory, manifest, now=None):
     return sorted((item for item in waiting if item['number'] in due), key=lambda item: (due[item['number']], item['number']))
 
 
-def build_plan(directory, *, settings_id=None, now=None, unchanged=None):
+def build_plan(directory, *, settings_id=None, now=None, unchanged=None, blocked=None,
+               same_reason='Đã có đúng Sub, giọng và âm lượng này.'):
     """Read only. `entries`: number, kind ('redo' or 'skip'), reason, scheduled (an unsent Page schedule will follow the new file).
     `settings_id`: the saved settings the new versions would use; a video already made with them is skipped. `unchanged`: a
-    function of a video's job config; a video it accepts would come out the same, so it is skipped."""
+    function of a video's job config; a video it accepts would come out the same, so it is skipped. `blocked`: a function of a
+    video's job config that returns the reason (text) a video cannot be made again, or ''."""
     directory = Path(directory).resolve()
     manifest = read_json(directory/'campaign.json')
     now = time.time() if now is None else now
@@ -90,8 +92,10 @@ def build_plan(directory, *, settings_id=None, now=None, unchanged=None):
             entry['reason'] = 'Sắp đến giờ đăng (dưới 30 phút); để Tèo đăng bản hiện có.'
         elif settings_id and _uses(directory, item, settings_id):
             entry['reason'] = 'Đã làm bằng giọng này.'
+        elif blocked is not None and _answer(directory, item, blocked):
+            entry['reason'] = _answer(directory, item, blocked)
         elif unchanged is not None and _accepts(directory, item, unchanged):
-            entry['reason'] = 'Đã có đúng Sub, giọng và âm lượng này.'
+            entry['reason'] = same_reason
         else:
             entry.update(kind='redo', scheduled=bool(found))
         entries.append(entry)
@@ -113,6 +117,14 @@ def _accepts(directory, item, unchanged):
         return bool(unchanged(read_json(effective_job(directory, item)/'config.json')))
     except (OSError, ValueError, KeyError, TypeError):
         return False
+
+
+def _answer(directory, item, blocked):
+    from teodub.campaign_settings import effective_job
+    try:
+        return str(blocked(read_json(effective_job(directory, item)/'config.json')) or '')
+    except (OSError, ValueError, KeyError, TypeError):
+        return ''
 
 
 def apply(directory, numbers):

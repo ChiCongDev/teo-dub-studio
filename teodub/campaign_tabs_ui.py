@@ -237,6 +237,7 @@ class CampaignLinkTab(ttk.Frame):
         self.exclude_window = None
         self.voice_window = None
         self.subtitle_redo_window = None
+        self.config_window = None
         self.header =tk.StringVar(self)
         self.source = tk.StringVar(self)
         self.status = tk.StringVar(self)
@@ -284,6 +285,9 @@ class CampaignLinkTab(ttk.Frame):
         # Packed first, so a narrow window cuts the note at the end of the row and never this button.
         self.voice_button = ttk.Button(subtitles, text='Giọng & âm lượng…', command=self.open_voice)
         self.voice_button.pack(side='right')
+        # Owner 06/11/2026: every setting of the Video đơn page for this link's next videos, in one window.
+        self.config_button = ttk.Button(subtitles, text='Chỉnh sửa cấu hình…', command=self.open_config)
+        self.config_button.pack(side='right', padx=(0, 6))
         self.burn_check =ttk.Checkbutton(subtitles, text='Ghi Sub Việt vào hình', variable=self.burn,
                                           command=self.subtitle_edited)
         self.burn_check.pack(side='left')
@@ -601,6 +605,17 @@ class CampaignLinkTab(ttk.Frame):
         except (OSError, ValueError, RuntimeError) as exc:
             self.message.set(str(exc))
 
+    def open_config(self):
+        """Chỉnh sửa cấu hình (owner 06/11/2026): the whole Video đơn form for this link's next videos only."""
+        if self.config_window is not None and self.config_window.winfo_exists():
+            self.config_window.lift()
+            return
+        try:
+            from teodub.campaign_config_ui import LinkConfigDialog
+            self.config_window = LinkConfigDialog(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.message.set(str(exc))
+
     def open_voice(self):
         """Đổi giọng (owner 05/11/2026): this link's voice only, optionally making its finished videos again."""
         if self.voice_window is not None and self.voice_window.winfo_exists():
@@ -652,6 +667,8 @@ class CampaignLinkTab(ttk.Frame):
         messagebox.showinfo(f'Video {item["number"]}', str(item.get('message') or 'Chưa có thông tin.'), parent=self)
 
     def close(self):
+        if self.config_window is not None and self.config_window.winfo_exists():
+            self.config_window.close()
         if self.subtitle_redo_window is not None and self.subtitle_redo_window.winfo_exists():
             self.subtitle_redo_window.close()
         if self.voice_window is not None and self.voice_window.winfo_exists():
