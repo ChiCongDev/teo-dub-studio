@@ -611,6 +611,26 @@ def _caption_editor(dialog, label):
     return found[0]
 
 
+# What a stop reports about each same-named header button, for diagnosis: where it sits and which blocks hold it
+# (tag, role, aria-label of up to 5 ancestors), never any page text beyond the button's own short label.
+HEADER_DETAIL = '''e => {
+    const r = e.getBoundingClientRect(), chain = [];
+    for (let n = e.parentElement; n && chain.length < 5; n = n.parentElement) {
+        const role = n.getAttribute('role'), label = n.getAttribute('aria-label');
+        chain.push(n.tagName.toLowerCase() + (role ? '[' + role + ']' : '') + (label ? '"' + label.slice(0, 25) + '"' : ''));
+    }
+    const own = (e.getAttribute('aria-label') || e.innerText || '').trim().slice(0, 30);
+    return `"${own}" ${e.tagName.toLowerCase()} x=${Math.round(r.left)} y=${Math.round(r.top + scrollY)} ${Math.round(r.width)}x${Math.round(r.height)} trong ${chain.join(' < ')}`;
+}'''
+
+
+def _header_details(headers):
+    try:
+        return ' | '.join(h.evaluate(HEADER_DETAIL) for h in headers)
+    except Exception:
+        return 'không đọc được chi tiết'
+
+
 def _page_main(tab, target):
     """Anchor to the unique visible Page heading, not the global main count.
 
@@ -625,7 +645,8 @@ def _page_main(tab, target):
                and buttons.nth(i).evaluate('e => !e.closest("[role=article],article,[role=dialog],[role=navigation],nav,aside,[role=complementary]")')]
     if _page_id(tab.url) == target['page_id'] and headers:
         if len(headers) != 1:
-            raise ValueError('Không xác định duy nhất tên Page trong đầu trang; chưa mở hộp bài viết.')
+            raise ValueError('Không xác định duy nhất tên Page trong đầu trang; chưa mở hộp bài viết. '
+                             f'Các nút trùng tên ({len(headers)}): {_header_details(headers)}')
         return _one_visible(headers[0].locator('xpath=ancestor::*[self::main or @role="main"][1]'),
                             'vùng đầu trang mang tên Page')
     heading = _one_visible(tab.get_by_role('main').get_by_role('heading', name=shown),

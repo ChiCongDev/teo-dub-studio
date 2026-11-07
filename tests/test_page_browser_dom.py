@@ -445,6 +445,21 @@ class BrowserDomTests(unittest.TestCase):
             _page_main(tab, self.target)
         self.assertTrue(tab.locator('#composer').is_hidden())
 
+    def test_duplicate_header_stop_names_each_button_and_its_surroundings(self):
+        from teodub.facebook_web_post import _page_main
+        self.html = reel_fixture().replace('<main><button>Page Demo</button>',
+            '<main><button>Page Demo</button><div role="group" aria-label="Contact"><button>Page Demo</button></div>')
+        tab = self.context.new_page()
+        tab.goto(self.target['url'])
+        with self.assertRaises(ValueError) as caught:
+            _page_main(tab, self.target)
+        message = str(caught.exception)
+        self.assertTrue(message.startswith('Không xác định duy nhất tên Page trong đầu trang; chưa mở hộp bài viết.'))
+        self.assertIn('(2)', message)
+        self.assertIn('div[group]"Contact"', message)
+        self.assertEqual(message.count('"Page Demo" button'), 2)
+        self.assertTrue(tab.locator('#composer').is_hidden())
+
     def test_changed_body_identity_files_or_duplicate_final_controls_block_publish(self):
         modifications = [
             "document.querySelector('[role=textbox]').innerText='edited';",
