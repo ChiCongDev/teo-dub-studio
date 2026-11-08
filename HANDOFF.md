@@ -1602,3 +1602,9 @@ Worker được Windows Job Object bảo vệ: khi dừng cưỡng bức chỉ k
 - Test: 4 test moi trong test_campaign_next_settings + 1 trong test_campaign_link_tabs; 37 test chien dich qua.
 - Ban sao truoc khi cai: work/20261104-sub-viet-chien-dich/truoc-khi-cai/. Anh: work/20261104-sub-viet-chien-dich/anh/.
 - Chua phat hanh 1.0.2: cho chu du an noi "PHAT HANH" (hoac bam Phat hanh phien ban.cmd).
+
+## 08/11/2026 - Page trung ten: Facebook them anh dai dien mang ten Page (da cai, chua phat hanh)
+- Loi: bai Video 33 (Page "Du lich toan cau") that bai voi "Khong xac dinh duy nhat ten Page trong dau trang". Facebook gio dat ten Page them len anh dai dien tron (aria-label, khong co chu), nen dau trang co 2 nut trung ten.
+- Sua (teodub/facebook_web_post.py, _page_main): khi co nhieu nut, chi giu nut HIEN CHU dung ten Page; neu van con 2 nut co chu thi van dung lai (quy tac "khong doan Page" giu nguyen). HEADER_DETAIL them "co chu/khong chu" de lan sau doc duoc nguyen nhan.
+- Test: +2 trong tests/test_page_browser_dom.py (36 qua); 1201 test Page/Facebook qua. Ban goc luu o work/20261108-page-trung-ten/truoc-khi-cai.
+- Bai Video 33 va Video 227 chua dang (khong bam Dang); thu lai bang "Khoi phuc lich da chon...". Cai luc 13:15 khi Teo ranh (bai ke tiep 17:15).

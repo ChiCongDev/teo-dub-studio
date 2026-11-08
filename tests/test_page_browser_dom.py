@@ -460,6 +460,26 @@ class BrowserDomTests(unittest.TestCase):
         self.assertEqual(message.count('"Page Demo" button'), 2)
         self.assertTrue(tab.locator('#composer').is_hidden())
 
+    def test_avatar_without_text_beside_the_page_name_is_not_a_second_page_name(self):
+        # Facebook 08/11/2026: the round profile picture is named after the Page too (aria-label, no text of its own).
+        from teodub.facebook_web_post import _page_main
+        self.html = reel_fixture().replace('<main><button>Page Demo</button>',
+            '<main><div role="button" aria-label="Page Demo" style="width:40px;height:40px"><svg width="40" height="40"></svg></div><button>Page Demo</button>')
+        tab = self.context.new_page()
+        tab.goto(self.target['url'])
+        main = _page_main(tab, self.target)
+        self.assertTrue(main.get_by_role('button', name='Create post').is_visible())
+
+    def test_two_name_buttons_with_text_still_stop_even_when_an_avatar_is_there_too(self):
+        from teodub.facebook_web_post import _page_main
+        self.html = reel_fixture().replace('<main><button>Page Demo</button>',
+            '<main><div role="button" aria-label="Page Demo" style="width:40px;height:40px"><svg width="40" height="40"></svg></div><button>Page Demo</button><button>Page Demo</button>')
+        tab = self.context.new_page()
+        tab.goto(self.target['url'])
+        with self.assertRaisesRegex(ValueError, 'đầu trang'):
+            _page_main(tab, self.target)
+        self.assertTrue(tab.locator('#composer').is_hidden())
+
     def test_changed_body_identity_files_or_duplicate_final_controls_block_publish(self):
         modifications = [
             "document.querySelector('[role=textbox]').innerText='edited';",

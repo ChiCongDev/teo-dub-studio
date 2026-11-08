@@ -620,7 +620,7 @@ HEADER_DETAIL = '''e => {
         chain.push(n.tagName.toLowerCase() + (role ? '[' + role + ']' : '') + (label ? '"' + label.slice(0, 25) + '"' : ''));
     }
     const own = (e.getAttribute('aria-label') || e.innerText || '').trim().slice(0, 30);
-    return `"${own}" ${e.tagName.toLowerCase()} x=${Math.round(r.left)} y=${Math.round(r.top + scrollY)} ${Math.round(r.width)}x${Math.round(r.height)} trong ${chain.join(' < ')}`;
+    return `"${own}" ${e.tagName.toLowerCase()} ${(e.innerText || '').trim() ? 'có chữ' : 'không chữ'} x=${Math.round(r.left)} y=${Math.round(r.top + scrollY)} ${Math.round(r.width)}x${Math.round(r.height)} trong ${chain.join(' < ')}`;
 }'''
 
 
@@ -644,6 +644,10 @@ def _page_main(tab, target):
     headers = [buttons.nth(i) for i in range(buttons.count()) if buttons.nth(i).is_visible()
                and buttons.nth(i).evaluate('e => !e.closest("[role=article],article,[role=dialog],[role=navigation],nav,aside,[role=complementary]")')]
     if _page_id(tab.url) == target['page_id'] and headers:
+        if len(headers) > 1:
+            # Facebook 08/11/2026 names the round profile picture after the Page too (aria-label, no text of its own),
+            # beside the name text. Only buttons that SHOW the Page's exact name count; two of those still stop.
+            headers = [h for h in headers if _name(h.inner_text()) == _name(target['name'])] or headers
         if len(headers) != 1:
             raise ValueError('Không xác định duy nhất tên Page trong đầu trang; chưa mở hộp bài viết. '
                              f'Các nút trùng tên ({len(headers)}): {_header_details(headers)}')
