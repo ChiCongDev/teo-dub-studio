@@ -108,6 +108,39 @@ class ConfigDialogTests(LinkFixture):
         self.assertFalse(items[3].get('redo'))
         self.assertIn('Đã xếp làm lại 2 video', self.link.message.get())
 
+    def test_the_tick_is_remembered_for_this_link_until_it_is_saved_unticked(self):
+        from teodub.campaign_config_ui import REDO_FILE, REDO_NOTE
+        self.finish({1, 2})
+        window = self.dialog()
+        self.assertEqual(window.redo_note.get(), '')
+        window.fields['burn_subtitles'].set(True)
+        window.fields['subtitle_box'].set('white')
+        window.redo.set(True)
+        self.assertEqual(window.redo_note.get(), REDO_NOTE)
+        window.apply()
+        self.assertTrue((self.directory/REDO_FILE).exists())
+        reopened = self.dialog()
+        self.assertTrue(reopened.redo.get())
+        self.assertEqual(reopened.redo_note.get(), REDO_NOTE)
+        self.assertIn('Chưa đổi gì', (reopened.apply(), reopened.status.get())[1])  # Ticked again with no change: nothing is made twice.
+        self.assertEqual(sum(bool(item.get('redo')) for item in self.items().values()), 2)
+        reopened.fields['subtitle_size'].set('20')
+        reopened.redo.set(False)
+        reopened.apply()
+        again = self.dialog()
+        self.assertFalse(again.redo.get())
+        self.assertEqual(again.redo_note.get(), '')
+
+    def test_the_tick_is_not_remembered_when_nothing_is_saved_or_the_file_is_damaged(self):
+        from teodub.campaign_config_ui import REDO_FILE
+        window = self.dialog()
+        window.redo.set(True)
+        window.apply()  # Nothing changed, so nothing is saved.
+        self.assertFalse((self.directory/REDO_FILE).exists())
+        window.close()
+        (self.directory/REDO_FILE).write_text('{broken', encoding='utf-8')
+        self.assertFalse(self.dialog().redo.get())
+
     def test_a_changed_picture_speed_or_wording_also_reaches_the_finished_videos(self):
         self.finish({1})
         window = self.dialog()

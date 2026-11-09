@@ -6,9 +6,12 @@ download and no AI call (campaign_redo). The form borrows the Video đơn page's
 checked exactly as there."""
 import tkinter as tk
 from tkinter import ttk
+from pathlib import Path
 import types
 
 from teodub import campaign_redo
+from teodub.common import atomic_json
+from teodub.campaign import read_json
 from teodub.campaign_settings import (VOICE_KEYS, current_voice_config, made_with_everything, same_language_models,
                                       save_next_settings, validate_settings)
 from teodub.campaign_subtitle_redo_ui import describe
@@ -22,7 +25,21 @@ CHANGES = (('giọng và cách đọc', set(VOICE_KEYS)), ('tốc độ hình', 
            ('Sub Việt', {'burn_subtitles', 'subtitle_color', 'subtitle_weight', 'subtitle_size', 'subtitle_box'}),
            ('từ ngữ', {'wording'}), ('mô hình AI', {'asr_model', 'translation_model', 'translation_effort'}),
            ('Google Drive', {'drive_upload'}))
+REDO_FILE = 'config-redo-choice.json'
+REDO_NOTE = 'Đang tick: bấm Lưu chỉnh sửa sẽ làm lại cả video đã xong chưa đăng (chỉ video chưa làm đúng cấu hình này).'
 SKIP_LANGUAGE = 'Làm bằng mô hình nhận dạng/dịch khác; làm lại sẽ phải dịch lại (tốn AI), nên để nguyên.'
+
+
+def read_redo_choice(directory):
+    """The tick the owner saved last time for this link. A missing or damaged file means not ticked, never a surprise redo."""
+    try:
+        return read_json(Path(directory)/REDO_FILE).get('redo') is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def write_redo_choice(directory, value):
+    atomic_json(Path(directory)/REDO_FILE, dict(version=1, redo=bool(value)))
 
 
 def changed_parts(before, after):
@@ -143,8 +160,12 @@ class LinkConfigDialog(tk.Toplevel):
         ttk.Label(shell, textvariable=self.status, wraplength=940, foreground='#164b78').pack(side='bottom', anchor='w', pady=4)
         redo = ttk.LabelFrame(shell, text='Video đã hoàn thành, chưa đăng', padding=8)
         redo.pack(side='bottom', fill='x', pady=(6, 0))
-        self.redo = tk.BooleanVar(self, False)
+        self.redo = tk.BooleanVar(self, read_redo_choice(self.directory))
+        self.redo_note = tk.StringVar(self)
         ttk.Checkbutton(redo, variable=self.redo, text='Làm lại cả video ĐÃ HOÀN THÀNH chưa đăng với chỉnh sửa này').pack(anchor='w')
+        ttk.Label(redo, textvariable=self.redo_note, wraplength=920, foreground='#b3261e').pack(anchor='w')
+        self.redo.trace_add('write', lambda *_args: self.redo_note.set(REDO_NOTE if self.redo.get() else ''))
+        self.redo_note.set(REDO_NOTE if self.redo.get() else '')
         self.result = tk.Text(redo, wrap='word', height=5, font=('Segoe UI', 10), state='disabled')
         ttk.Label(redo, wraplength=920, foreground='#444444', text=(
             'Mặc định không tick: chỉ video chưa làm theo cấu hình mới. Khi tick, chỉ giọng, âm lượng, Sub, tốc độ hình và từ ngữ được '
@@ -371,6 +392,10 @@ class LinkConfigDialog(tk.Toplevel):
             return
         try:
             record = save_next_settings(self.data_dir, self.directory, merged, allow_finished=self.redo.get())
+            try:
+                write_redo_choice(self.directory, self.redo.get())  # Remembered for the next time the window opens.
+            except OSError:
+                pass  # Only the memory of the tick is lost; the saved settings and the redo below are unaffected.
             message = f'Đã lưu chỉnh sửa của "{self.name}" ({", ".join(changed)}) cho video chưa làm, từ video chạy tiếp theo.'
             if self.redo.get():
                 plan = self.plan(record['settings'], record['id'])
