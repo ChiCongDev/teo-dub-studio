@@ -705,6 +705,27 @@ class FacebookTab(ttk.Frame):
         except (OSError, ValueError) as exc:
             self.status.set(str(exc))
 
+    def manage_page_of(self, account_id, page_key):
+        """Page đăng on a link's tab (owner 10/11/2026): the Quản lý Page window of one Page, whichever account this tab shows now. It
+        selects that account and Page exactly as the owner would by hand, then opens the window manage_page opens."""
+        if self.destroyed or self.studio.closing or self.studio.closed:
+            return None
+        window = self.manager_windows.get(page_key)
+        if window is not None and window.winfo_exists():
+            window.deiconify()
+            window.lift()
+            return window
+        if not any(row['id'] == page_key and row['account_id'] == account_id for row in self.data['pages']):
+            self.reload()
+        if not any(row['id'] == page_key and row['account_id'] == account_id for row in self.data['pages']):
+            raise ValueError('Page không còn trong tài khoản này. Kiểm tra tab Quản lý Page.')
+        if not self.activate_account(account_id):
+            raise ValueError('Chưa chuyển được sang tài khoản của Page này.')
+        if not self.tree.exists(page_key):
+            raise ValueError('Chưa thấy Page này trong danh sách của tài khoản.')
+        self.tree.selection_set(page_key)
+        return self.manage_page()
+
     def open_page(self):
         row = self.selected_page()
         if row:

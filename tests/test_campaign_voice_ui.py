@@ -178,65 +178,13 @@ class ChangeVoiceTests(LinkFixture):
         self.assertTrue(items[1].get('redo') and items[2].get('redo'))
         self.assertEqual(next_settings(self.directory)['settings']['voice_gain'], 1.2)
 
-    # Áp dụng cho cả video đã xong chưa đăng (owner 06/11/2026): same fixture, the Sub choice of the tab.
-    def sub_dialog(self, burn=True, box='Khung trắng · chữ đen'):
-        self.link.burn.set(burn)
-        self.link.box_label.set(box)
-        self.link.subtitle_edited()
-        self.link.open_subtitle_redo()
-        window = self.link.subtitle_redo_window
-        self.addCleanup(lambda: window.winfo_exists() and window.close())
-        window.check()
-        return window
-
-    def test_the_new_button_needs_a_finished_video_and_opens_one_window(self):
-        self.assertEqual(str(self.link.subtitle_redo_button['state']), 'disabled')
-        self.finish({1})
-        self.link.refresh(full=True)
-        self.assertEqual(str(self.link.subtitle_redo_button['state']), 'normal')
-        self.link.open_subtitle_redo()
-        first = self.link.subtitle_redo_window
-        self.link.open_subtitle_redo()
-        self.assertIs(self.link.subtitle_redo_window, first)
-        self.link.close()
-        self.assertFalse(first.winfo_exists())
-
-    def test_the_sub_dialog_saves_the_sub_and_asks_for_the_finished_videos_again(self):
-        self.finish({1, 2})
-        window = self.sub_dialog()
-        text = window.result.get('1.0', 'end')
-        self.assertIn('Sẽ làm lại: 2 video', text)
-        self.assertEqual(str(window.apply_button['state']), 'normal')
-        self.assertIsNone(next_settings(self.directory))  # The check only reads.
-        window.apply()
-        settings = next_settings(self.directory)['settings']
-        self.assertEqual((settings['burn_subtitles'], settings['subtitle_box']), (True, 'white'))
-        items = {item['number']: item for item in campaign.read_json(self.directory/'campaign.json')['items']}
-        self.assertTrue(items[1].get('redo') and items[2].get('redo'))
-        self.assertFalse(items[3].get('redo'))
-        self.assertIn('Đã xếp làm lại 2 video', self.link.message.get())
-        self.assertFalse(self.link.subtitle_dirty)
-        self.assertFalse(window.winfo_exists())
-
-    def test_a_link_with_everything_finished_shows_its_sub_and_still_takes_the_new_one(self):
+    # 10/11/2026: the Sub buttons of the tab are gone; the tab only shows the Sub the link uses.
+    def test_a_link_with_everything_finished_still_shows_its_sub_in_a_read_only_line(self):
         self.finish({1, 2, 3, 4})
         self.link.refresh(full=True)
-        self.assertFalse(self.link.burn.get())
-        self.assertEqual(str(self.link.subtitle_button['state']), 'disabled')
-        self.assertEqual(str(self.link.subtitle_redo_button['state']), 'normal')
-        window = self.sub_dialog()
-        self.assertIn('Sẽ làm lại: 4 video', window.result.get('1.0', 'end'))
-        window.apply()
-        self.assertEqual(next_settings(self.directory)['settings']['burn_subtitles'], True)
-        manifest = campaign.read_json(self.directory/'campaign.json')
-        self.assertEqual(sum(bool(item.get('redo')) for item in manifest['items']), 4)
-
-    def test_the_sub_dialog_does_nothing_when_the_finished_videos_already_have_this_sub(self):
-        self.finish({1, 2})
-        window = self.sub_dialog(burn=False, box='Không khung')
-        self.assertIn('Sẽ làm lại: 0 video', window.result.get('1.0', 'end'))
-        self.assertEqual(str(window.apply_button['state']), 'disabled')
-        self.assertIsNone(next_settings(self.directory))
+        self.assertEqual(self.link.sub_summary.get(), 'Sub Việt: không ghi vào hình (đổi trong Chỉnh sửa cấu hình…)')
+        for gone in ('burn_check', 'box_picker', 'subtitle_button', 'subtitle_redo_button', 'apply_subtitles', 'open_subtitle_redo'):
+            self.assertFalse(hasattr(self.link, gone), gone)
 
     def test_the_listening_test_needs_a_finished_video_and_changes_nothing(self):
         window = self.dialog()

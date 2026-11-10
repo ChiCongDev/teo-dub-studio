@@ -546,7 +546,6 @@ class LinkConfigDialog(tk.Toplevel):
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.status.set('Chưa lưu: '+str(exc))
             return
-        self.tab.subtitle_dirty = False
         self.tab.message.set(message)
         self.tab.refresh(full=True)
         # Owner 10/11/2026: after saving, a name can be given to keep these settings and use them again; "Không cần" closes.

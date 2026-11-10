@@ -295,10 +295,30 @@ class CampaignBatchController:
         if status == 'needs_attention':
             return 'attention'
         if status == 'running':
-            return 'running' if self.studio.campaign_busy else 'interrupted'
+            # 10/11/2026 (owner): a link whose file says "running" but that the running work does not hold is interrupted, not running
+            # (its worker was cut off while another link goes on; the tab said "Đang làm" for a day). Display only.
+            if not self.studio.campaign_busy or self._outside_the_work(target) is True:
+                return 'interrupted'
+            return 'running'
         if status == 'paused':
             return 'paused'
         return 'ready'
+
+    def _outside_the_work(self, target):
+        """True when the running work certainly does not hold this link: it is not the video being made and has no row in the saved
+        turns. None when that cannot be told (no saved list, or unreadable): then the link is shown as before."""
+        if self.directory is None:
+            return None
+        try:
+            queue = read_json(self.directory/'queue.json')
+            rows = queue['campaigns']
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        if not isinstance(rows, list):
+            return None
+        if queue.get('active_directory') == str(target):
+            return False
+        return not any(isinstance(row, dict) and row.get('directory') == str(target) for row in rows)
 
     def _waiting_request(self, target):
         """'join' or 'leave' when this link's last Chạy / Dừng link này still waits for the running worker, which takes

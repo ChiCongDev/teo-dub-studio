@@ -244,16 +244,14 @@ class CampaignLinkTab(ttk.Frame):
         self.likes_window = None
         self.exclude_window = None
         self.voice_window = None
-        self.subtitle_redo_window = None
         self.config_window = None
+        self.pages_window = None
         self.header =tk.StringVar(self)
         self.source = tk.StringVar(self)
         self.status = tk.StringVar(self)
         self.notice = tk.StringVar(self)
         self.message = tk.StringVar(self)
-        self.subtitle_note = tk.StringVar(self)
-        self.subtitle_dirty = False
-        self.subtitle_seen = None
+        self.sub_summary = tk.StringVar(self)
         self.daily = tk.StringVar(self)
         self.daily_note = tk.StringVar(self)
         self.daily_dirty = False
@@ -287,6 +285,9 @@ class CampaignLinkTab(ttk.Frame):
         ttk.Button(buttons, text='Đóng tab', command=self.close).pack(side='left', padx=(18, 0))
         self.channel_button = ttk.Button(buttons, text='Mở kênh', command=self.open_channel, state='disabled')
         self.channel_button.pack(side='left', padx=(6, 0))
+        # Owner 10/11/2026: the Pages that post this link's videos; a click opens that Page's Quản lý Page window.
+        self.pages_button = ttk.Button(buttons, text='Page đăng', command=self.open_pages)
+        self.pages_button.pack(side='left', padx=(6, 0))
         # Owner 04/11/2026: Sub Việt in the picture, per link. It reaches only videos not finished yet.
         options = ttk.Frame(self)
         options.grid(row=5, column=0, sticky='ew', pady=(0, 6))
@@ -302,8 +303,6 @@ class CampaignLinkTab(ttk.Frame):
         self.daily_button = ttk.Button(daily, text='Lưu', command=self.save_daily, state='disabled')
         self.daily_button.pack(side='left')
         ttk.Label(daily, textvariable=self.daily_note, foreground='#164b78').pack(side='left', padx=(10, 0))
-        self.burn = tk.BooleanVar(self, value=False)
-        self.box_label = tk.StringVar(self, value=SUBTITLE_BOXES['none']['label'])
         # Owner 05/11/2026: the voice and the two export levels of this link only, and optionally its finished videos made again.
         # Packed first, so a narrow window cuts the note at the end of the row and never this button.
         self.voice_button = ttk.Button(subtitles, text='Giọng & âm lượng…', command=self.open_voice)
@@ -311,22 +310,9 @@ class CampaignLinkTab(ttk.Frame):
         # Owner 06/11/2026: every setting of the Video đơn page for this link's next videos, in one window.
         self.config_button = ttk.Button(subtitles, text='Chỉnh sửa cấu hình…', command=self.open_config)
         self.config_button.pack(side='right', padx=(0, 6))
-        self.burn_check =ttk.Checkbutton(subtitles, text='Ghi Sub Việt vào hình', variable=self.burn,
-                                          command=self.subtitle_edited)
-        self.burn_check.pack(side='left')
-        ttk.Label(subtitles, text='Khung che Sub gốc').pack(side='left', padx=(16, 6))
-        self.box_picker = ttk.Combobox(subtitles, textvariable=self.box_label, state='readonly', width=22,
-                                       values=[item['label'] for item in SUBTITLE_BOXES.values()])
-        self.box_picker.pack(side='left')
-        self.box_picker.bind('<<ComboboxSelected>>', self.subtitle_edited)
-        self.subtitle_button = ttk.Button(subtitles, text='Áp dụng cho video chưa xong', command=self.apply_subtitles,
-                                          state='disabled')
-        self.subtitle_button.pack(side='left', padx=(12, 0))
-        # Owner 06/11/2026: the same Sub choice also for the finished videos that are not posted yet (soonest schedule first).
-        self.subtitle_redo_button = ttk.Button(subtitles, text='Áp dụng cho cả video đã xong chưa đăng…',
-                                               command=self.open_subtitle_redo, state='disabled')
-        self.subtitle_redo_button.pack(side='left', padx=(6, 0))
-        ttk.Label(subtitles, textvariable=self.subtitle_note, foreground='#164b78').pack(side='left', padx=(10, 0))
+        # Owner 10/11/2026: the Sub Việt controls of this row were the same as in Chỉnh sửa cấu hình… (which does more, and skips the
+        # videos made with other AI models); only what the link uses is shown here, read only.
+        ttk.Label(subtitles, textvariable=self.sub_summary, foreground='#164b78').pack(side='left')
         table = ttk.Frame(self)
         table.grid(row=6, column=0, sticky='nsew')
         table.columnconfigure(0, weight=1)
@@ -459,65 +445,27 @@ class CampaignLinkTab(ttk.Frame):
         self.sorter.apply([str(item['number']) for item in manifest['items']])
 
     def read_subtitles(self, manifest):
-        """Show what the next video will use; never overwrite a choice the owner is still making."""
+        """The Sub Việt line: what the next video will use, or what the finished videos have when nothing is left to make."""
         from teodub.campaign_settings import next_subtitle_settings
         try:
             current = next_subtitle_settings(self.directory, manifest)
         except (OSError, ValueError, TypeError, KeyError):
             current = None
-        self.subtitle_seen = current
-        # Owner 06/11/2026: finished videos not posted yet can be made again with the Sub choice, so a link with nothing left to
-        # make still shows (and lets the owner change) the Sub its finished videos have.
-        finished = any(item['status'] == 'completed' and item.get('outputs') and not item.get('no_post') for item in manifest['items'])
-        none_left = current is None
-        if none_left and finished:
+        if current is None and any(item['status'] == 'completed' and item.get('outputs') for item in manifest['items']):
             try:
                 from teodub.campaign_settings import finished_config
                 from teodub.subtitle_style import validate_subtitle_style
                 style = validate_subtitle_style(finished_config(self.directory, manifest))
                 current = dict(burn_subtitles=style['burn_subtitles'], subtitle_box=style.get('subtitle_box', 'none'))
             except (OSError, ValueError, TypeError, KeyError):
-                finished = False
-        self.subtitle_redo_button.configure(state='normal' if finished else 'disabled')
+                current = None
         if current is None:
-            self.burn_check.configure(state='disabled')
-            self.box_picker.configure(state='disabled')
-            self.subtitle_button.configure(state='disabled')
-            self.subtitle_note.set('Không còn video chưa xong.')
-            return
-        self.burn_check.configure(state='normal')
-        self.box_picker.configure(state='readonly' if self.burn.get() else 'disabled')
-        if not self.subtitle_dirty:
-            self.burn.set(current['burn_subtitles'])
-            self.box_label.set(SUBTITLE_BOXES[current['subtitle_box']]['label'])
-            self.box_picker.configure(state='readonly' if current['burn_subtitles'] else 'disabled')
-            self.subtitle_note.set('Không còn video chưa xong.' if none_left else '')
-        self.subtitle_button.configure(state='normal' if self.subtitle_dirty and not none_left else 'disabled')
-
-    def subtitle_edited(self, _event=None):
-        self.subtitle_dirty = True
-        self.box_picker.configure(state='readonly' if self.burn.get() else 'disabled')
-        self.subtitle_button.configure(state='normal')
-        self.subtitle_note.set('Chưa áp dụng.')
-
-    def apply_subtitles(self):
-        from teodub.campaign_settings import save_next_subtitle_settings
-        box = next((key for key, item in SUBTITLE_BOXES.items() if item['label'] == self.box_label.get()), 'none')
-        burn = bool(self.burn.get())
-        question = ('Ghi Sub Việt vào hình' + (' với '+SUBTITLE_BOXES[box]['label'].lower() if box != 'none' else ', không khung')
-                    if burn else 'Không ghi Sub Việt vào hình (chỉ có Sub bật/tắt)')
-        if not messagebox.askyesno('Sub Việt', question+'\n\nÁp dụng cho các video chưa xong của link này '
-                                   '(kể cả video lỗi khi thử lại). Video đang làm và video đã xong giữ nguyên. Áp dụng?',
-                                   parent=self):
-            return
-        try:
-            save_next_subtitle_settings(self.studio.data_dir, self.directory, burn, box)
-        except (OSError, ValueError) as exc:
-            self.message.set('Chưa áp dụng Sub: '+str(exc))
-            return
-        self.subtitle_dirty = False
-        self.message.set('Đã lưu. Sub mới áp dụng cho các video chưa xong; video đang làm làm xong theo cấu hình cũ.')
-        self.refresh(full=True)
+            self.sub_summary.set('Sub Việt: chưa có video để xem cấu hình (đổi trong Chỉnh sửa cấu hình…)')
+        elif not current['burn_subtitles']:
+            self.sub_summary.set('Sub Việt: không ghi vào hình (đổi trong Chỉnh sửa cấu hình…)')
+        else:
+            box = SUBTITLE_BOXES.get(current['subtitle_box'], SUBTITLE_BOXES['none'])['label']
+            self.sub_summary.set(f'Sub Việt: ghi vào hình · {box} (đổi trong Chỉnh sửa cấu hình…)')
 
     def read_daily(self, manifest):
         """Show the saved number of videos a day and today's count; never overwrite a number the owner is still typing."""
@@ -659,17 +607,6 @@ class CampaignLinkTab(ttk.Frame):
         except (OSError, ValueError, RuntimeError) as exc:
             self.message.set(str(exc))
 
-    def open_subtitle_redo(self):
-        """Áp dụng cho cả video đã xong chưa đăng (owner 06/11/2026): this tab's Sub choice, also for finished videos not posted."""
-        if self.subtitle_redo_window is not None and self.subtitle_redo_window.winfo_exists():
-            self.subtitle_redo_window.lift()
-            return
-        try:
-            from teodub.campaign_subtitle_redo_ui import SubtitleRedoDialog
-            self.subtitle_redo_window = SubtitleRedoDialog(self)
-        except (OSError, ValueError, RuntimeError) as exc:
-            self.message.set(str(exc))
-
     def open_config(self):
         """Chỉnh sửa cấu hình (owner 06/11/2026): the whole Video đơn form for this link's next videos only."""
         if self.config_window is not None and self.config_window.winfo_exists():
@@ -689,6 +626,18 @@ class CampaignLinkTab(ttk.Frame):
         try:
             from teodub.campaign_voice_ui import ChangeVoiceDialog
             self.voice_window = ChangeVoiceDialog(self)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.message.set(str(exc))
+
+    def open_pages(self):
+        """Page đăng (owner 10/11/2026): read only; one window per link."""
+        if self.pages_window is not None and self.pages_window.winfo_exists():
+            self.pages_window.lift()
+            self.pages_window.load()
+            return
+        try:
+            from teodub.campaign_pages_ui import CampaignPagesDialog
+            self.pages_window = CampaignPagesDialog(self)
         except (OSError, ValueError, RuntimeError) as exc:
             self.message.set(str(exc))
 
@@ -734,8 +683,8 @@ class CampaignLinkTab(ttk.Frame):
     def close(self):
         if self.config_window is not None and self.config_window.winfo_exists():
             self.config_window.close()
-        if self.subtitle_redo_window is not None and self.subtitle_redo_window.winfo_exists():
-            self.subtitle_redo_window.close()
+        if self.pages_window is not None and self.pages_window.winfo_exists():
+            self.pages_window.close()
         if self.voice_window is not None and self.voice_window.winfo_exists():
             self.voice_window.close()
         if self.exclude_window is not None and self.exclude_window.winfo_exists():

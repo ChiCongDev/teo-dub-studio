@@ -152,6 +152,46 @@ class LinkControllerTests(Fixture):
         self.assertEqual(self.controller.link_state(self.b, dict(manifest, status='ready')), 'ready')
         self.assertEqual(self.controller.link_state(self.b, dict(manifest, status='completed')), 'done')
 
+    def test_a_link_the_running_work_does_not_hold_is_interrupted_not_running(self):
+        # 10/11: video-trái-cây and câu_ca said "Đang làm" for a day while only du-lich-video ran; their worker was cut off.
+        rotation = campaign_batch.create_batch(self.root, [self.a], order='rotate')
+        self.controller.directory = rotation
+        queue = campaign.read_json(rotation/'queue.json')
+        queue.update(status='running', active_directory=str(self.a))
+        atomic_json(rotation/'queue.json', queue)
+        self.studio.campaign_busy = True
+        cut = dict(campaign.read_json(self.b/'campaign.json'), status='running')  # Its file still says running.
+        self.assertEqual(self.controller.link_state(self.b, cut), 'interrupted')
+        self.assertEqual(self.controller.link_state(self.a, dict(cut, status='running')), 'running')  # The one being made.
+        self.studio.campaign_busy = False  # Nothing runs at all: as before.
+        self.assertEqual(self.controller.link_state(self.b, cut), 'interrupted')
+
+    def test_a_link_with_a_row_in_the_turns_or_its_video_running_still_shows_running(self):
+        import copy
+        rotation = campaign_batch.create_batch(self.root, [self.a, self.b], order='rotate')
+        self.controller.directory = rotation
+        queue = campaign.read_json(rotation/'queue.json')
+        queue.update(status='paused', active_directory=None)  # Between two videos: nothing is "active", both have rows.
+        atomic_json(rotation/'queue.json', queue)
+        self.studio.campaign_busy = True
+        running = dict(campaign.read_json(self.b/'campaign.json'), status='running')
+        self.assertEqual(self.controller.link_state(self.b, running), 'running')
+        # Its Dừng link này was taken: the row is gone but its video is still being made.
+        queue = campaign.read_json(rotation/'queue.json')
+        queue.update(status='running', active_directory=str(self.b))
+        queue['campaigns'] = [row for row in queue['campaigns'] if row['directory'] != str(self.b)]
+        atomic_json(rotation/'queue.json', queue)
+        self.assertEqual(self.controller.link_state(self.b, running), 'running')
+
+    def test_with_no_saved_list_or_a_damaged_one_the_state_is_shown_as_before(self):
+        self.studio.campaign_busy = True
+        running = dict(campaign.read_json(self.b/'campaign.json'), status='running')
+        self.assertEqual(self.controller.link_state(self.b, running), 'running')  # No list known: unchanged.
+        rotation = campaign_batch.create_batch(self.root, [self.a], order='rotate')
+        self.controller.directory = rotation
+        (rotation/'queue.json').write_text('{broken', encoding='utf-8')
+        self.assertEqual(self.controller.link_state(self.b, running), 'running')
+
     def test_a_chay_or_dung_the_worker_has_not_taken_yet_shows_at_once(self):
         # 24/10: after Chạy the tab still read 'đã dừng' until the other link's video ended; it was pressed 3 times.
         import os
@@ -352,33 +392,16 @@ class LinkTabsUITests(unittest.TestCase):
             library.destroy()
 
 
-    def test_subtitle_row_shows_the_next_video_and_applies_only_after_confirmation(self):
-        from teodub.campaign_settings import next_subtitle_settings
+    def test_the_sub_line_is_read_only_and_follows_what_the_link_saved(self):
+        from teodub.campaign_settings import save_next_subtitle_settings
         a = self.create('https://www.douyin.com/video/111\nhttps://www.douyin.com/video/112', 'Kênh A')
         link = self.area.links[str(a)]
         link.refresh(full=True)
-        self.assertEqual(str(link.subtitle_button['state']), 'disabled')
-        link.burn.set(True)
-        link.box_label.set('Khung trắng · chữ đen')
-        link.subtitle_edited()
+        self.assertEqual(link.sub_summary.get(), 'Sub Việt: không ghi vào hình (đổi trong Chỉnh sửa cấu hình…)')
+        save_next_subtitle_settings(self.studio.data_dir, a, True, 'white')
         link.refresh(full=True)
-        self.assertTrue(link.burn.get(), 'a choice not applied yet must survive the 2 s refresh')
-        self.assertEqual(str(link.subtitle_button['state']), 'normal')
-        with patch('teodub.campaign_tabs_ui.messagebox.askyesno', return_value=False):
-            link.apply_subtitles()
-        manifest = campaign.read_json(a/'campaign.json')
-        self.assertFalse((a/'next-settings.json').exists())
-        with patch('teodub.campaign_tabs_ui.messagebox.askyesno', return_value=True) as ask:
-            link.apply_subtitles()
-        self.assertIn('khung trắng', ask.call_args.args[1])
-        self.assertEqual(next_subtitle_settings(a, manifest), dict(burn_subtitles=True, subtitle_box='white'))
-        self.assertFalse(link.subtitle_dirty)
-        self.assertEqual(str(link.subtitle_button['state']), 'disabled')
-        link.burn.set(False)
-        link.subtitle_edited()
-        with patch('teodub.campaign_tabs_ui.messagebox.askyesno', return_value=True):
-            link.apply_subtitles()
-        self.assertEqual(next_subtitle_settings(a, manifest), dict(burn_subtitles=False, subtitle_box='none'))
+        self.assertEqual(link.sub_summary.get(), 'Sub Việt: ghi vào hình · Khung trắng · chữ đen (đổi trong Chỉnh sửa cấu hình…)')
+        self.assertEqual(str(link.config_button['text']), 'Chỉnh sửa cấu hình…')  # The one place to change it.
 
 
 if __name__ == '__main__':
