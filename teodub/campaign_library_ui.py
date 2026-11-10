@@ -5,9 +5,12 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from teodub.campaign import is_running, read_json, totals
+from teodub.table_sort import TableSort
 from teodub.campaign_tracking import campaign_notice
 
 
+LIBRARY_STATES = ('Đang chạy', 'Đang khởi động', 'Còn video lỗi', 'Cần kiểm tra', 'Bị gián đoạn', 'Chạy xen kẽ', 'Chờ trong hàng đợi',
+                  'Sẵn sàng', 'Đã dừng', 'Hoàn tất', 'Đã xóa')
 STATE_LABELS = {
     'ready': 'Sẵn sàng', 'completed': 'Hoàn tất', 'needs_attention': 'Còn video lỗi',
     'paused': 'Đã dừng', 'running': 'Bị gián đoạn · có thể tiếp tục',
@@ -71,6 +74,8 @@ class CampaignLibraryTab(ttk.Frame):
                                   ('errors', 'Video lỗi', 75), ('channel', 'Nguồn / kênh', 250)):
             self.tree.heading(key, text=label)
             self.tree.column(key, width=width, minwidth=60, stretch=key in ('name', 'state', 'channel'))
+        # Owner 10/11/2026: a click on a heading sorts the list; the choice is kept.
+        self.sorter = TableSort(self.tree, path=Path(self.studio.data_dir)/'table-sort-library.json', priority=dict(state=LIBRARY_STATES))
         self.tree.grid(row=0, column=0, sticky='nsew')
         vertical = ttk.Scrollbar(table, orient='vertical', command=self.tree.yview)
         vertical.grid(row=0, column=1, sticky='ns')
@@ -197,6 +202,7 @@ class CampaignLibraryTab(ttk.Frame):
             self.tree.delete(key)
         for index, key in enumerate(visible):
             self.tree.move(key, '', index)
+        self.sorter.apply(visible)
         remaining = [key for key in visible if key in selected]
         if remaining:
             self.tree.selection_set(remaining)

@@ -70,6 +70,8 @@ class ConfigDialogTests(LinkFixture):
         message = self.link.message.get()
         for part in ('giọng và cách đọc', 'âm lượng', 'Sub Việt', 'tốc độ hình', 'từ ngữ', 'mô hình AI'):
             self.assertIn(part, message)
+        self.assertTrue(window.winfo_exists())  # The name box is open: the settings can be kept to use again.
+        window.skip_preset()
         self.assertFalse(window.winfo_exists())
 
     def test_the_other_links_settings_and_the_video_don_page_are_not_touched(self):
@@ -118,6 +120,7 @@ class ConfigDialogTests(LinkFixture):
         window.redo.set(True)
         self.assertEqual(window.redo_note.get(), REDO_NOTE)
         window.apply()
+        window.skip_preset()
         self.assertTrue((self.directory/REDO_FILE).exists())
         reopened = self.dialog()
         self.assertTrue(reopened.redo.get())
@@ -127,6 +130,7 @@ class ConfigDialogTests(LinkFixture):
         reopened.fields['subtitle_size'].set('20')
         reopened.redo.set(False)
         reopened.apply()
+        reopened.skip_preset()
         again = self.dialog()
         self.assertFalse(again.redo.get())
         self.assertEqual(again.redo_note.get(), '')
@@ -195,6 +199,175 @@ class ConfigDialogTests(LinkFixture):
                                                                                  rules=[dict(source='a', replacement='b')]))))
         self.assertTrue(same_language_models(config, dict(config, speed=1.0)))
         self.assertFalse(same_language_models(config, dict(config, translation_model='b')))
+
+
+    # Cấu hình đã lưu (owner 10/11/2026)
+    def presets(self):
+        from teodub import config_presets
+        return config_presets.read_presets(self.data)
+
+    def save_as(self, window, name):
+        window.preset_name.set(name)
+        window.save_preset()
+
+    def change_boxes(self, window, voice='Trúc Ly', volume='30'):
+        window.fields['voice'].set(voice)
+        window.fields['original_volume'].set(volume)
+        window.fields['burn_subtitles'].set(True)
+        window.fields['subtitle_box'].set('white')
+
+    def test_after_saving_a_name_can_be_given_and_the_window_closes_when_it_is_answered(self):
+        window = self.dialog()
+        self.assertFalse(window.name_row.winfo_ismapped() or window.preset_offer)
+        self.change_boxes(window)
+        window.apply()
+        self.assertEqual(next_settings(self.directory)['settings']['voice'], 'Trúc Ly')  # The link is saved first.
+        self.assertTrue(window.winfo_exists() and window.preset_offer is not None)
+        self.assertIn('Không cần', window.status.get())
+        self.save_as(window, '  Review   sản phẩm ')
+        self.assertFalse(window.winfo_exists())
+        rows = self.presets()
+        self.assertEqual([row['name'] for row in rows], ['Review sản phẩm'])
+        self.assertEqual((rows[0]['settings']['voice'], rows[0]['settings']['original_gain'], rows[0]['settings']['subtitle_box']),
+                         ('Trúc Ly', .3, 'white'))
+
+    def test_no_thanks_keeps_the_link_saved_and_makes_no_preset(self):
+        window = self.dialog()
+        self.change_boxes(window)
+        window.apply()
+        window.skip_preset()
+        self.assertFalse(window.winfo_exists())
+        self.assertEqual(self.presets(), [])
+        self.assertEqual(next_settings(self.directory)['settings']['voice'], 'Trúc Ly')
+
+    def test_a_preset_is_for_every_link_and_never_holds_the_google_drive_choice(self):
+        window = self.dialog()
+        self.change_boxes(window)
+        window.apply()
+        self.save_as(window, 'Mẫu A')
+        settings = self.presets()[0]['settings']
+        self.assertFalse({'drive_upload', 'drive_data_dir'} & set(settings))
+        self.assertTrue((self.data/'config-presets.json').is_file())  # In the data folder, not in one link's folder.
+        self.assertFalse(list(self.directory.glob('config-presets*')))
+
+    def test_applying_a_preset_only_fills_the_boxes_until_save_is_pressed(self):
+        first = self.dialog()
+        self.change_boxes(first)
+        first.apply()
+        self.save_as(first, 'Mẫu A')
+        saved = next_settings(self.directory)
+        second = self.dialog()
+        self.change_boxes(second, voice='Mai Anh', volume='80')
+        second.preset_choice.set('Mẫu A')
+        second.update_preset_buttons()
+        second.apply_preset()
+        self.assertEqual((second.fields['voice'].get(), second.fields['original_volume'].get()), ('Trúc Ly', '30'))
+        self.assertIn('Chưa lưu cho link', second.status.get())
+        self.assertEqual(next_settings(self.directory), saved)  # Nothing was saved by applying.
+        second.fields['voice'].set('Mai Anh')
+        second.apply()  # Saving is a separate step, as always.
+        self.assertEqual(next_settings(self.directory)['settings']['voice'], 'Mai Anh')
+
+    def test_applying_keeps_the_links_own_google_drive_boxes(self):
+        first = self.dialog()
+        self.change_boxes(first)
+        first.apply()
+        self.save_as(first, 'Mẫu A')
+        second = self.dialog()
+        before = (second.fields['drive_enabled'].get(), dict(second.drive_options))
+        second.preset_choice.set('Mẫu A')
+        second.apply_preset()
+        self.assertEqual((second.fields['drive_enabled'].get(), dict(second.drive_options)), before)
+
+    def test_the_same_name_asks_before_replacing_and_the_other_presets_stay(self):
+        from unittest.mock import patch
+        window = self.dialog()
+        self.change_boxes(window)
+        window.apply()
+        self.save_as(window, 'Mẫu A')
+        window = self.dialog()
+        self.change_boxes(window, voice='Mai Anh', volume='80')
+        window.offer_current()
+        with patch('teodub.campaign_config_ui.messagebox.askyesno', return_value=False) as ask:
+            self.save_as(window, 'mẫu a')
+        self.assertTrue(ask.called)
+        self.assertEqual(self.presets()[0]['settings']['voice'], 'Trúc Ly')  # Refused: the old one stays.
+        self.assertIsNotNone(window.preset_offer)
+        with patch('teodub.campaign_config_ui.messagebox.askyesno', return_value=True):
+            self.save_as(window, 'mẫu a')
+        rows = self.presets()
+        self.assertEqual((len(rows), rows[0]['settings']['voice']), (1, 'Mai Anh'))
+
+    def test_a_bad_name_is_refused_and_asked_again(self):
+        window = self.dialog()
+        self.change_boxes(window)
+        window.apply()
+        for bad in ('', '   ', 'x'*61):
+            self.save_as(window, bad)
+            self.assertTrue(window.winfo_exists() and window.preset_offer is not None)
+            self.assertEqual(self.presets(), [])
+        self.assertTrue(window.status.get())
+
+    def test_save_as_preset_button_keeps_the_boxes_without_saving_the_link(self):
+        window = self.dialog()
+        self.change_boxes(window)
+        window.offer_current()
+        self.save_as(window, 'Chưa lưu cho link')
+        self.assertEqual(len(self.presets()), 1)
+        self.assertIsNone(next_settings(self.directory))
+        self.assertTrue(window.winfo_exists())  # The window stays: the link was never saved.
+
+    def test_the_same_settings_are_not_offered_a_second_name(self):
+        window = self.dialog()
+        self.change_boxes(window)
+        window.apply()
+        self.save_as(window, 'Mẫu A')
+        window = self.dialog()
+        window.offer_current()  # The boxes are exactly the saved preset.
+        self.assertIsNone(window.preset_offer)
+        self.assertIn('đã có sẵn với tên "Mẫu A"', window.status.get())
+
+    def test_rename_and_delete_change_only_the_list(self):
+        from unittest.mock import patch
+        window = self.dialog()
+        self.change_boxes(window)
+        window.apply()
+        self.save_as(window, 'Mẫu A')
+        saved = next_settings(self.directory)
+        window = self.dialog()
+        window.preset_choice.set('Mẫu A')
+        window.update_preset_buttons()
+        with patch('teodub.campaign_config_ui.simpledialog.askstring', return_value='Mẫu B'):
+            window.rename_preset()
+        self.assertEqual([row['name'] for row in self.presets()], ['Mẫu B'])
+        self.assertEqual(window.preset_choice.get(), 'Mẫu B')
+        with patch('teodub.campaign_config_ui.messagebox.askyesno', return_value=False):
+            window.delete_preset()
+        self.assertEqual(len(self.presets()), 1)
+        with patch('teodub.campaign_config_ui.messagebox.askyesno', return_value=True):
+            window.delete_preset()
+        self.assertEqual(self.presets(), [])
+        self.assertEqual(str(window.preset_apply['state']), 'disabled')
+        self.assertEqual(next_settings(self.directory), saved)  # No link was changed.
+
+    def test_a_preset_that_cannot_be_used_says_why_and_leaves_the_links_own_boxes(self):
+        from teodub import config_presets
+        config_presets.save_preset(self.data, 'Hỏng', dict(voice='Giọng không còn', voice_provider='local'))
+        window = self.dialog()
+        own = (window.fields['voice'].get(), window.fields['original_volume'].get())
+        window.preset_choice.set('Hỏng')
+        window.apply_preset()
+        self.assertIn('Chưa áp dụng được cấu hình "Hỏng"', window.status.get())
+        self.assertEqual((window.fields['voice'].get(), window.fields['original_volume'].get()), own)
+        self.assertIsNone(next_settings(self.directory))
+
+    def test_a_damaged_presets_file_means_an_empty_list_and_the_window_still_opens(self):
+        (self.data/'config-presets.json').write_text('{broken', encoding='utf-8')
+        window = self.dialog()
+        self.assertEqual(window.presets, [])
+        self.assertEqual(str(window.preset_apply['state']), 'disabled')
+        window.apply_preset()
+        self.assertIn('Chọn một cấu hình', window.status.get())
 
 
 if __name__ == '__main__':

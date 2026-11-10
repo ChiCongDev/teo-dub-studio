@@ -59,9 +59,26 @@ def finished_day(item):
         return None
 
 
-def done_today(manifest, now=None):
+def redone_day(item):
+    """The day a finished video was last made AGAIN (its new version replaced the old one), or None."""
+    redone = item.get('redone')
+    if item.get('status') != 'completed' or not isinstance(redone, dict):
+        return None
+    try:
+        return datetime.fromisoformat(redone.get('at')).astimezone().date()
+    except (TypeError, ValueError):
+        return None
+
+
+def counts_today(manifest, now=None):
+    """(new videos finished today, videos made again today). Owner 10/11/2026: both count towards the day's number."""
     today = datetime.fromtimestamp(time.time() if now is None else now).astimezone().date()
-    return sum(finished_day(item) == today for item in manifest['items'])
+    return (sum(finished_day(item) == today for item in manifest['items']),
+            sum(redone_day(item) == today for item in manifest['items']))
+
+
+def done_today(manifest, now=None):
+    return sum(counts_today(manifest, now))
 
 
 def midnight_after(now=None):
@@ -76,8 +93,8 @@ def summary(directory, manifest, now=None):
     if limit is None:
         return None
     now = time.time() if now is None else now
-    done = done_today(manifest, now)
-    return dict(limit=limit, done=done, full=done >= limit, until=midnight_after(now))
+    new, again = counts_today(manifest, now)
+    return dict(limit=limit, done=new+again, new=new, again=again, full=new+again >= limit, until=midnight_after(now))
 
 
 def rest_message(info):
@@ -98,8 +115,22 @@ def note(directory, manifest, now=None):
     info = summary(directory, manifest, now)
     if info is None:
         return 'Để trống: link làm hết video của nó.'
-    text = f'Hôm nay đã xong {info["done"]}/{info["limit"]} video.'
+    text = (f'Hôm nay đã xong {info["done"]}/{info["limit"]} video'
+            +(f' ({info["again"]} làm lại, {info["new"]} mới)' if info['again'] else '')+'.')
     if info['full']:
         day = datetime.fromtimestamp(info['until']).strftime('%d/%m')
         text += f' Đã đủ, nghỉ tới 0h ngày {day}.'
     return text
+
+
+def rest_line(directory, manifest, now=None):
+    """The status line of a link that rests until 0h because it made enough videos today, or None for any other pause (a stop, an
+    error): only this one comes back by itself, so only this one is not called "tạm dừng"."""
+    after = manifest.get('resume_after')
+    if (manifest.get('status') != 'paused' or not str(manifest.get('message') or '').startswith(REST)
+            or type(after) not in (int, float)):
+        return None
+    info = summary(directory, manifest, now)
+    day = datetime.fromtimestamp(after).strftime('%d/%m')
+    made = f'đã đủ {info["done"]}/{info["limit"]} video hôm nay' if info else 'đã đủ video hôm nay'
+    return f'Đang nghỉ: {made} · tự chạy lại lúc 0h ngày {day} (muốn làm thêm ngay: tăng số rồi bấm Chạy)'

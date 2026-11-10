@@ -554,13 +554,13 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                     continue
                 if not should_process(item, retry_failed=retry_failed):
                     continue
-                if not redoing:
-                    # 07/11/2026 (owner): "Số video mỗi ngày" — enough new videos today: rest until 0h. Videos made again come first in
-                    # the picking order, so none is left behind by this stop; a video already running was never cut off.
-                    from teodub.campaign_daily import rest_for
-                    rest = rest_for(directory, manifest)
-                    if rest is not None:
-                        break
+                # 07/11/2026 (owner): "Số video mỗi ngày" — enough videos today: rest until 0h. 10/11/2026 (owner): the number counts
+                # the videos made again as well as the new ones, in the order the picking order gives them. A video already
+                # running was never cut off.
+                from teodub.campaign_daily import rest_for
+                rest = rest_for(directory, manifest)
+                if rest is not None:
+                    break
                 # Another campaign's turn: never in the middle of a video, only before the next one starts. Only a
                 # campaign running on its own (no supervisor) hands over on request.
                 hand_over = external_stop is None and (directory/ROTATION_REQUEST).is_file()

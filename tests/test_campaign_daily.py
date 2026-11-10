@@ -1,10 +1,10 @@
-"""Số video mỗi ngày (owner 07/11/2026): a link makes only N new videos a day and rests until 0h; empty = all of them. Local fixtures
-only; no worker process, network or AI."""
+"""Số video mỗi ngày (owner 07/11/2026, counting changed 10/11/2026): a link makes only N videos a day, new ones and ones made again
+together, and rests until 0h; empty = all of them. Local fixtures only; no worker process, network or AI."""
 from datetime import datetime, timedelta
 import time
 import unittest
 
-from teodub import campaign, campaign_batch, campaign_daily
+from teodub import campaign, campaign_batch, campaign_daily, campaign_redo
 from teodub.campaign_daily import REST, finished_day, midnight_after, parse_limit, read_limit, write_limit
 from teodub.common import atomic_json
 from test_campaign_rotation import Fixture
@@ -46,7 +46,7 @@ class LimitFileTests(unittest.TestCase):
         (self.directory/campaign_daily.DAILY_FILE).write_text('{"per_day": "2"}', encoding='utf-8')
         self.assertIsNone(read_limit(self.directory))
 
-    def test_only_videos_first_finished_today_count(self):
+    def test_new_videos_finished_today_and_videos_made_again_today_both_count(self):
         items = [dict(status='completed', completed_at=stamp(0)),
                  dict(status='completed', completed_at=stamp(1), first_completed_at=stamp(1)),
                  dict(status='failed', completed_at=stamp(0)),
@@ -57,7 +57,10 @@ class LimitFileTests(unittest.TestCase):
                  dict(status='completed', completed_at=stamp(0), redone=dict(at=stamp(0))),
                  dict(status='completed', completed_at=stamp(0), first_completed_at=stamp(0))]
         self.assertEqual([finished_day(item) is not None for item in items], [True, True, False, False, True, False, True])
-        self.assertEqual(campaign_daily.done_today(dict(items=items)), 2)
+        # New today: the 2nd and the last (the first has no first_completed_at day stored but was completed today).
+        self.assertEqual(campaign_daily.counts_today(dict(items=items)), (2, 2))  # Made again today: the two redone items.
+        self.assertEqual(campaign_daily.done_today(dict(items=items)), 4)
+        self.assertEqual(campaign_daily.counts_today(dict(items=[dict(status='completed', redone=dict(at=stamp(1)))])), (0, 0))
 
     def test_the_day_ends_at_the_next_midnight(self):
         now = datetime.now().astimezone().replace(hour=23, minute=59, second=0, microsecond=0).timestamp()
@@ -117,6 +120,50 @@ class WorkerTests(Fixture):
         atomic_json(a/'campaign.json', manifest)
         manifest = campaign._run_campaign_locked(a, runner=self.video)
         self.assertEqual(self.videos, [('A', 1), ('A', 2), ('A', 3), ('A', 4)])
+        self.assertEqual(manifest['status'], 'completed')
+
+    def test_videos_made_again_count_towards_the_day_in_the_order_they_come(self):
+        a = self.make('A', 5)
+        campaign._run_campaign_locked(a, runner=self.video, max_videos=3)  # Videos 1-3 finished earlier.
+        manifest = campaign.read_json(a/'campaign.json')
+        for item in manifest['items'][:3]:
+            item['completed_at'] = item['first_completed_at'] = stamp(1)
+        atomic_json(a/'campaign.json', manifest)
+        self.videos.clear()
+        campaign_redo.apply(a, [1, 2, 3])
+        self.limit(a, 2)
+        manifest = campaign._run_campaign_locked(a, runner=self.video)
+        # The two a day are videos made again (they come first); the new videos wait for tomorrow.
+        self.assertEqual(self.videos, [('A', 1), ('A', 2)])
+        self.assertEqual(campaign_daily.counts_today(manifest), (0, 2))
+        self.assertEqual([bool(item.get('redo')) for item in manifest['items'][:3]], [False, False, True])
+        self.assertEqual(manifest['status'], 'paused')
+        self.assertTrue(manifest['message'].startswith(REST))
+        self.assertIn('2/2', manifest['message'])
+        self.assertEqual(manifest['resume_after'], midnight_after())
+
+    def test_new_and_redone_videos_share_the_same_number_when_the_day_has_both(self):
+        a = self.make('A', 5)
+        campaign._run_campaign_locked(a, runner=self.video, max_videos=2)
+        manifest = campaign.read_json(a/'campaign.json')
+        for item in manifest['items'][:2]:
+            item['completed_at'] = item['first_completed_at'] = stamp(1)
+        atomic_json(a/'campaign.json', manifest)
+        self.videos.clear()
+        campaign_redo.apply(a, [1])
+        self.limit(a, 3)
+        manifest = campaign._run_campaign_locked(a, runner=self.video)
+        self.assertEqual(self.videos, [('A', 1), ('A', 3), ('A', 4)])  # One made again, then two new ones: three in all.
+        self.assertEqual(campaign_daily.counts_today(manifest), (2, 1))
+        self.assertIn('3/3', manifest['message'])
+
+    def test_no_number_still_makes_every_video_made_again_first(self):
+        a = self.make('A', 3)
+        campaign._run_campaign_locked(a, runner=self.video, max_videos=2)
+        self.videos.clear()
+        campaign_redo.apply(a, [1, 2])
+        manifest = campaign._run_campaign_locked(a, runner=self.video)
+        self.assertEqual(self.videos, [('A', 1), ('A', 2), ('A', 3)])
         self.assertEqual(manifest['status'], 'completed')
 
     def test_a_failed_video_does_not_count_for_the_day(self):
@@ -232,6 +279,36 @@ class LinkTabTests(LinkFixture):
         self.link.refresh(full=True)
         self.assertIn('Hôm nay đã xong 1/1', self.link.daily_note.get())
         self.assertIn('nghỉ tới 0h', self.link.daily_note.get())
+
+    def test_the_note_says_how_many_were_made_again(self):
+        write_limit(self.directory, '3')
+        manifest = campaign.read_json(self.directory/'campaign.json')
+        manifest['items'][0].update(status='completed', outputs=dict(video='x.mp4'), completed_at=stamp(0), first_completed_at=stamp(0))
+        manifest['items'][1].update(status='completed', outputs=dict(video='y.mp4'), completed_at=stamp(0), first_completed_at=stamp(1),
+                                    redone=dict(at=stamp(0)))
+        atomic_json(self.directory/'campaign.json', manifest)
+        self.link.refresh(full=True)
+        self.assertIn('Hôm nay đã xong 2/3 video (1 làm lại, 1 mới).', self.link.daily_note.get())
+
+    def test_a_link_resting_until_midnight_is_not_called_stopped(self):
+        write_limit(self.directory, '1')
+        manifest = campaign.read_json(self.directory/'campaign.json')
+        manifest['items'][0].update(status='completed', outputs=dict(video='x.mp4'), completed_at=stamp(0), first_completed_at=stamp(0))
+        until = midnight_after()
+        manifest.update(status='paused', message=campaign_daily.rest_message(campaign_daily.summary(self.directory, manifest)),
+                        resume_after=until)
+        atomic_json(self.directory/'campaign.json', manifest)
+        self.link.refresh(full=True)
+        self.assertIn('Đang nghỉ: đã đủ 1/1 video hôm nay', self.link.status.get())
+        self.assertIn(datetime.fromtimestamp(until).strftime('%d/%m'), self.link.status.get())
+        self.assertNotIn('tạm dừng', self.link.status.get())
+        self.assertIn('nghỉ tới 0h', self.link.area.tabs.tab(self.link, 'text'))
+        manifest.update(message='Đã nhận yêu cầu Dừng.')  # A real stop keeps its old words.
+        manifest.pop('resume_after')
+        atomic_json(self.directory/'campaign.json', manifest)
+        self.link.refresh(full=True)
+        self.assertIn('tạm dừng', self.link.status.get())
+        self.assertIn('tạm dừng', self.link.area.tabs.tab(self.link, 'text'))
 
 
 if __name__ == '__main__':

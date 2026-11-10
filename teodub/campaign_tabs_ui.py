@@ -13,6 +13,7 @@ import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from teodub.table_sort import TableSort
 from teodub.campaign import read_json, requested_retries, totals
 from teodub.campaign_tracking import campaign_notice, posting_label, row_tag, tracking_row
 from teodub.common import atomic_json
@@ -34,6 +35,13 @@ STATES = {
     'ready': ('sẵn sàng', 'Sẵn sàng · bấm Chạy'),
     'interrupted': ('gián đoạn', 'Bị gián đoạn · bấm Chạy để chạy tiếp'),
 }
+# The groups of the status columns when a heading is clicked: what needs the owner first.
+VIDEO_STATES = ('Lỗi', 'Gián đoạn', 'Chờ thử lại', 'Đang', 'Kiểm tra nguồn', 'Nhận dạng', 'Chuẩn bị', 'Kết nối', 'Tạo giọng', 'Dựng',
+                'Video xong', 'Chờ xử lý', 'Xong · cần duyệt', 'Hoàn tất', 'Đã dừng', 'Đã loại trừ')
+POSTING_STATES = ('Đăng thất bại', 'Cần kiểm tra', 'Tạm dừng lịch', 'Đang đăng', 'Đã gửi', 'Đang lên lịch', 'Chưa đăng', 'Đăng thành công',
+                  'Không đăng')
+DRIVE_STATES = ('Tải lên bị lỗi', 'Cần kết nối lại', 'Cần kiểm tra', 'Đang tải lên', 'Chờ tải lên', 'Đã tạm dừng tải', 'Đã lưu trên Drive',
+                'Không bật')
 CHANNEL_WINDOW_S = 12*3600  # A channel window may stay open all day; the login helper's own 30 minutes is for signing in.
 RUNNABLE = {'ready', 'paused', 'stopped', 'interrupted'}
 STOPPABLE = {'running', 'waiting', 'handoff'}
@@ -332,6 +340,9 @@ class CampaignLinkTab(ttk.Frame):
                                   ('message', 'Chi tiết / lỗi', 280)):
             self.tree.heading(key, text=label)
             self.tree.column(key, width=width, minwidth=60, stretch=key != 'name')
+        # Owner 10/11/2026: a click on a heading sorts the rows; the choice is kept per link, in the link's own folder.
+        self.sorter = TableSort(self.tree, path=self.directory/'table-sort.json', priority=dict(
+            state=VIDEO_STATES, posting=POSTING_STATES, drive=DRIVE_STATES))
         self.tree.grid(row=0, column=0, sticky='nsew')
         vertical = ttk.Scrollbar(table, orient='vertical', command=self.tree.yview)
         vertical.grid(row=0, column=1, sticky='ns')
@@ -385,6 +396,11 @@ class CampaignLinkTab(ttk.Frame):
         if self.state == 'attention' and failed and retrying == failed:
             self.state = 'retrying'  # Thử lại video lỗi was pressed; its turn has not come yet.
         word, line = STATES.get(self.state, STATES['ready'])
+        if self.state == 'paused':
+            from teodub.campaign_daily import rest_line
+            resting = rest_line(self.directory, manifest)
+            if resting:
+                word, line = 'nghỉ tới 0h', resting  # Owner 10/11/2026: it comes back by itself, it is not stopped.
         try:
             self.area.tabs.tab(self, text=self.title(manifest, counts, word))
         except tk.TclError:
@@ -440,6 +456,7 @@ class CampaignLinkTab(ttk.Frame):
                 self.tree.item(key, values=values, tags=tags)
             else:
                 self.tree.insert('', 'end', iid=key, values=values, tags=tags)
+        self.sorter.apply([str(item['number']) for item in manifest['items']])
 
     def read_subtitles(self, manifest):
         """Show what the next video will use; never overwrite a choice the owner is still making."""

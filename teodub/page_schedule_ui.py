@@ -1,5 +1,6 @@
 """Explicit video schedule approval and a passive, per-Page schedule view."""
 from copy import deepcopy
+from pathlib import Path
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -7,6 +8,7 @@ from tkinter import messagebox, ttk
 from teodub.page_schedule import STATE_LABELS, display_time, parse_time
 from teodub.page_schedule_recovery import stopped_before_publish
 from teodub.page_publish_settings import result_checks_enabled
+from teodub.table_sort import TableSort
 
 
 SCHEDULE_NOTE = ('Giữ Tèo mở và máy không ngủ đến giờ đăng; Chrome cần có phiên đăng nhập đúng tài khoản/Page. '
@@ -390,6 +392,9 @@ class PageSchedulePanel(ttk.Frame):
                                      ('state', 'Trạng thái', 145), ('reason', 'Kết quả / cần xử lý', 250)):
             self.tree.heading(column, text=label)
             self.tree.column(column, width=width, minwidth=80, stretch=True)
+        # Owner 10/11/2026: a click on a heading sorts the list; the choice is kept.
+        data_dir = getattr(self.manager.owner, 'data_dir', None)
+        self.sorter = TableSort(self.tree, path=Path(data_dir)/'table-sort-schedule.json' if data_dir else None)
         self.tree.pack(side='left', fill='both', expand=True)
         scrollbar = ttk.Scrollbar(table, orient='vertical', command=self.tree.yview)
         scrollbar.pack(side='right', fill='y')
@@ -578,6 +583,7 @@ class PageSchedulePanel(ttk.Frame):
             for row in rows:
                 self.tree.insert('', 'end', iid=row['id'], values=(row['source']['label'], display_time(row['due_at']),
                     self.row_state_label(row), row['message']))
+            self.sorter.apply([row['id'] for row in rows])
             self.tree.selection_set([ident for ident in selected if ident in self.rows])
             if focused in self.rows:
                 self.tree.focus(focused)

@@ -5,11 +5,11 @@ when the owner ticks it, and then only for what still reaches a finished video (
 download and no AI call (campaign_redo). The form borrows the Video đơn page's own methods, so every box is filled, read and
 checked exactly as there."""
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, simpledialog, ttk
 from pathlib import Path
 import types
 
-from teodub import campaign_redo
+from teodub import campaign_redo, config_presets
 from teodub.common import atomic_json
 from teodub.campaign import read_json
 from teodub.campaign_settings import (VOICE_KEYS, current_voice_config, made_with_everything, same_language_models,
@@ -97,6 +97,9 @@ class LinkConfigDialog(tk.Toplevel):
         self.voice_help, self.model_summary = tk.StringVar(self), tk.StringVar(self)
         self.drive_summary = tk.StringVar(self, value='Drive: chưa bật tự lưu')
         self.status = tk.StringVar(self, '')
+        self.preset_choice, self.preset_name = tk.StringVar(self), tk.StringVar(self)
+        self.preset_offer = None  # The settings the name box is about to keep, while it is shown.
+        self.close_after_name = False
         self.title('Chỉnh sửa cấu hình')
         self.geometry('1000x860')
         self.minsize(820, 600)
@@ -149,6 +152,7 @@ class LinkConfigDialog(tk.Toplevel):
         ttk.Label(shell, wraplength=940, text='Giống trang Video đơn, nhưng chỉ cho link này: điền sẵn cấu hình link đang dùng. Bấm '
                   '"Lưu chỉnh sửa" thì các video CHƯA LÀM của link làm theo cấu hình mới, từ video kế tiếp. Video đang làm dở giữ cấu hình '
                   'cũ. Trang Video đơn và các link khác không đổi.').pack(anchor='w', pady=(4, 8))
+        self.build_presets(shell)
         # Buttons, tick and notice are packed first, at the bottom, so a short window shrinks the form, never them.
         actions = ttk.Frame(shell)
         actions.pack(side='bottom', fill='x')
@@ -286,6 +290,138 @@ class LinkConfigDialog(tk.Toplevel):
         ttk.Button(drive, text='Chọn thư mục Drive…', command=self.choose_drive).pack(side='left', padx=(10, 8))
         ttk.Label(drive, textvariable=self.drive_summary, wraplength=500).pack(side='left')
 
+    # Cấu hình đã lưu (owner 10/11/2026): named sets of these boxes, the same for every link; they only fill the boxes.
+    def build_presets(self, shell):
+        frame = ttk.LabelFrame(shell, text='Cấu hình đã lưu (dùng chung cho mọi link)', padding=(8, 4))
+        frame.pack(fill='x', pady=(0, 6))
+        row = ttk.Frame(frame)
+        row.pack(fill='x')
+        self.preset_picker = ttk.Combobox(row, textvariable=self.preset_choice, state='readonly', width=38)
+        self.preset_picker.pack(side='left')
+        self.preset_picker.bind('<<ComboboxSelected>>', lambda _event: self.update_preset_buttons())
+        self.preset_apply = ttk.Button(row, text='Áp dụng', command=self.apply_preset)
+        self.preset_apply.pack(side='left', padx=(8, 0))
+        self.preset_rename = ttk.Button(row, text='Đổi tên…', command=self.rename_preset)
+        self.preset_rename.pack(side='left', padx=(6, 0))
+        self.preset_delete = ttk.Button(row, text='Xóa', command=self.delete_preset)
+        self.preset_delete.pack(side='left', padx=(6, 0))
+        ttk.Button(row, text='Lưu thành mẫu…', command=self.offer_current).pack(side='right')
+        self.name_row = ttk.Frame(frame)  # Shown only while a name is asked for.
+        ttk.Label(self.name_row, text='Lưu cấu hình này để dùng lại. Tên:').pack(side='left')
+        self.name_entry = ttk.Entry(self.name_row, textvariable=self.preset_name, width=34)
+        self.name_entry.pack(side='left', padx=6)
+        self.name_entry.bind('<Return>', lambda _event: self.save_preset())
+        ttk.Button(self.name_row, text='Lưu mẫu', command=self.save_preset).pack(side='left')
+        ttk.Button(self.name_row, text='Không cần', command=self.skip_preset).pack(side='left', padx=6)
+        self.refresh_presets()
+
+    def refresh_presets(self, keep=''):
+        self.presets = config_presets.read_presets(self.data_dir)
+        names = [row['name'] for row in self.presets]
+        self.preset_picker.configure(values=names)
+        self.preset_choice.set(keep if keep in names else (self.preset_choice.get() if self.preset_choice.get() in names else ''))
+        self.update_preset_buttons()
+
+    def chosen_preset(self):
+        return config_presets.find_by_name(self.presets, self.preset_choice.get()) if self.preset_choice.get() else None
+
+    def update_preset_buttons(self):
+        state = 'normal' if self.chosen_preset() is not None else 'disabled'
+        for button in (self.preset_apply, self.preset_rename, self.preset_delete):
+            button.configure(state=state)
+
+    def apply_preset(self):
+        """Fill every box from the chosen preset. Nothing is saved: the owner looks at the boxes, then presses Lưu chỉnh sửa."""
+        row = self.chosen_preset()
+        if row is None:
+            self.status.set('Chọn một cấu hình đã lưu trước.')
+            return
+        if self.base is None:
+            self.status.set('Chưa đọc được cấu hình hiện tại của link.')
+            return
+        try:
+            config = dict(self.base, **row['settings'])
+            config['drive_upload'] = self.drive_selection()  # The link's Google Drive choice stays as it is in the boxes now.
+            self.fill(config)
+        except (OSError, ValueError, KeyError, TypeError, StopIteration) as exc:
+            self.load()  # A box may have been filled halfway: show the link's own settings again, never a mix.
+            self.status.set(f'Chưa áp dụng được cấu hình "{row["name"]}" (các ô trở về cấu hình hiện tại của link): {exc}')
+            return
+        self.status.set(f'Đã điền các ô theo cấu hình "{row["name"]}". Chưa lưu cho link: xem lại rồi bấm Lưu chỉnh sửa.')
+
+    def offer_current(self):
+        """Lưu thành mẫu…: keep the boxes as they are now, without saving them for the link."""
+        try:
+            self.offer_name(config_presets.preset_settings(self.capture()), close_after=False)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.status.set('Chưa lưu được thành mẫu: '+str(exc))
+
+    def offer_name(self, settings, *, close_after):
+        same = config_presets.find_same(config_presets.read_presets(self.data_dir), settings)
+        if same is not None:
+            self.status.set(f'Cấu hình này đã có sẵn với tên "{same["name"]}".')
+            return False
+        self.preset_offer, self.close_after_name = settings, close_after
+        self.preset_name.set('')
+        self.name_row.pack(fill='x', pady=(6, 0))
+        self.name_entry.focus_set()
+        return True
+
+    def hide_name(self):
+        self.preset_offer = None
+        self.name_row.pack_forget()
+        if self.close_after_name:
+            self.close()
+
+    def save_preset(self):
+        if self.preset_offer is None:
+            return
+        try:
+            name = config_presets.clean_name(self.preset_name.get())
+            same = config_presets.find_by_name(config_presets.read_presets(self.data_dir), name)
+            if same is not None and not messagebox.askyesno(
+                    'Cấu hình đã lưu', f'Đã có cấu hình tên "{same["name"]}". Ghi đè bằng các ô hiện tại?', parent=self):
+                return
+            record = config_presets.save_preset(self.data_dir, name, self.preset_offer, replace=same is not None)
+        except ValueError as exc:
+            self.status.set(str(exc))
+            return
+        self.refresh_presets(record['name'])
+        self.status.set(f'Đã lưu cấu hình "{record["name"]}". Dùng lại bất cứ lúc nào bằng nút Áp dụng.')
+        self.hide_name()
+
+    def skip_preset(self):
+        self.hide_name()
+
+    def rename_preset(self):
+        row = self.chosen_preset()
+        if row is None:
+            return
+        name = simpledialog.askstring('Đổi tên cấu hình', 'Tên mới:', initialvalue=row['name'], parent=self)
+        if name is None:
+            return
+        try:
+            record = config_presets.rename_preset(self.data_dir, row['id'], name)
+        except ValueError as exc:
+            self.status.set(str(exc))
+            return
+        self.refresh_presets(record['name'])
+        self.status.set(f'Đã đổi tên thành "{record["name"]}". Các link đang dùng cấu hình này không bị đổi.')
+
+    def delete_preset(self):
+        row = self.chosen_preset()
+        if row is None or not messagebox.askyesno(
+                'Xóa cấu hình', f'Xóa cấu hình "{row["name"]}"? Các link đang dùng nó không bị đổi.', parent=self):
+            return
+        try:
+            config_presets.delete_preset(self.data_dir, row['id'])
+        except ValueError as exc:
+            self.status.set(str(exc))
+            return
+        self.preset_choice.set('')
+        self.refresh_presets()
+        self.status.set(f'Đã xóa cấu hình "{row["name"]}".')
+
     def choose_model(self, key):
         label = self.model_labels[key].get()
         value = next((item for item, text in self.choices[key].items() if text == label), None)
@@ -391,6 +527,7 @@ class LinkConfigDialog(tk.Toplevel):
             self.status.set('Chưa đổi gì: sửa một ô rồi bấm Lưu chỉnh sửa.')
             return
         try:
+            keep = config_presets.preset_settings(self.capture())
             record = save_next_settings(self.data_dir, self.directory, merged, allow_finished=self.redo.get())
             try:
                 write_redo_choice(self.directory, self.redo.get())  # Remembered for the next time the window opens.
@@ -412,7 +549,11 @@ class LinkConfigDialog(tk.Toplevel):
         self.tab.subtitle_dirty = False
         self.tab.message.set(message)
         self.tab.refresh(full=True)
-        self.close()
+        # Owner 10/11/2026: after saving, a name can be given to keep these settings and use them again; "Không cần" closes.
+        if self.offer_name(keep, close_after=True):
+            self.status.set('Đã lưu cho link. Muốn dùng lại cấu hình này sau? Đặt tên rồi bấm Lưu mẫu, hoặc bấm Không cần.')
+        else:
+            self.close()
 
     def close(self):
         self.closed = True
