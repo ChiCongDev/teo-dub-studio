@@ -15,6 +15,7 @@ from tkinter import messagebox, ttk
 
 from teodub.table_sort import TableSort
 from teodub.campaign import read_json, requested_retries, totals
+from teodub.campaign_preset_column import PresetColumn
 from teodub.campaign_tracking import campaign_notice, posting_label, row_tag, tracking_row
 from teodub.common import atomic_json
 from teodub.subtitle_style import SUBTITLE_BOXES
@@ -36,7 +37,7 @@ STATES = {
     'interrupted': ('gián đoạn', 'Bị gián đoạn · bấm Chạy để chạy tiếp'),
 }
 # The groups of the status columns when a heading is clicked: what needs the owner first.
-VIDEO_STATES = ('Lỗi', 'Gián đoạn', 'Chờ thử lại', 'Đang', 'Kiểm tra nguồn', 'Nhận dạng', 'Chuẩn bị', 'Kết nối', 'Tạo giọng', 'Dựng',
+VIDEO_STATES = ('Lỗi', 'Gián đoạn', 'Chờ thử lại', 'Đang', 'Kiểm tra nguồn', 'Nhận dạng', 'Chuẩn bị', 'Kết nối', 'Tạo giọng', 'Dựng', 'Làm lại giọng',
                 'Video xong', 'Chờ xử lý', 'Xong · cần duyệt', 'Hoàn tất', 'Đã dừng', 'Đã loại trừ')
 POSTING_STATES = ('Đăng thất bại', 'Cần kiểm tra', 'Tạm dừng lịch', 'Đang đăng', 'Đã gửi', 'Đang lên lịch', 'Chưa đăng', 'Đăng thành công',
                   'Không đăng')
@@ -239,7 +240,8 @@ class CampaignLinkTab(ttk.Frame):
         self.manifest = None
         self.state = 'ready'
         self.slow_at = 0.
-        self.posting, self.drive = {}, {}
+        self.posting, self.drive, self.presets = {}, {}, {}
+        self.preset_column = PresetColumn()
         self.more_window = None
         self.likes_window = None
         self.exclude_window = None
@@ -317,10 +319,10 @@ class CampaignLinkTab(ttk.Frame):
         table.grid(row=6, column=0, sticky='nsew')
         table.columnconfigure(0, weight=1)
         table.rowconfigure(0, weight=1)
-        self.tree = ttk.Treeview(table, columns=('name', 'title', 'url', 'state', 'percent', 'completed_at', 'posting',
-                                                 'drive', 'message'), show='headings', height=12)
+        self.tree = ttk.Treeview(table, columns=('name', 'title', 'url', 'state', 'preset', 'percent', 'completed_at',
+                                                 'posting', 'drive', 'message'), show='headings', height=12)
         for key, label, width in (('name', 'Video', 70), ('title', 'Tiêu đề', 190), ('url', 'Link video', 240),
-                                  ('state', 'Trạng thái', 140), ('percent', 'Tiến độ', 70),
+                                  ('state', 'Trạng thái', 140), ('preset', 'Cấu hình áp dụng', 240), ('percent', 'Tiến độ', 70),
                                   ('completed_at', 'Thời gian hoàn thành', 168),
                                   ('posting', 'Trạng thái đăng bài', 185), ('drive', 'Google Drive', 170),
                                   ('message', 'Chi tiết / lỗi', 280)):
@@ -436,7 +438,8 @@ class CampaignLinkTab(ttk.Frame):
             row = tracking_row(item, active=active, retrying=queued)
             posting = posting_label(item, self.posting)
             drive = self.drive.get(item['number'], {}).get('label', 'Cần kiểm tra')
-            values = row[:-1]+(posting, drive, row[-1])
+            preset = self.presets.get(item['number'], 'Cần kiểm tra')
+            values = row[:4]+(preset,)+row[4:-1]+(posting, drive, row[-1])
             key, tags = str(item['number']), (row_tag(item, queued),)
             if self.tree.exists(key):
                 self.tree.item(key, values=values, tags=tags)
@@ -507,6 +510,10 @@ class CampaignLinkTab(ttk.Frame):
             self.posting = campaign_posting_statuses(self.studio.data_dir, self.directory, manifest)
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
             self.posting = {item['number']: dict(label='Cần kiểm tra', details=str(exc)) for item in manifest['items']}
+        try:  # Owner 10/11/2026: the config each video uses (read with the slow columns, cached per file).
+            self.presets = self.preset_column.cells(self.studio.data_dir, self.directory, manifest)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            self.presets = {}
         self.drive = {}
         for item in manifest['items']:
             try:

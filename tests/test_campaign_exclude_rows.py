@@ -78,7 +78,7 @@ class RowTableTests(unittest.TestCase):
         self.assertEqual(tags, {'1': ('completed',), '2': ('excluded',), '3': ('excluded',), '4': ('pending',)})
         status = {key: link.tree.item(key, 'values')[3] for key in tags}
         self.assertEqual(status, {'1': 'Hoàn tất', '2': 'Hoàn tất · Không đăng', '3': 'Đã loại trừ', '4': 'Chờ xử lý'})
-        posting = {key: link.tree.item(key, 'values')[6] for key in tags}
+        posting = {key: link.tree.set(key, 'posting') for key in tags}
         self.assertEqual((posting['2'], posting['3']), (NOT_POSTED, NOT_POSTED))
         self.assertNotEqual(posting['1'], NOT_POSTED)
         self.assertEqual(str(link.tree.tag_configure('excluded', 'background')), '#dedede')

@@ -113,9 +113,18 @@ def is_skipped(item):
     return item.get('status') == 'excluded' or bool(item.get('no_post'))
 
 
+def redo_making(item):
+    """A finished video whose new version is being made right now (owner 10/11/2026): the worker has moved it to the new revision job,
+    which is not the one the old output was made in. Waiting for its turn is not this."""
+    redo = item.get('redo')
+    if not redo or item.get('status') != 'completed' or not item.get('execution_job'):
+        return False
+    return item['execution_job'] != (redo.get('previous') or {}).get('execution_job')
+
+
 def row_tag(item, retrying=False):
     """The table tag of a row: its own grey background for an excluded video, else the colour of its status."""
-    return 'retrying' if retrying else ('excluded' if is_skipped(item) else item['status'])
+    return 'retrying' if retrying else ('excluded' if is_skipped(item) else 'running' if redo_making(item) else item['status'])
 
 
 def posting_label(item, statuses):
@@ -132,8 +141,12 @@ def tracking_row(item, active=True, retrying=False):
     elif item.get('no_post') and status in ('completed', 'review_required'):
         label += ' · '+NOT_POSTED
     message = item.get('message', '')
-    if item.get('redo') and status == 'completed':  # 05/11/2026: finished, being made again with a new voice; the old file stays.
-        label += ' · làm lại giọng'
+    making = redo_making(item)
+    if making:  # 10/11/2026: its own label and its real progress; the old file still stands until the new one is done.
+        label = 'Đang làm lại giọng' if active else 'Làm lại giọng · tạm dừng'
+        message = 'Đang làm lại bằng giọng mới; bản cũ vẫn dùng được cho tới khi bản mới xong. '+str(event.get('message') or '')
+    elif item.get('redo') and status == 'completed':  # 05/11/2026: finished, to be made again with a new voice; the old file stays.
+        label += ' · chờ làm lại giọng'
         message = 'Đang xếp/làm lại bằng giọng mới; bản cũ vẫn dùng được cho tới khi bản mới xong. '+str(event.get('message') or '')
     elif item.get('redo_failed') and status == 'completed':
         message = 'Lần làm lại giọng gần nhất chưa xong, giữ bản cũ: '+str(item['redo_failed'].get('message', ''))+' | '+message
@@ -142,7 +155,7 @@ def tracking_row(item, active=True, retrying=False):
         message = str(event.get('message') or message)
         if not active:
             message = 'Không còn tiến trình giữ phiên; chưa xác định nguyên nhân. Bấm Chạy / Tiếp tục. Bước cuối: '+message
-    if status in ('completed', 'review_required'):
+    if status in ('completed', 'review_required') and not making:
         percent = 100
     elif status == 'pending':
         percent = 0

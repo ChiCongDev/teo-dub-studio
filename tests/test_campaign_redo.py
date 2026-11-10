@@ -141,7 +141,7 @@ class MakeAgainTests(Redo):
         self.new_voice(a)
         campaign_redo.apply(a, [1])
         row = tracking_row(self.item(a, 1))
-        self.assertEqual((row[3], row[4]), ('Hoàn tất · làm lại giọng', '100%'))
+        self.assertEqual((row[3], row[4]), ('Hoàn tất · chờ làm lại giọng', '100%'))
 
 
 class PageFixture(Redo):
