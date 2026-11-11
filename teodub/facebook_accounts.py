@@ -215,7 +215,7 @@ class FacebookAccounts:
         # Names can change; the immutable account ID always keeps the same profile.
         return self.directory/'browser-profiles'/_id(account_id)/'chrome'
 
-    def save_page(self, account_id, name, url, page_id='', *, record_id=None):
+    def save_page(self, account_id, name, url, page_id='', *, record_id=None, chosen_by_owner=False):
         fields = _page_values(name, url, page_id)
         with self._edit() as value:
             self._account(value, account_id)
@@ -235,6 +235,14 @@ class FacebookAccounts:
                 row = dict(id=uuid.uuid4().hex, account_id=account_id, created_at=_now())
                 value['pages'].append(row)
             row.update(fields, source='manual', updated_at=_now())
+            if chosen_by_owner and record_id is None:
+                row['custom_name'] = 'unconfirmed'  # Typed when adding: compared with Facebook's name at the first Load Page.
+            elif chosen_by_owner:
+                # "Sửa Page": a name that is not the one Facebook showed is the owner's own; Load Page keeps it (11/11/2026).
+                if row.get('discovered_name') and row['discovered_name'] == fields['name']:
+                    row.pop('custom_name', None)
+                else:
+                    row['custom_name'] = True
         return row
 
     def save_page_link(self, account_id, url, name=''):
@@ -263,7 +271,7 @@ class FacebookAccounts:
             raise ValueError('Mở đúng Page và sao chép địa chỉ trên thanh trình duyệt; '
                              'không dùng link bài viết, nhóm hoặc trang danh sách Page.')
         label = str(name).strip() or fallback[:150]
-        return self.save_page(account_id, label, url, page_id)
+        return self.save_page(account_id, label, url, page_id, chosen_by_owner=bool(str(name).strip()))
 
     def remove_page(self, account_id, record_id):
         with self._edit() as value:
@@ -348,10 +356,18 @@ class FacebookAccounts:
                         same_page = bool(found['page_id']) and row.get('page_id') == found['page_id']
                         automatic = row.get('source') == 'browser_managed_pages'
                         if same_page and rename is not None:
-                            # Facebook may now list the Page by a text link: keep the saved link, follow the name.
-                            if row['name'] != found['name']:
-                                if automatic or (previous_seen and previous_seen != found['name']) or row.get('facebook_name') == found['name']:
-                                    follow(row, found['name'])
+                            # Facebook may now list the Page by a text link: keep the saved link, follow the name, unless the owner
+                            # chose this Page's name in "Sửa Page" (owner 11/11/2026: the name must follow Facebook by itself).
+                            custom = row.get('custom_name')
+                            if custom == 'unconfirmed':
+                                # A name typed when the Page was added: the owner's own name only if it is not what Facebook shows.
+                                custom = row['name'] != (previous_seen or found['name'])
+                                if custom:
+                                    row['custom_name'] = True
+                                else:
+                                    row.pop('custom_name', None)
+                            if row['name'] != found['name'] and (automatic or not custom):
+                                follow(row, found['name'])
                         elif automatic:
                             changed = row['name'] != found['name'] or row['url'].casefold() != found['url'].casefold()
                             if changed and rename_ok is not None and not rename_ok(row['id']):

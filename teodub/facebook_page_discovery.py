@@ -93,11 +93,12 @@ SNAPSHOT_SCRIPT = "() => {" + _HEADING_HELPERS + r"""
       // points to a named Page, a texted link to another Page, or several Pages in one block still stop the card.
       const links = [...card.querySelectorAll('a[href]')].filter(visible);
       const ids = new Set(links.filter(a => !(isButton(text(a)) && numericAddress(a))).map(candidate).filter(Boolean).map(x => x.url));
-      const sameCard = links.every(a => !text(a) || isButton(text(a)) || candidate(a)?.url === found.url);
+      const shown = a => (a.innerText || '').replace(/\s+/g, ' ').trim();  // Not the label of a picture (aria-label).
+      const sameCard = links.every(a => !shown(a) || isButton(shown(a)) || candidate(a)?.url === found.url);
       if (sameCard && ids.size === 1 && ids.has(found.url)) { items.set(found.url, {name, ...found}); outcome = 'nhận'; }
       else outcome = 'thẻ bị từ chối: link Page trong thẻ: ' + [...ids].join(' | ') + '; link có chữ lạ: '
-        + links.filter(a => text(a) && !isButton(text(a)) && candidate(a)?.url !== found.url)
-               .map(a => text(a).slice(0, 30) + ' -> ' + (candidate(a)?.url || '(không phải Page)')).slice(0, 6).join(' / ');
+        + links.filter(a => shown(a) && !isButton(shown(a)) && candidate(a)?.url !== found.url)
+               .map(a => shown(a).slice(0, 30) + ' -> ' + (candidate(a)?.url || '(không phải Page)')).slice(0, 6).join(' / ');
       break;
     }
     debug.push({text: name.slice(0, 60), url: found.url, outcome});

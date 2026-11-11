@@ -77,6 +77,17 @@ class PageCardTests(unittest.TestCase):
                                     create_href='https://www.facebook.com/1503669952820505')))
         self.assertEqual([row['url'] for row in found['items']], ['https://www.facebook.com/reviewsaithatnoithat'])
 
+    def test_the_log_of_the_other_machine_10_38_the_label_of_the_picture_is_not_another_link(self):
+        avatar = ('<a href="https://www.facebook.com/photo/?fbid=999" aria-label="Ảnh đại diện của Kỹ Năng Câu Cá">'
+                  '<img alt="" width="40" height="40"></a>')
+        html = page(card('Kỹ Năng Câu Cá', 'https://www.facebook.com/profile.php?id=61594903914921', extra=avatar,
+                         notice='<span>1 thông báo</span><span>•</span>', notice_link='https://www.facebook.com/notifications/'))
+        self.assertEqual(self.names(html), ['Kỹ Năng Câu Cá'])
+
+    def test_a_link_that_shows_text_and_is_not_this_page_still_stops_the_card(self):
+        html = page(card('Một', 'https://www.facebook.com/profile.php?id=111', extra='<a href="https://www.facebook.com/groups/5"><span>Nhóm</span></a>'))
+        self.assertEqual(self.names(html), [])
+
     def test_several_pages_in_one_block_are_not_taken(self):
         html = ('<!doctype html><meta charset="utf-8"><body><div role="main"><h2>Trang bạn quản lý</h2><div>'
                 '<a href="https://www.facebook.com/profile.php?id=111"><span>Một</span></a><div role="button">Tạo bài viết</div><div role="button">Quảng cáo</div>'

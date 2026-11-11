@@ -672,7 +672,7 @@ class FacebookTab(ttk.Frame):
         def save():
             try:
                 saved = self.store.save_page(self.account_id, **{key: var.get() for key, var in fields.items()},
-                                             record_id=row['id'] if row else None)
+                                             record_id=row['id'] if row else None, chosen_by_owner=True)
                 self.reload()
                 self.display_pages(saved['id'])
                 self.refresh_buttons()

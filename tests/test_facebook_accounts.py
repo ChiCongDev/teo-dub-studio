@@ -267,6 +267,62 @@ class FacebookAccountTests(unittest.TestCase):
         self.assertEqual(calls, [('Review sản phẩm', 'Sài Thật Nói Thật'), ('Sài Thật Nói Thật', 'Review sản phẩm')])
         self.assertEqual(self.store.path.read_bytes(), before)
 
+    # Owner 11/11/2026 (log of the other machine): Tèo had never seen the old Facebook name of "Review sản phẩm" there; it must still follow.
+    def test_a_page_added_by_hand_and_never_seen_before_follows_the_facebook_name(self):
+        account = self.store.add_account('Một')
+        row = self.store.save_page_link(account['id'], 'facebook.com/profile.php?id=123456', 'Review sản phẩm')
+        self.assertNotIn('discovered_name', row)
+        data = self.store.load()  # A Page saved before 11/11/2026 has no mark at all.
+        data['pages'][0].pop('custom_name')
+        self.store.path.write_text(json.dumps(data), encoding='utf-8')
+        found = dict(name='Sài Thật Nói Thật', url='facebook.com/reviewsaithatnoithat', page_id='123456')
+        result = self.store.merge_discovered_pages(account['id'], [found], rename=lambda record_id, old, new: None)
+        self.assertEqual((self.store.load()['pages'][0]['name'], result['renamed']), ('Sài Thật Nói Thật', 1))
+
+    def test_the_stuck_state_of_the_other_machine_is_renamed_on_the_next_load(self):
+        account = self.store.add_account('Một')
+        self.store.save_page_link(account['id'], 'facebook.com/profile.php?id=123456', 'Review sản phẩm')
+        data = self.store.load()  # Saved before 11/11/2026: no mark.
+        data['pages'][0].pop('custom_name')
+        self.store.path.write_text(json.dumps(data), encoding='utf-8')
+        found = dict(name='Sài Thật Nói Thật', url='facebook.com/reviewsaithatnoithat', page_id='123456')
+        self.store.merge_discovered_pages(account['id'], [found])  # The 10:38 load: Facebook's name remembered, nothing renamed.
+        self.assertEqual(self.store.load()['pages'][0]['discovered_name'], 'Sài Thật Nói Thật')
+        self.store.merge_discovered_pages(account['id'], [found], rename=lambda record_id, old, new: None)
+        self.assertEqual(self.store.load()['pages'][0]['name'], 'Sài Thật Nói Thật')
+
+    def test_a_name_the_owner_chose_in_sua_page_is_kept_and_choosing_facebooks_name_again_lets_it_follow(self):
+        account = self.store.add_account('Một')
+        self.store.merge_discovered_pages(account['id'], [dict(name='Tên Facebook', url='facebook.com/profile.php?id=777', page_id='777')])
+        record = self.store.load()['pages'][0]['id']
+        self.store.save_page(account['id'], 'Tên tôi đặt', 'facebook.com/profile.php?id=777', '777', record_id=record, chosen_by_owner=True)
+        calls = []
+        found = dict(name='Tên Facebook mới', url='facebook.com/profile.php?id=777', page_id='777')
+        self.store.merge_discovered_pages(account['id'], [found], rename=lambda record_id, old, new: calls.append(new))
+        self.assertEqual((self.store.load()['pages'][0]['name'], calls), ('Tên tôi đặt', []))
+        self.store.save_page(account['id'], 'Tên Facebook mới', 'facebook.com/profile.php?id=777', '777', record_id=record, chosen_by_owner=True)
+        self.assertNotIn('custom_name', self.store.load()['pages'][0])
+        self.store.merge_discovered_pages(account['id'], [dict(found, name='Tên sau cùng')], rename=lambda record_id, old, new: None)
+        self.assertEqual(self.store.load()['pages'][0]['name'], 'Tên sau cùng')
+
+    def test_a_name_typed_when_adding_is_kept_only_when_it_is_not_facebooks_name(self):
+        account = self.store.add_account('Một')
+        mine = self.store.save_page_link(account['id'], 'facebook.com/profile.php?id=1001', 'Tên riêng của tôi')
+        same = self.store.save_page_link(account['id'], 'facebook.com/profile.php?id=1002', 'Review sản phẩm')
+        rename = lambda record_id, old, new: None
+        self.store.merge_discovered_pages(account['id'], [dict(name='Tên Facebook', url='facebook.com/profile.php?id=1001', page_id='1001'),
+                                                          dict(name='Review sản phẩm', url='facebook.com/profile.php?id=1002', page_id='1002')],
+                                          rename=rename)
+        pages = {row['id']: row for row in self.store.load()['pages']}
+        self.assertEqual((pages[mine['id']]['name'], pages[mine['id']]['custom_name']), ('Tên riêng của tôi', True))
+        self.assertNotIn('custom_name', pages[same['id']])  # It was only Facebook's name...
+        self.store.merge_discovered_pages(account['id'], [dict(name='Sài Thật Nói Thật', url='facebook.com/reviewsaithatnoithat', page_id='1002'),
+                                                          dict(name='Tên Facebook 2', url='facebook.com/profile.php?id=1001', page_id='1001')],
+                                          rename=rename)
+        pages = {row['id']: row for row in self.store.load()['pages']}
+        self.assertEqual(pages[same['id']]['name'], 'Sài Thật Nói Thật')  # ...so it follows Facebook.
+        self.assertEqual(pages[mine['id']]['name'], 'Tên riêng của tôi')  # The owner's own name never does.
+
     def test_discovery_stays_in_account_scope_and_retains_manual_label_selection_and_extensions(self):
         one = self.store.add_account('Một')
         two = self.store.add_account('Hai')
