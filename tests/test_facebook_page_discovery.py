@@ -88,6 +88,30 @@ class FacebookDiscoveryTests(unittest.TestCase):
         self.scan(known=[dict(page_id='123', url='https://www.facebook.com/profile.php?id=123')])
         self.assertEqual(self.context.new_page.call_count, 2)  # One scan tab per scan, never a probe tab.
 
+    # Owner 11/11/2026: the result carries a log of what the page showed and what Tèo made of it; the log never changes the result.
+    def test_the_result_carries_a_log_of_the_links_seen_and_the_number_links_tried(self):
+        self.snapshot.update(heading='Trang bạn quản lý', debug=[
+            dict(text='Sài Thật Nói Thật', url='https://www.facebook.com/reviewsaithatnoithat', outcome='nhận'),
+            dict(text='Kỹ Năng Câu Cá', url='https://www.facebook.com/kynangcauca', outcome='thẻ có link khác: x | y')])
+        self.snapshot['items'] = [dict(name='Sài Thật Nói Thật', url='https://www.facebook.com/reviewsaithatnoithat')]
+        probe = self.probe_landing(['https://www.facebook.com/reviewsaithatnoithat/'])
+        result = self.scan(known=[dict(page_id='61595943214900', url='https://www.facebook.com/profile.php?id=61595943214900')])
+        text = '\n'.join(result['log'])
+        self.assertIn("'Trang bạn quản lý'", text)
+        self.assertIn('Kỹ Năng Câu Cá', text)
+        self.assertIn('thẻ có link khác: x | y', text)
+        self.assertIn('link số 61595943214900: Facebook mở tới https://www.facebook.com/reviewsaithatnoithat/', text)
+        self.assertEqual([row['page_id'] for row in result['items']], ['61595943214900'])  # The log changed nothing.
+
+    def test_the_log_of_a_plain_scan_is_short_and_a_log_failure_never_breaks_the_scan(self):
+        result = self.scan()
+        self.assertEqual(result['status'], 'observed')
+        self.assertTrue(any('Link Tèo xem là Page' in line for line in result['log']))
+        with patch('teodub.facebook_page_discovery.scan_log', side_effect=RuntimeError('boom')):
+            again = self.scan()
+        self.assertEqual((again['status'], len(again['items'])), ('observed', 1))
+        self.assertNotIn('log', again)
+
     def test_navigation_or_external_links_are_not_treated_as_page_cards(self):
         self.assertEqual(normalize_items([
             dict(name='Friends', url='https://facebook.com/friends'),

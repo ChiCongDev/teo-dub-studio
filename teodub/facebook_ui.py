@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 from copy import deepcopy
 from collections import Counter
+import os
 from pathlib import Path
 import queue
 import threading
@@ -596,6 +597,28 @@ class FacebookTab(ttk.Frame):
         except (OSError, ValueError) as exc:
             self.status.set(str(exc))
 
+    def write_load_log(self, account_id, lines, summary):
+        """Owner 11/11/2026: page-publishing/load-page-log.txt says what the last Load Page saw and merged (the run before it is kept as
+        load-page-log-before.txt). Never raises: a log must not stop Load Page."""
+        try:
+            from datetime import datetime
+            folder = Path(self.studio.data_dir)/'page-publishing'
+            folder.mkdir(parents=True, exist_ok=True)
+            current = folder/'load-page-log.txt'
+            if current.exists():
+                os.replace(current, folder/'load-page-log-before.txt')
+            data = self.store.load()
+            name = next((row['name'] for row in data['accounts'] if row['id'] == account_id), account_id)
+            out = [f'Load Page lúc {datetime.now().isoformat(timespec="seconds")} · tài khoản {name} · kết quả gộp {summary}']
+            out += [str(line) for line in (lines or ['(bản đọc này không có nhật ký)'])]
+            out.append('Page đã lưu của tài khoản sau khi gộp:')
+            out += [f'  - {row["name"]!r} | ID {row.get("page_id") or "(chưa có)"} | {row["url"]} | nguồn {row.get("source")}'
+                    f'{" | tên Facebook: "+row["facebook_name"] if row.get("facebook_name") else ""}'
+                    for row in data['pages'] if row['account_id'] == account_id]
+            current.write_text('\n'.join(out)+'\n', encoding='utf-8')
+        except Exception:
+            pass
+
     def display_pages(self, select=''):
         selection = self.tree.selection()
         select = select or (selection[0] if selection else '')
@@ -1107,6 +1130,7 @@ class FacebookTab(ttk.Frame):
                                          if summary.get('renamed') else '',
                                          f' Đã gộp {summary["merged"]} dòng Page trùng.' if summary.get('merged') else '',
                                          ''.join(f' CHƯA đổi tên: {reason}' for reason in summary.get('rename_blocked', []))))
+                        self.write_load_log(account_id, value.get('log'), summary)
                         session.page_load_status = (f'Load Page: thêm {summary["added"]}, đã có/cập nhật {summary["updated"]}.'
                                                     +extra+' '+value.get('message', ''))
                         session.status = session.page_load_status

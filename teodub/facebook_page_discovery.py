@@ -58,29 +58,36 @@ SNAPSHOT_SCRIPT = "() => {" + _HEADING_HELPERS + r"""
     return {url, page_id:id};
   };
   const items = new Map();
+  const debug = [];
   for (const link of main.querySelectorAll('a[href]')) {
     if (!visible(link)) continue;
     const found = candidate(link);
     if (!found) continue;
     const name = text(link);
-    if (!name || name.length > 150 || actionName(name)) continue;
+    if (!name || name.length > 150 || actionName(name)) {
+      debug.push({text: (name || '').slice(0, 60), url: found.url, outcome: 'bỏ qua: tên rỗng, quá dài hoặc là nút'});
+      continue;
+    }
+    let outcome = 'không thấy thẻ có nút Tạo bài viết và Quảng cáo/Thông báo quanh link này';
     let card = link.parentElement;
     for (let depth = 0; card && depth < 9 && card !== main; depth++, card = card.parentElement) {
       // Never borrow actions from a sibling card or the whole managed list.
-      if (card.contains(heading)) break;
+      if (card.contains(heading)) { outcome = 'chạm tiêu đề danh sách trước khi thấy thẻ'; break; }
       const actions = [...card.querySelectorAll('a,[role="button"],button')].filter(visible).map(e => norm(text(e)));
       const post = actions.some(s => /^(tao bai viet|create post|create a post)$/.test(s));
       const secondary = actions.some(s => /^(quang cao|advertise|promote|quang ba|thong bao|\d+ thong bao|notifications|messages|tin nhan)$/.test(s));
       if (!post || !secondary) {
-        if (card.matches('article,[role="article"]')) break;
+        if (card.matches('article,[role="article"]')) { outcome = 'gặp khối article trước khi thấy đủ nút'; break; }
         continue;
       }
       const links = [...card.querySelectorAll('a[href]')].filter(visible);
       const ids = new Set(links.map(candidate).filter(Boolean).map(x => x.url));
       const sameCard = links.every(a => !text(a) || actionName(text(a)) || candidate(a)?.url === found.url);
-      if (sameCard && ids.size === 1 && ids.has(found.url)) items.set(found.url, {name, ...found});
+      if (sameCard && ids.size === 1 && ids.has(found.url)) { items.set(found.url, {name, ...found}); outcome = 'nhận'; }
+      else outcome = 'thẻ có link khác: ' + [...ids].join(' | ') + (sameCard ? '' : ' (có link thứ hai có chữ)');
       break;
     }
+    debug.push({text: name.slice(0, 60), url: found.url, outcome});
   }
   let scroller = heading.parentElement;
   while (scroller && scroller !== document.body) {
@@ -89,7 +96,7 @@ SNAPSHOT_SCRIPT = "() => {" + _HEADING_HELPERS + r"""
     scroller = scroller.parentElement;
   }
   scroller = scroller && scroller !== document.body ? scroller : document.scrollingElement;
-  return {managed:true, auth, items:[...items.values()],
+  return {managed:true, auth, items:[...items.values()], heading:text(heading).slice(0, 80), debug:debug.slice(0, 80),
     busy:!![...main.querySelectorAll('[role="progressbar"],[aria-busy="true"]')].find(visible),
     bottom:scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 12};
 }"""
@@ -164,7 +171,7 @@ def _first_segment(url):
     return bits[0].casefold()
 
 
-def resolve_page_ids(context, rows, known=None, *, cancel=None, finished=None, progress=None):
+def resolve_page_ids(context, rows, known=None, *, cancel=None, finished=None, progress=None, trace=None):
     """Give a number to the rows that only have a text link, using the saved Pages (`known`: [{page_id, url}]) the list did not show.
     Never raises for a Page that cannot be opened (the row stays without a number, exactly as before); only a stop request ends it.
     A row gets a number only when exactly one saved Page lands on it."""
@@ -176,6 +183,10 @@ def resolve_page_ids(context, rows, known=None, *, cancel=None, finished=None, p
         if re.fullmatch(r'[0-9]{5,25}', number) and number not in shown and number not in candidates:
             candidates.append(number)
     candidates = candidates[:MAX_ID_LOOKUPS]
+    if trace is not None:
+        trace['waiting'] = sorted(waiting)
+        trace['candidates'] = list(candidates)
+        trace['known'] = len(known or [])
     if not waiting or not candidates:
         return rows
     landed = {}
@@ -194,6 +205,8 @@ def resolve_page_ids(context, rows, known=None, *, cancel=None, finished=None, p
             try:
                 tab.goto('https://www.facebook.com/profile.php?id='+number, wait_until='domcontentloaded', timeout=25000)
                 segment = _first_segment(tab.url)
+                if trace is not None:
+                    trace.setdefault('probes', []).append(f'link số {number}: Facebook mở tới {str(tab.url)[:120]}')
                 waited = 0
                 while not segment and waited < REDIRECT_WAIT_MS:  # Facebook may change the address after the page loads.
                     tab.wait_for_timeout(500)
@@ -201,7 +214,9 @@ def resolve_page_ids(context, rows, known=None, *, cancel=None, finished=None, p
                     segment = _first_segment(tab.url)
             except Cancelled:
                 raise
-            except Exception:  # A Page that will not open is left as it was.
+            except Exception as exc:  # A Page that will not open is left as it was.
+                if trace is not None:
+                    trace.setdefault('probes', []).append(f'link số {number}: không mở được ({str(exc)[:100]})')
                 continue
             if segment in waiting:
                 landed.setdefault(segment, []).append(number)
@@ -217,7 +232,7 @@ def resolve_page_ids(context, rows, known=None, *, cancel=None, finished=None, p
     return rows
 
 
-def read_managed_pages(context, *, cancel=None, finished=None, progress=None, timeout=180, limit=1000, known=None):
+def _read_managed_pages(context, trace, *, cancel=None, finished=None, progress=None, timeout=180, limit=1000, known=None):
     """Only read the known Pages-you-manage view; leave auth/verification to user."""
     from playwright._impl._errors import Error, TargetClosedError
     if not 1 <= limit <= 1000 or timeout <= 0:
@@ -251,6 +266,12 @@ def read_managed_pages(context, *, cancel=None, finished=None, progress=None, ti
                 tab.wait_for_timeout(500)
                 continue
             snapshot = tab.evaluate(SNAPSHOT_SCRIPT)
+            trace['snapshots'] = trace.get('snapshots', 0)+1
+            if isinstance(snapshot, dict):
+                trace['heading'] = snapshot.get('heading', trace.get('heading'))
+                for entry in snapshot.get('debug') or []:
+                    if isinstance(entry, dict):
+                        trace.setdefault('debug', {})[(entry.get('url'), entry.get('outcome'))] = entry
             if snapshot.get('auth'):
                 notify('Bạn tự đăng nhập/xác minh Facebook trong Chrome; Tèo chờ tối đa 3 phút để đọc Page.')
                 tab.wait_for_timeout(500)
@@ -264,7 +285,7 @@ def read_managed_pages(context, *, cancel=None, finished=None, progress=None, ti
             for row in found:
                 rows[row['page_id'] or row['url'].casefold()] = row
                 if len(rows) >= limit:
-                    return dict(items=resolve_page_ids(context, list(rows.values()), known, cancel=cancel, finished=finished, progress=progress),
+                    return dict(items=resolve_page_ids(context, list(rows.values()), known, cancel=cancel, finished=finished, progress=progress, trace=trace),
                         status='partial', message=f'Đã đọc {len(rows)} Page; tới giới hạn của lượt này. Giữ mọi Page cũ.')
             if len(rows) != before or snapshot.get('busy') or not snapshot.get('bottom'):
                 changed = time.monotonic()
@@ -273,13 +294,13 @@ def read_managed_pages(context, *, cancel=None, finished=None, progress=None, ti
                 if not rows:
                     raise ValueError('Chưa đọc được thẻ Page hợp lệ trên Trang bạn quản lý. '
                                      'Có thể tài khoản chưa có Page hoặc giao diện đã đổi; danh sách cũ được giữ.')
-                return dict(items=resolve_page_ids(context, list(rows.values()), known, cancel=cancel, finished=finished, progress=progress),
+                return dict(items=resolve_page_ids(context, list(rows.values()), known, cancel=cancel, finished=finished, progress=progress, trace=trace),
                     status='observed', message=f'Đã đọc {len(rows)} Page từ danh sách đang hiển thị và cuộn tới cuối phần đã tải. '
                             'Chưa xác minh tổng Page hoặc quyền API.')
             tab.evaluate(SCROLL_SCRIPT)
             tab.wait_for_timeout(500)
         if rows:
-            return dict(items=resolve_page_ids(context, list(rows.values()), known, cancel=cancel, finished=finished, progress=progress),
+            return dict(items=resolve_page_ids(context, list(rows.values()), known, cancel=cancel, finished=finished, progress=progress, trace=trace),
                 status='partial', message=f'Hết thời gian chờ; đã đọc {len(rows)} Page. Có thể chưa đủ, giữ mọi Page cũ.')
         raise ValueError('Hết 3 phút nhưng chưa đọc được Page. Kiểm tra đăng nhập và màn hình Trang bạn quản lý, '
                          'sau đó chọn Load Page lại. Danh sách cũ được giữ.')
@@ -287,3 +308,29 @@ def read_managed_pages(context, *, cancel=None, finished=None, progress=None, ti
         raise ValueError('Tab hoặc cửa sổ Load Page đã đóng trước khi đọc xong; danh sách cũ được giữ.') from None
     except Error as exc:
         raise ValueError('Chưa đọc được Page do trang/trình duyệt lỗi. Danh sách cũ được giữ. Chi tiết: '+str(exc)) from None
+
+
+def scan_log(trace, items):
+    """The lines that say what a Load Page saw (owner 11/11/2026: so a Page that is missed, or not recognised, can be found out from
+    what Facebook really showed). Only addresses, names and the reasons; nothing private."""
+    lines = [f'Tiêu đề danh sách: {trace.get("heading")!r} · số lần đọc màn hình: {trace.get("snapshots", 0)}']
+    entries = list((trace.get('debug') or {}).values())
+    lines.append(f'Link Tèo xem là Page ({len(entries)}):')
+    lines += [f'  - {entry.get("text")!r} | {entry.get("url")} | {entry.get("outcome")}' for entry in entries]
+    lines.append(f'Page Tèo giữ lại từ lượt đọc ({len(items)}):')
+    lines += [f'  - {row["name"]!r} | ID {row.get("page_id") or "(chưa có)"} | {row["url"]}' for row in items]
+    lines.append(f'Page đã lưu có ID: {trace.get("known", 0)} · hàng chỉ có link chữ: {trace.get("waiting", [])} · '
+                 f'Page đã lưu không thấy trong danh sách (sẽ mở link số): {trace.get("candidates", [])}')
+    lines += ['  ' + line for line in trace.get('probes', [])]
+    return lines
+
+
+def read_managed_pages(context, **kwargs):
+    """Same as before, and the result also carries `log`: what the page showed and what Tèo made of it."""
+    trace = {}
+    result = _read_managed_pages(context, trace, **kwargs)
+    try:
+        result['log'] = scan_log(trace, result.get('items', []))
+    except Exception:  # The log never changes the result.
+        pass
+    return result

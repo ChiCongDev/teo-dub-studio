@@ -684,6 +684,36 @@ class FacebookUITests(unittest.TestCase):
         self.assertEqual([(row['name'], row['url']) for row in pages],
                          [('Sài Thật Nói Thật', 'https://www.facebook.com/profile.php?id=123')])
         self.assertIn('Đã đổi tên 1 Page', self.tab.status.get())
+    # Owner 11/11/2026: Load Page leaves page-publishing/load-page-log.txt (the run before it is kept) and never fails because of it.
+    def test_load_page_writes_its_log_and_keeps_the_run_before_it(self):
+        account = self.account()
+        folder = Path(self.studio.data_dir)/'page-publishing'
+        for number in (1, 2):
+            self.tab.load_pages()
+            session = self.tab.sessions[account]
+            session.messages.put(('opened', 'Chrome đang mở'))
+            session.messages.put(('pages_loaded', dict(items=[dict(name='Page '+str(number), url='facebook.com/profile.php?id=123', page_id='123')],
+                                                     message='Đã đọc 1', status='observed', log=['Dòng nhật ký '+str(number)])))
+            self.drain()
+        current = (folder/'load-page-log.txt').read_text(encoding='utf-8')
+        before = (folder/'load-page-log-before.txt').read_text(encoding='utf-8')
+        self.assertIn('Dòng nhật ký 2', current)
+        self.assertIn('Page đã lưu của tài khoản sau khi gộp', current)
+        self.assertIn('Dòng nhật ký 1', before)
+
+    def test_a_log_that_cannot_be_written_does_not_stop_load_page(self):
+        account = self.account()
+        self.tab.load_pages()
+        session = self.tab.sessions[account]
+        session.messages.put(('opened', 'Chrome đang mở'))
+        session.messages.put(('pages_loaded', dict(items=[dict(name='Page', url='facebook.com/profile.php?id=9', page_id='9')],
+                                                 message='Đã đọc 1', status='observed', log=['x'])))
+        folder = Path(self.studio.data_dir)/'page-publishing'
+        (folder/'load-page-log.txt').mkdir(parents=True)  # Folders where the log files go: they cannot be written or replaced.
+        (folder/'load-page-log-before.txt'/'x').mkdir(parents=True)
+        self.drain()
+        self.assertEqual([row['name'] for row in self.tab.store.load()['pages']], ['Page'])
+        self.assertIn('Load Page:', self.tab.status.get())
 
 if __name__ == '__main__':
     unittest.main()
