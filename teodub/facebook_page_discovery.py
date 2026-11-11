@@ -34,6 +34,13 @@ _HEADING_HELPERS = r"""
 
 SNAPSHOT_SCRIPT = "() => {" + _HEADING_HELPERS + r"""
   const actionName = s => /^(tao bai viet|create post|create a post|quang cao|advertise|promote|quang ba|(?:\d+ )?thong bao|(?:\d+ )?notifications|tin nhan|messages|\.{3}|…)$/.test(norm(s));
+  const isButton = s => {
+    const n = norm(String(s).replace(/[•·●○∙]/g, ' '));
+    return actionName(n) || (n.length < 40 && /(thong bao|notification|tin nhan|message)/.test(n));
+  };
+  const numericAddress = a => {
+    try { return /^\/\d{5,}\/?$/.test(new URL(a.getAttribute('href'), location.href).pathname); } catch { return false; }
+  };
   const heading = pickHeading();
   const auth = !![...document.querySelectorAll('input[type="password"],form[action*="login"]')].find(visible);
   if (!heading) return {managed:false, auth, items:[], busy:false, bottom:false};
@@ -80,11 +87,17 @@ SNAPSHOT_SCRIPT = "() => {" + _HEADING_HELPERS + r"""
         if (card.matches('article,[role="article"]')) { outcome = 'gặp khối article trước khi thấy đủ nút'; break; }
         continue;
       }
+      // Owner 11/11/2026 (log of the other machine, Page identity). Two things made good cards look like they belonged to another Page:
+      // "Tạo bài viết" is there a link to an address made only of numbers (not another Page: an action never names a Page), and the
+      // notification link reads "1 thông báo •" (a dot after the count). Both are ignored. Everything else is as before: a button that
+      // points to a named Page, a texted link to another Page, or several Pages in one block still stop the card.
       const links = [...card.querySelectorAll('a[href]')].filter(visible);
-      const ids = new Set(links.map(candidate).filter(Boolean).map(x => x.url));
-      const sameCard = links.every(a => !text(a) || actionName(text(a)) || candidate(a)?.url === found.url);
+      const ids = new Set(links.filter(a => !(isButton(text(a)) && numericAddress(a))).map(candidate).filter(Boolean).map(x => x.url));
+      const sameCard = links.every(a => !text(a) || isButton(text(a)) || candidate(a)?.url === found.url);
       if (sameCard && ids.size === 1 && ids.has(found.url)) { items.set(found.url, {name, ...found}); outcome = 'nhận'; }
-      else outcome = 'thẻ có link khác: ' + [...ids].join(' | ') + (sameCard ? '' : ' (có link thứ hai có chữ)');
+      else outcome = 'thẻ bị từ chối: link Page trong thẻ: ' + [...ids].join(' | ') + '; link có chữ lạ: '
+        + links.filter(a => text(a) && !isButton(text(a)) && candidate(a)?.url !== found.url)
+               .map(a => text(a).slice(0, 30) + ' -> ' + (candidate(a)?.url || '(không phải Page)')).slice(0, 6).join(' / ');
       break;
     }
     debug.push({text: name.slice(0, 60), url: found.url, outcome});
