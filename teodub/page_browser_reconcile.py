@@ -243,7 +243,7 @@ def _receipt(capture, evidence):
             or not _same_body(evidence.get('body', ''), capture['post']['body'])):
         raise ValueError('Bằng chứng chưa khớp đúng Page, toàn bộ caption, video và lượt đã gửi.')
     url = _canonical_inspection_url(evidence.get('url', ''))
-    if not url or _page_id(_target_url(evidence.get('owner_url', ''))) != capture['target']['page_id']:
+    if not url or _page_id(_target_url(evidence.get('owner_url', '')), capture['target']) != capture['target']['page_id']:
         raise ValueError('Cần permalink bài video thực tế và chủ bài là đúng Page đã lưu.')
     video = capture['expected_video']
     if (not all(_positive(evidence.get(key)) for key in ('observed_duration', 'observed_width', 'observed_height'))

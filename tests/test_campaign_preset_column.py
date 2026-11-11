@@ -1,7 +1,9 @@
 """Cột "Cấu hình áp dụng" and the redo progress of a row (owner 10/11/2026). Local temp folders only; nothing is written to a link."""
 import json
+import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -78,13 +80,19 @@ class CellTests(unittest.TestCase):
         (Path(item['job'])/'config.json').write_text('{broken', encoding='utf-8')
         self.assertEqual(self.cells([item]), {1: 'Cần kiểm tra'})
 
+    def old_file(self, job):
+        stamp = time.time()-60  # A file written a moment ago is not trusted from the cache (coarse timestamps).
+        os.utime(Path(job)/'config.json', (stamp, stamp))
+
     def test_the_file_is_parsed_again_only_when_it_changes(self):
         item = self.item(1, 'completed', A)
+        self.old_file(item['job'])
         self.assertEqual(self.cells([item]), {1: 'Mẫu A'})
         first = self.column.config(item['job'])
         self.assertEqual(self.cells([item]), {1: 'Mẫu A'})
         self.assertIs(self.column.config(item['job']), first)  # Same parsed object: the file was not read again.
         self.job(1, dict(voice='B', voice_gain=1.4))  # The file changed: it is read again.
+        self.old_file(item['job'])
         self.assertEqual(self.cells([item]), {1: 'Mẫu B'})
 
     def test_a_deleted_preset_leaves_the_row_without_a_name(self):

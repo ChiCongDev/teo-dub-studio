@@ -76,6 +76,46 @@ class SlotTests(unittest.TestCase):
     def test_a_text_post_in_the_same_minute_still_blocks_that_time(self):
         self.assertEqual(self.slots(1, [row('2026-11-01 11:30', kind='text')]), ['2026-11-01 19:00'])
 
+    # Owner 11/11/2026: the bulk re-plan takes every time that is still ahead and free (no other appointment of the Page within 30 minutes);
+    # there is no cap of videos per day. The old rule (cap=True) stays for the automatic re-arm.
+    def open_slots(self, count, rows=(), start=None, times=TIMES, clock=None):
+        clock = clock or self.clock
+        return [display_time(s) for s in replan.free_slots(times, count, list(rows), clock, start or clock+600, cap=False)]
+
+    def test_open_mode_takes_a_time_later_today_even_when_the_day_already_has_its_posts(self):
+        sent = [row('2026-11-11 11:00', state='submitted'), row('2026-11-11 11:17', state='submitted')]
+        clock = at('2026-11-11 11:38')
+        self.assertEqual(self.open_slots(3, sent, times=['11:00', '17:20'], clock=clock),
+                         ['2026-11-11 17:20', '2026-11-12 11:00', '2026-11-12 17:20'])
+        self.assertEqual(display_time(replan.free_slots(['11:00', '17:20'], 1, sent, clock, clock, cap=True)[0]), '2026-11-12 11:00')  # The old rule.
+
+    def test_open_mode_keeps_thirty_minutes_from_the_other_appointments_of_the_page(self):
+        times = ['11:00', '17:20']
+        near = [row('2026-11-11 17:15', state='armed')]
+        self.assertEqual(self.open_slots(1, near, times=times, clock=at('2026-11-11 11:38')), ['2026-11-12 11:00'])
+        exactly = [row('2026-11-11 16:50', state='armed')]  # Exactly 30 minutes before: allowed.
+        self.assertEqual(self.open_slots(1, exactly, times=times, clock=at('2026-11-11 11:38')), ['2026-11-11 17:20'])
+        too_close = [row('2026-11-11 16:51', state='armed')]
+        self.assertEqual(self.open_slots(1, too_close, times=times, clock=at('2026-11-11 11:38')), ['2026-11-12 11:00'])
+
+    def test_open_mode_has_no_cap_per_day_and_the_days_keep_their_other_posts(self):
+        other_times = [row('2026-11-02 08:00'), row('2026-11-02 09:00'), row('2026-11-02 21:00')]
+        self.assertEqual(self.open_slots(2, other_times, start=at('2026-11-02 06:00'), clock=at('2026-11-02 05:00')),
+                         ['2026-11-02 11:30', '2026-11-02 19:00'])  # Three posts already that day, two more still fit.
+
+    def test_open_mode_never_refuses_the_owners_own_times_because_they_are_close_to_each_other(self):
+        self.assertEqual(replan.open_gap(['11:00', '11:20']), 20*60)
+        self.assertEqual(replan.open_gap(['11:00', '17:20']), 30*60)
+        self.assertEqual(replan.open_gap(['11:00']), 30*60)
+        self.assertEqual(replan.open_gap(['23:55', '00:00']), 5*60)  # Across midnight.
+        self.assertEqual(self.open_slots(3, times=['11:00', '11:20'], clock=at('2026-11-11 08:00')),
+                         ['2026-11-11 11:00', '2026-11-11 11:20', '2026-11-12 11:00'])
+
+    def test_open_mode_still_ignores_removed_cancelled_rows_and_never_goes_back_in_time(self):
+        rows = [row('2026-11-01 11:30', state='removed'), row('2026-11-01 19:00', state='cancelled')]
+        self.assertEqual(self.open_slots(2, rows), ['2026-11-01 11:30', '2026-11-01 19:00'])
+        self.assertEqual(self.open_slots(1, start=at('2026-10-01 08:00')), ['2026-11-01 11:30'])
+
     def test_too_many_videos_for_a_year_is_refused_with_a_message(self):
         with self.assertRaisesRegex(ValueError, 'Không đủ giờ trống'):
             replan.free_slots(TIMES, 800, [], self.clock, self.clock+600)
@@ -117,6 +157,20 @@ class ReplanTests(unittest.TestCase):
             self.assertEqual(saved['attempted_at'], '')
         self.assertEqual(self.controller.active, set(self.ids(first, second, third)))
         self.assertEqual(self.calls, [])  # Nothing was sent to Chrome.
+
+    def test_the_replan_window_uses_the_open_rule_and_says_so(self):
+        """Owner 11/11/2026: two posts already sent today do not stop a later time of the same day."""
+        clock = at('2026-11-11 11:38')
+        for number, text in enumerate(('2026-11-11 11:00', '2026-11-11 11:17')):
+            sent = self.schedule(f'{number+1:032x}')
+            self.store.update(sent['id'], state='submitted', due_at=at(text), attempted_at='2026-11-11T11:00:00+07:00', phase='verify')
+        waiting = [self.schedule(f'{n:032x}') for n in (10, 11, 12)]
+        for item in waiting:
+            self.store.update(item['id'], state='paused', due_at=at('2026-11-10 09:00'))
+        plan = self.plan(waiting, times=['11:00', '17:20'], start=clock, clock=clock)
+        self.assertEqual([display_time(entry['due_at']) for entry in sorted(plan['entries'], key=lambda e: e['due_at'])],
+                         ['2026-11-11 17:20', '2026-11-12 11:00', '2026-11-12 17:20'])
+        self.assertEqual(plan['gap'], 30*60)
 
     def test_captions_media_and_posts_are_kept(self):
         row = self.past('a'*32)

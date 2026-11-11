@@ -223,6 +223,9 @@ def _matching_url(href, target):
         value = bits[2]
     else:
         value = parsed.path.strip('/')
+    if (not value.isdigit() and str(target.get('username') or '') and len(bits) == 1
+            and value.casefold() == str(target['username']).casefold()):
+        return  # Owner 11/11/2026: the username Load Page proved for this Page is its own address.
     if value.isdigit() and value != target['page_id'] or url != facebook_url(target['url'], page=True) and not value.isdigit():
         raise ValueError('Dòng chọn Page có link/Page ID khác cấu hình; chưa chuyển hoặc đăng bài.')
 

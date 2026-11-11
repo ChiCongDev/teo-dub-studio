@@ -537,7 +537,11 @@ def _shown_name(name):
     return re.compile(r'^\s*' + r'\s+'.join(map(re.escape, str(name).split())) + r'\s*$', re.I)
 
 
-def _page_id(url):
+def _page_id(url, target=None):
+    """The numeric Page ID an address names, or ''.
+    Owner 11/11/2026: a Page that has a username is opened by Facebook at facebook.com/<username>, with no number. With `target` given, that
+    address counts as the target Page's own when its username is the one Load Page proved for this very Page (target['username'], found by
+    following the number link); the address of any other Page, or a username nobody proved, is still ''."""
     parsed = urlsplit(url)
     if parsed.hostname not in _HOSTS:
         return ''
@@ -548,7 +552,12 @@ def _page_id(url):
         value = bits[-1]
     else:
         value = ''
-    return value if re.fullmatch(r'[0-9]+', value) else ''
+    if re.fullmatch(r'[0-9]+', value):
+        return value
+    username = str((target or {}).get('username') or '').casefold()
+    if username and len(bits) == 1 and bits[0].casefold() == username and re.fullmatch(r'[0-9]+', str(target.get('page_id', ''))):
+        return str(target['page_id'])
+    return ''
 
 
 def _target_url(url):
@@ -643,7 +652,7 @@ def _page_main(tab, target):
     buttons = tab.get_by_role('main').get_by_role('button', name=shown)
     headers = [buttons.nth(i) for i in range(buttons.count()) if buttons.nth(i).is_visible()
                and buttons.nth(i).evaluate('e => !e.closest("[role=article],article,[role=dialog],[role=navigation],nav,aside,[role=complementary]")')]
-    if _page_id(tab.url) == target['page_id'] and headers:
+    if _page_id(tab.url, target) == target['page_id'] and headers:
         if len(headers) > 1:
             # Facebook 08/11/2026 names the round profile picture after the Page too (aria-label, no text of its own),
             # beside the name text. Only buttons that SHOW the Page's exact name count; two of those still stop.
@@ -678,7 +687,7 @@ def _page_openers(tab, target, main):
     # For separate header/feed mains, additionally require the selected actor
     # and numeric Page URL. Only one visible non-article composer is accepted.
     actor = getattr(tab, '_teodub_page_actor', None)
-    if actor and actor.get('page_id') == target['page_id'] and _page_id(tab.url) == target['page_id']:
+    if actor and actor.get('page_id') == target['page_id'] and _page_id(tab.url, target) == target['page_id']:
         return controls(tab.get_by_role('main'))
     return []
 
@@ -936,7 +945,7 @@ class BrowserPagePublisher:
                 owner = _target_url(link['url']) if _receipt_url_parts(link['url']) else ''
             except ValueError:
                 continue
-            if owner and _page_id(owner) != target['page_id']:
+            if owner and _page_id(owner, target) != target['page_id']:
                 return None, 'Có danh tính Page khác trong nội dung kết quả; chưa xác định đúng bài đã chọn.'
         valid = []
         for panel in observed.get('panels', []):
@@ -959,10 +968,10 @@ class BrowserPagePublisher:
                 except ValueError:
                     continue
                 owners.append(owner)
-                if (_page_id(owner) == target['page_id'] and _name(re.sub(
+                if (_page_id(owner, target) == target['page_id'] and _name(re.sub(
                         r',\s*see owner profile$', '', link['name'], flags=re.I)) == _name(target['name'])):
                     authors.append(link)
-            if not authors or any(_page_id(owner) != target['page_id'] for owner in owners):
+            if not authors or any(_page_id(owner, target) != target['page_id'] for owner in owners):
                 continue
             published_at = _inspection_publication_time(panel.get('times', []))
             valid.append((video, authors[0], published_at))
@@ -1018,7 +1027,7 @@ class BrowserPagePublisher:
         except ValueError:
             raise ValueError('Facebook đã chuyển tab sang một trang không phải Page ('+_where(tab.url)+'). '
                              'Mở Chrome xem Facebook đang yêu cầu gì; chưa chuẩn bị hoặc đăng bài.') from None
-        current_id = _page_id(current)
+        current_id = _page_id(current, target)
         if current != _target_url(target['url']) and current_id != target['page_id']:
             raise ValueError('Tab đã chuyển sang Page khác; chưa bấm Đăng. Kiểm tra danh tính trong Chrome.')
         if current_id and current_id != target['page_id']:
@@ -1072,17 +1081,17 @@ class BrowserPagePublisher:
                 url = _target_url(link['url'])
             except ValueError:
                 continue
-            linked_id = _page_id(url)
+            linked_id = _page_id(url, target)
             if linked_id and linked_id != target['page_id']:
                 raise ValueError('Danh tính người đăng trong hộp bài viết có Page ID khác; chưa bấm Đăng.')
             # The explicit author link must match the saved Page, with a numeric
             # ID observed either in that same link or the current Page URL.
             if ((url == _target_url(target['url']) or linked_id == target['page_id'])
-                    and (linked_id == target['page_id'] or _page_id(tab.url) == target['page_id'])):
+                    and (linked_id == target['page_id'] or _page_id(tab.url, target) == target['page_id'])):
                 identities.append(dict(page_id=target['page_id'], name=link['name'], url=url))
         unique = {(x['page_id'], _name(x['name']), x['url']) for x in identities}
         actor = getattr(tab, '_teodub_page_actor', None)
-        if not unique and actor and actor['page_id'] == target['page_id'] and _page_id(tab.url) == target['page_id']:
+        if not unique and actor and actor['page_id'] == target['page_id'] and _page_id(tab.url, target) == target['page_id']:
             # Current Facebook can render the author as a plain span. Its name
             # alone never proves identity: require the explicit selected profile
             # checked before preparation, numeric Page URL and visible author.
@@ -1190,7 +1199,7 @@ class BrowserPagePublisher:
             if not matches:
                 raise ValueError('Bản xem trước bài chữ không còn đầy đủ nội dung đã duyệt; chưa đăng.')
         for link in data['links']:
-            if _name(link['name']) == _name(target['name']) and _page_id(link['url']) not in ('', target['page_id']):
+            if _name(link['name']) == _name(target['name']) and _page_id(link['url'], target) not in ('', target['page_id']):
                 raise ValueError('Danh tính Page trong cài đặt bài viết đã đổi; chưa đăng.')
         data.update(identity=deepcopy(snapshot['identity']), body=snapshot['body'])
         return dialog, data
@@ -1449,7 +1458,7 @@ class BrowserPagePublisher:
             # Supported Page-identity switch is a single named button beside the
             # exact Page heading on its observed numeric URL. Never select any
             # profile/account from an account menu or an unknown switch dialog.
-            if _page_id(tab.url) != target['page_id']:
+            if _page_id(tab.url, target) != target['page_id']:
                 raise ValueError('Chưa có nút Tạo bài viết hoặc Page ID trực tiếp để xác minh Chuyển ngay. Dừng để kiểm tra thủ công.')
             switch = _one_visible(main.get_by_role('button', name=SWITCH_NAMES), 'nút Chuyển ngay trên đúng Page')
             self._cancel(cancel, finished)
@@ -2223,7 +2232,7 @@ class BrowserPagePublisher:
             authors = [link for link in panel['links']
                        if _name(re.sub(r',\s*see owner profile$', '', link['name'], flags=re.I)) == _name(target['name'])
                        and _receipt_url_parts(link['url'])
-                       and _page_id(link['url']) == target['page_id']]
+                       and _page_id(link['url'], target) == target['page_id']]
             if not authors:
                 continue
             owners = []
@@ -2233,7 +2242,7 @@ class BrowserPagePublisher:
                         owners.append(_target_url(link['url']))
                 except ValueError:
                     continue
-            if any(_page_id(owner) != target['page_id'] for owner in owners):
+            if any(_page_id(owner, target) != target['page_id'] for owner in owners):
                 continue
             urls.update(url for link in panel['links'] if (url := _canonical_inspection_url(link['url'])))
         return sorted(urls) if len(urls) == 1 else []
@@ -2322,14 +2331,14 @@ class BrowserPagePublisher:
                     continue
                 owners.append(owner)
                 if len(detail['owners']) < 12:
-                    detail['owners'].append(dict(path=urlsplit(owner).path, page_id=_page_id(owner),
+                    detail['owners'].append(dict(path=urlsplit(owner).path, page_id=_page_id(owner, target),
                         name=str(link.get('name', ''))[:100], local=link in panel['links']))
-                if (link in panel['links'] and _page_id(owner) == target['page_id'] and _name(re.sub(
+                if (link in panel['links'] and _page_id(owner, target) == target['page_id'] and _name(re.sub(
                         r',\s*see owner profile$', '', link['name'], flags=re.I)) == _name(target['name'])):
                     authors.append(link)
-            if not authors or any(_page_id(owner) != target['page_id'] for owner in owners):
+            if not authors or any(_page_id(owner, target) != target['page_id'] for owner in owners):
                 detail.update(reason='author_missing_or_conflicting_owner', author_count=len(authors),
-                    owner_count=len(owners),conflicting_owner=any(_page_id(owner) != target['page_id'] for owner in owners))
+                    owner_count=len(owners),conflicting_owner=any(_page_id(owner, target) != target['page_id'] for owner in owners))
                 continue
             try:
                 published_at = _inspection_publication_time(panel.get('times', []))
@@ -2434,7 +2443,7 @@ class BrowserPagePublisher:
             authors = [link for link in panel['links']
                        if _name(re.sub(r',\s*see owner profile$', '', link['name'], flags=re.I)) == _name(target['name'])
                        and _receipt_url_parts(link['url'])
-                       and _page_id(link['url']) == target['page_id']]
+                       and _page_id(link['url'], target) == target['page_id']]
             if not authors:
                 continue
             profile_links = []
@@ -2447,7 +2456,7 @@ class BrowserPagePublisher:
             # A Page link elsewhere in main must not label a foreign primary
             # player as ours. Ambiguous profile owners fail closed, including
             # otherwise matching captions in recommendations.
-            if any(_page_id(url) != target['page_id'] for url in profile_links):
+            if any(_page_id(url, target) != target['page_id'] for url in profile_links):
                 continue
             verified.append((panel, authors[0]))
         if not verified or len({panel['video_sources'][0] for panel, _ in verified}) != 1:
@@ -2478,7 +2487,9 @@ class BrowserPagePublisher:
             if len(bits) == 3 and bits[1] in {'posts', 'videos'} and bits[2]:
                 owner = bits[0]
                 saved_owner = urlsplit(target['url']).path.strip('/')
-                return url if owner == target['page_id'] or '/' not in saved_owner and owner == saved_owner else ''
+                username = str(target.get('username') or '').casefold()
+                return url if (owner == target['page_id'] or '/' not in saved_owner and owner == saved_owner
+                               or username and owner.casefold() == username) else ''
             return ''
         old_urls = {a['url'] for group in baseline.values() for item in group for a in item.get('links', [])}
         for item in observed.get('statuses', []):
@@ -2497,7 +2508,7 @@ class BrowserPagePublisher:
                 continue
             if snapshot['body'] not in [_body(x) for x in article['text'].split('\n\n')]:
                 continue
-            author = any(_name(a['name']) == _name(target['name']) and _page_id(a['url']) == target['page_id']
+            author = any(_name(a['name']) == _name(target['name']) and _page_id(a['url'], target) == target['page_id']
                          for a in article.get('links', []))
             if not author:
                 continue

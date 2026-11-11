@@ -111,6 +111,27 @@ def facebook_result_url(value):
     return facebook_post_url(value)
 
 
+_NOT_A_USERNAME = {'pages', 'people', 'login', 'login.php', 'checkpoint', 'recover', 'friends', 'me', 'settings', 'messages',
+                    'notifications', 'groups', 'watch', 'marketplace', 'gaming', 'reel', 'reels', 'ads', 'ad_center', 'business', 'help',
+                    'privacy', 'policies', 'bookmarks', 'home.php', 'photo', 'photo.php', 'stories', 'profile_switcher', 'share',
+                    'profile.php', 'permalink.php', 'story.php', 'video.php'}
+
+
+def username_of(url):
+    """'reviewsaithatnoithat' for https://www.facebook.com/reviewsaithatnoithat/ (lower case); '' for any other address (a numeric Page
+    address, a post, a menu...). Owner 11/11/2026: a Page that has a username is opened by Facebook at that address, not at its number."""
+    try:
+        parts = urlsplit(str(url))
+    except ValueError:
+        return ''
+    if parts.hostname not in {'facebook.com', 'www.facebook.com', 'm.facebook.com'}:
+        return ''
+    bits = [bit for bit in parts.path.split('/') if bit]
+    if len(bits) != 1 or not re.fullmatch(r'[A-Za-z0-9.\-_]{3,80}', bits[0]) or bits[0].isdigit() or bits[0].casefold() in _NOT_A_USERNAME:
+        return ''
+    return bits[0].casefold()
+
+
 def _name(value, label):
     value = str(value).strip()
     if not value or len(value) > 150 or any(ord(char) < 32 for char in value):
@@ -234,6 +255,8 @@ class FacebookAccounts:
             if row is None:
                 row = dict(id=uuid.uuid4().hex, account_id=account_id, created_at=_now())
                 value['pages'].append(row)
+            if row.get('username') and row.get('page_id') != fields['page_id']:
+                row.pop('username')  # Another number: the username proved for the old one means nothing.
             row.update(fields, source='manual', updated_at=_now())
             if chosen_by_owner and record_id is None:
                 row['custom_name'] = 'unconfirmed'  # Typed when adding: compared with Facebook's name at the first Load Page.
@@ -349,12 +372,16 @@ class FacebookAccounts:
                     if row is None:
                         row = dict(id=uuid.uuid4().hex, account_id=account_id, created_at=timestamp,
                                    source='browser_managed_pages', **found)
+                        if found['page_id'] and username_of(found['url']):
+                            row['username'] = username_of(found['url'])
                         value['pages'].append(row)
                         added += 1
                     elif row['id'] not in visited:
                         previous_seen = row.get('discovered_name')
                         same_page = bool(found['page_id']) and row.get('page_id') == found['page_id']
                         automatic = row.get('source') == 'browser_managed_pages'
+                        if same_page and username_of(found['url']):
+                            row['username'] = username_of(found['url'])  # Owner 11/11/2026: posting accepts this address for this Page.
                         if same_page and rename is not None:
                             # Facebook may now list the Page by a text link: keep the saved link, follow the name, unless the owner
                             # chose this Page's name in "Sửa Page" (owner 11/11/2026: the name must follow Facebook by itself).

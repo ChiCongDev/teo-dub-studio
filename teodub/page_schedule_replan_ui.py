@@ -60,8 +60,8 @@ class ScheduleReplanDialog(tk.Toplevel):
         self.preview_button = ttk.Button(fields, text='Xem lịch mới', command=self.show_plan)
         self.preview_button.grid(row=1, column=2, padx=(12, 0))
         ttk.Label(shell, wraplength=900, text='Các giờ được lấy từ thiết lập AI của Page nếu Page đã có giờ riêng; bạn có thể sửa. '
-                  'Số giờ cũng là số video tối đa mỗi ngày. Giờ đã qua hôm nay không được dồn bài; ngày nào Page đã đủ video '
-                  'thì sang ngày sau.').pack(anchor='w', pady=(4, 6))
+                  'Giờ nào còn ở tương lai (kể cả hôm nay) và không có lịch nào khác của Page trong vòng 30 phút thì được xếp vào; '
+                  'không giới hạn số video mỗi ngày. Giờ đã qua không được dồn bài.').pack(anchor='w', pady=(4, 6))
         # The buttons and the notices are packed first, at the bottom, so a long list never pushes them out of the window.
         actions = ttk.Frame(shell)
         actions.pack(side='bottom', fill='x')
@@ -126,7 +126,7 @@ class ScheduleReplanDialog(tk.Toplevel):
         lines = []
         if plan['moved']:
             lines.append(f"{plan['moved']} video sẽ được đăng từ {display_time(plan['first'])} đến {display_time(plan['last'])} (UTC+7), "
-                         f"mỗi ngày tối đa {len(plan['times'])} video, lúc {', '.join(plan['times'])}.")
+                         f"vào các giờ {', '.join(plan['times'])} còn trống mỗi ngày (mỗi bài cách bài khác của Page ít nhất {plan['gap']//60} phút).")
         else:
             lines.append('Không có video nào xếp lại được trong phần đã chọn.')
         if plan['skipped']:

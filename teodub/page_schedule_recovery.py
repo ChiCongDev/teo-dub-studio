@@ -26,6 +26,8 @@ def _target(store, row, post):
     from teodub.facebook_web_post import _page_id, _target_url
     page = store.activity.page(row['account_id'], row['page_key'])
     target = {key: page.get(key, '') for key in ('name', 'url', 'page_id')}
+    if page.get('username'):
+        target['username'] = page['username']  # Owner 11/11/2026: the address Facebook shows the Page at (proved by Load Page).
     if (not target['name'] or not re.fullmatch(r'[0-9]+', target['page_id'])
             or target['page_id'] != post['target_id']):
         raise ValueError('Chỉ khôi phục cho cùng Page ID. Không chuyển lịch cũ sang Page khác.')

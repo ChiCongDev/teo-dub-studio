@@ -404,5 +404,83 @@ class LinkTabsUITests(unittest.TestCase):
         self.assertEqual(str(link.config_button['text']), 'Chỉnh sửa cấu hình…')  # The one place to change it.
 
 
+    # Owner 11/11/2026 (lag): the slow columns are read on a background thread while the screen refreshes by itself, and a campaign.json
+    # that has not changed is not parsed again.
+    def test_the_timer_reads_the_slow_columns_in_the_background_and_never_waits_for_them(self):
+        import threading
+        import time
+        link = self.area.links[str(self.create('https://www.douyin.com/video/111', 'Kênh A'))]
+        started, release, where = threading.Event(), threading.Event(), []
+
+        def slow(manifest):
+            where.append(threading.current_thread())
+            started.set()
+            release.wait(5)
+            return {1: dict(label='Đã gửi')}, {1: 'Mẫu X'}, {1: dict(label='Không bật')}
+        link.slow_at, link.posting, link.slow_ready = 0., {}, None
+        with patch.object(link, 'compute_slow_columns', side_effect=slow):
+            began = time.perf_counter()
+            link.refresh(full=True, background=True)
+            self.assertLess(time.perf_counter()-began, 1)  # The screen did not wait for the read.
+            self.assertTrue(started.wait(5))
+            self.assertIsNot(where[0], threading.main_thread())
+            self.assertEqual(link.tree.set('1', 'posting'), 'Đang đọc…')  # Said so, instead of "Cần kiểm tra".
+            link.refresh(full=True, background=True)  # Still reading: no second read is started.
+            self.assertEqual(len(where), 1)
+            release.set()
+            link.slow_thread.join(5)
+            link.refresh(full=True, background=True)  # Takes what the thread finished.
+        self.assertEqual([link.tree.set('1', column) for column in ('posting', 'preset', 'drive')], ['Đã gửi', 'Mẫu X', 'Không bật'])
+
+    def test_a_refresh_asked_directly_still_reads_the_columns_at_once(self):
+        link = self.area.links[str(self.create('https://www.douyin.com/video/111', 'Kênh A'))]
+        link.slow_at, link.posting = 0., {}
+        link.refresh(full=True)
+        self.assertTrue(link.posting and link.presets and link.drive)
+        self.assertNotEqual(link.tree.set('1', 'posting'), 'Đang đọc…')
+
+    def test_a_failing_background_read_keeps_what_the_screen_has_and_tries_again_later(self):
+        link = self.area.links[str(self.create('https://www.douyin.com/video/111', 'Kênh A'))]
+        link.refresh(full=True)
+        before = dict(link.posting)
+        link.slow_at = 0.
+        with patch.object(link, 'compute_slow_columns', side_effect=RuntimeError('boom')):
+            link.refresh(full=True, background=True)
+            link.slow_thread.join(5)
+            link.refresh(full=True, background=True)
+        self.assertEqual(link.posting, before)
+
+    def test_campaign_json_is_parsed_again_only_when_it_changed(self):
+        import os
+        import time
+        from teodub.campaign import read_json
+        directory = self.create('https://www.douyin.com/video/111\nhttps://www.douyin.com/video/112', 'Kênh A')
+        link = self.area.links[str(directory)]
+        path = directory/'campaign.json'
+        stamp = time.time()-60
+        os.utime(path, (stamp, stamp))  # An old file: nothing writes it any more.
+        with patch('teodub.campaign_tabs_ui.read_json', wraps=read_json) as reader:
+            link.refresh()
+            link.refresh()
+            link.refresh(full=True)
+            self.assertEqual(reader.call_count, 1)  # Once; the others reuse it.
+            manifest = read_json(path)
+            manifest['name'] = 'Kênh Z'
+            atomic_json(path, manifest)
+            reader.reset_mock()
+            link.refresh()
+            link.refresh()
+            self.assertEqual(reader.call_count, 2)  # Written a moment ago: read every time (coarse timestamps).
+            os.utime(path, (stamp-10, stamp-10))
+            link.refresh()
+            reader.reset_mock()
+            link.refresh()
+            link.refresh()
+            self.assertEqual(reader.call_count, 0)
+            link.manifest_at -= 100  # And every few seconds anyway.
+            link.refresh()
+            self.assertEqual(reader.call_count, 1)
+        self.assertEqual(link.manifest['name'], 'Kênh Z')
+
 if __name__ == '__main__':
     unittest.main()

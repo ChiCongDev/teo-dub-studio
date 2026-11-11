@@ -5,6 +5,7 @@ A video "uses" a preset when every setting the preset keeps is equal in the vide
 Several presets can match; the one saved last wins. No match: NO_PRESET."""
 from pathlib import Path
 import json
+import time
 
 NO_PRESET = 'Không theo mẫu'
 NONE_YET = '—'
@@ -39,7 +40,8 @@ class PresetColumn:
             value = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, ValueError, UnicodeError):
             return None
-        self.cache[str(path)] = (key, value)
+        if time.time()-stat.st_mtime > 2:  # A file written a moment ago may be written again within the same timestamp tick.
+            self.cache[str(path)] = (key, value)
         return value
 
     def cells(self, data_dir, directory, manifest):

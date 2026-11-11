@@ -23,6 +23,12 @@ from teodub.subtitle_style import SUBTITLE_BOXES
 TABS_FILE = 'campaign-tabs.json'
 REFRESH_MS = 2000
 SLOW_S = 15  # Posting and Google Drive columns of the tab on screen.
+# Owner 11/11/2026 (lag): the slow columns are read on a background thread while the screen refreshes by itself, and a campaign.json that
+# has not changed is not read again. A file touched in the last SETTLE_S seconds is always read (timestamps are coarse), and every
+# RECHECK_S seconds anyway.
+SETTLE_S = 2
+RECHECK_S = 10
+READING = 'Đang đọc…'
 # State -> (word in the tab title, status line).
 STATES = {
     'running': ('đang làm', 'Đang làm'),
@@ -149,7 +155,7 @@ class CampaignArea(ttk.Frame):
         visible = self.visible_tab()
         for tab in list(self.links.values()):
             try:
-                tab.refresh(full=tab is visible)
+                tab.refresh(full=tab is visible, background=True)
             except tk.TclError:
                 continue
         self.timer = self.after(REFRESH_MS, self.poll)
@@ -241,6 +247,8 @@ class CampaignLinkTab(ttk.Frame):
         self.state = 'ready'
         self.slow_at = 0.
         self.posting, self.drive, self.presets = {}, {}, {}
+        self.slow_thread, self.slow_ready = None, None
+        self.manifest_key, self.manifest_at = None, 0.
         self.preset_column = PresetColumn()
         self.more_window = None
         self.likes_window = None
@@ -361,9 +369,48 @@ class CampaignLinkTab(ttk.Frame):
             return name
         return f'{name} · {counts["completed"]}/{counts["total"]}'+(f' · {word}' if word else '')
 
-    def refresh(self, full=False):
+    def read_manifest(self):
+        """campaign.json, parsed again only when the file changed (size/time), when it was touched in the last SETTLE_S seconds, or after
+        RECHECK_S seconds. Callers only read the result."""
+        path = self.directory/'campaign.json'
         try:
-            manifest = read_json(self.directory/'campaign.json')
+            stat = path.stat()
+            key = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            key = None
+        now = time.monotonic()
+        if (key is not None and key == self.manifest_key and self.manifest is not None and now-self.manifest_at < RECHECK_S
+                and time.time()-stat.st_mtime > SETTLE_S):
+            return self.manifest
+        manifest = read_json(path)
+        self.manifest_key, self.manifest_at = key, now
+        return manifest
+
+    def slow_running(self):
+        return self.slow_thread is not None and self.slow_thread.is_alive()
+
+    def take_slow_columns(self):
+        """Show what the background read has finished (never waits for it)."""
+        ready, self.slow_ready = self.slow_ready, None
+        if ready is not None:
+            self.posting, self.presets, self.drive = ready
+
+    def start_slow_columns(self, manifest):
+        if self.slow_running():
+            return
+        self.slow_at = time.monotonic()
+
+        def work():
+            try:
+                self.slow_ready = self.compute_slow_columns(manifest)
+            except Exception:  # The next round tries again; the screen keeps what it has.
+                pass
+        self.slow_thread = threading.Thread(target=work, daemon=True, name='teo-slow-columns')
+        self.slow_thread.start()
+
+    def refresh(self, full=False, background=False):
+        try:
+            manifest = self.read_manifest()
         except (OSError, ValueError) as exc:
             self.status.set('Chưa đọc được chiến dịch: '+str(exc))
             return
@@ -427,18 +474,23 @@ class CampaignLinkTab(ttk.Frame):
         self.channel_button.configure(state='normal' if channel else 'disabled')
         self.read_subtitles(manifest)
         self.read_daily(manifest)
+        self.take_slow_columns()
         if time.monotonic()-self.slow_at >= SLOW_S or not self.posting:
-            self.slow_at = time.monotonic()
-            self.read_slow_columns(manifest)
+            if background:
+                self.start_slow_columns(manifest)
+            elif not self.slow_running():
+                self.slow_at = time.monotonic()
+                self.read_slow_columns(manifest)
+        reading = not self.posting and self.slow_running()  # First read still going: say so instead of "Cần kiểm tra".
         expected = {str(item['number']) for item in manifest['items']}
         for key in set(self.tree.get_children())-expected:
             self.tree.delete(key)
         for item in manifest['items']:
             queued = item['number'] in retrying
             row = tracking_row(item, active=active, retrying=queued)
-            posting = posting_label(item, self.posting)
-            drive = self.drive.get(item['number'], {}).get('label', 'Cần kiểm tra')
-            preset = self.presets.get(item['number'], 'Cần kiểm tra')
+            posting = posting_label(item, {item['number']: dict(label=READING)} if reading else self.posting)
+            drive = READING if reading else self.drive.get(item['number'], {}).get('label', 'Cần kiểm tra')
+            preset = READING if reading else self.presets.get(item['number'], 'Cần kiểm tra')
             values = row[:4]+(preset,)+row[4:-1]+(posting, drive, row[-1])
             key, tags = str(item['number']), (row_tag(item, queued),)
             if self.tree.exists(key):
@@ -503,24 +555,33 @@ class CampaignLinkTab(ttk.Frame):
         self.refresh(full=True)
 
     def read_slow_columns(self, manifest):
+        self.posting, self.presets, self.drive = self.compute_slow_columns(manifest)
+
+    def compute_slow_columns(self, manifest):
+        """The posting, config and Google Drive columns of every video: (posting, presets, drive). Only reads files; touches no widget, so
+        it can run on a background thread."""
         from teodub.campaign_posting import campaign_posting_statuses
         from teodub.campaign_settings import effective_job
         from teodub.drive_delivery import drive_upload_summary
         try:
-            self.posting = campaign_posting_statuses(self.studio.data_dir, self.directory, manifest)
+            posting = campaign_posting_statuses(self.studio.data_dir, self.directory, manifest)
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
-            self.posting = {item['number']: dict(label='Cần kiểm tra', details=str(exc)) for item in manifest['items']}
+            posting = {item['number']: dict(label='Cần kiểm tra', details=str(exc)) for item in manifest['items']}
         try:  # Owner 10/11/2026: the config each video uses (read with the slow columns, cached per file).
-            self.presets = self.preset_column.cells(self.studio.data_dir, self.directory, manifest)
+            presets = self.preset_column.cells(self.studio.data_dir, self.directory, manifest)
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
-            self.presets = {}
-        self.drive = {}
+            presets = {}
+        drive = {}
         for item in manifest['items']:
             try:
                 job = effective_job(self.directory, item)
-                self.drive[item['number']] = drive_upload_summary(read_json(job/'config.json'), job)
+                config = self.preset_column.config(job)  # Parsed once per file (until it changes), like the config column.
+                if config is None:
+                    raise ValueError('config.json không đọc được')
+                drive[item['number']] = drive_upload_summary(config, job)
             except (OSError, ValueError, TypeError, KeyError):
-                self.drive[item['number']] = dict(label='Cần kiểm tra')
+                drive[item['number']] = dict(label='Cần kiểm tra')
+        return posting, presets, drive
 
     def run(self):
         batch = getattr(self.studio, 'batch_controller', None)

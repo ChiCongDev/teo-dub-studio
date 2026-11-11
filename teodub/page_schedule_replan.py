@@ -14,6 +14,10 @@ import time
 from teodub.page_schedule import LOCAL_TIME, display_time
 
 SAME_SLOT_SECONDS = 60  # Two posts of one Page never share a minute (the same rule as the automatic mode).
+# Owner 11/11/2026: in the bulk re-plan a time of the day is taken whenever it is still ahead and no other appointment of the Page is
+# within MIN_GAP_SECONDS of it; there is no cap of videos per day (free_slots(..., cap=False)). The automatic re-arm after Tèo was down
+# keeps the old rule (cap=True).
+MIN_GAP_SECONDS = 30*60
 LEAD_SECONDS = 300  # The first new time is at least this far ahead.
 GONE = ('removed', 'cancelled')  # Rows the owner deleted or cancelled take no place in a day.
 MAX_DAYS = 365  # `reschedule` / `recover_schedule` accept a time less than 366 days ahead.
@@ -51,10 +55,22 @@ def page_times(data_dir, account_id, page_key):
         return []
 
 
-def free_slots(times, count, rows, clock, start):
-    """`count` free posting times in the future, in order: each day's `times` from `start` on, at most len(times) videos a day
-    (counting what the Page already has that day), never within SAME_SLOT_SECONDS of another appointment of the Page."""
+def open_gap(times):
+    """The least distance kept between two posts of the Page in the open mode: MIN_GAP_SECONDS, or less when the owner's own times of the
+    day are closer than that (so his own times are never refused by each other); never below SAME_SLOT_SECONDS."""
+    minutes = [int(text.split(':')[0])*60+int(text.split(':')[1]) for text in times]
+    spacing = [(minutes[(i+1) % len(minutes)]-minutes[i]) % 1440 or 1440 for i in range(len(minutes))] if minutes else [1440]
+    return max(SAME_SLOT_SECONDS, min(MIN_GAP_SECONDS, min(spacing)*60))
+
+
+def free_slots(times, count, rows, clock, start, *, cap=True):
+    """`count` free posting times in the future, in order: each day's `times` from `start` on.
+    cap=True (the automatic re-arm): at most len(times) videos a day (counting what the Page already has that day), never within
+    SAME_SLOT_SECONDS of another appointment of the Page.
+    cap=False (the bulk re-plan, owner 11/11/2026): every time that is still ahead and has no other appointment of the Page within
+    open_gap(times) is taken; no limit per day."""
     begin = max(float(start), clock+LEAD_SECONDS)
+    gap = SAME_SLOT_SECONDS if cap else open_gap(times)
     live = [row for row in rows if row['state'] not in GONE]
     reserved = [row['due_at'] for row in live]
     used = Counter(datetime.fromtimestamp(row['due_at'], LOCAL_TIME).date()
@@ -67,9 +83,9 @@ def free_slots(times, count, rows, clock, start):
         for text in times:
             hour, minute = map(int, text.split(':'))
             stamp = day.replace(hour=hour, minute=minute).timestamp()
-            if len(slots) >= count or taken >= len(times):
+            if len(slots) >= count or (cap and taken >= len(times)):
                 break
-            if begin <= stamp <= limit and all(abs(stamp-other) >= SAME_SLOT_SECONDS for other in reserved+slots):
+            if begin <= stamp <= limit and all(abs(stamp-other) >= gap for other in reserved+slots):
                 slots.append(stamp)
                 taken += 1
         day += timedelta(days=1)
@@ -122,12 +138,12 @@ def build_plan(controller, account_id, page_key, identifiers, times, start, *, c
                      key=lambda entry: (entry['old_due_at'], by_id[entry['id']]['source'].get('number', 0), entry['id']))
     taken = {entry['id'] for entry in movable}
     others = [row for row in controller.store.list(account_id, page_key) if row['id'] not in taken]
-    slots = free_slots(times, len(movable), others, clock, start) if movable else []
+    slots = free_slots(times, len(movable), others, clock, start, cap=False) if movable else []
     for entry, stamp in zip(movable, slots):
         entry['due_at'] = stamp
         if entry['kind'] == 'recover':
             entry['preview'] = controller.recovery_preview(account_id, page_key, entry['id'])
-    return dict(entries=entries, times=times, start=float(start), clock=clock, moved=len(movable),
+    return dict(entries=entries, times=times, start=float(start), clock=clock, moved=len(movable), gap=open_gap(times),
                 recover=sum(entry['kind'] == 'recover' for entry in entries),
                 skipped=sum(entry['kind'] == 'skip' for entry in entries),
                 first=slots[0] if slots else None, last=slots[-1] if slots else None)
