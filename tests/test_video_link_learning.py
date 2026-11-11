@@ -150,7 +150,9 @@ class LinkAnalysisUITests(unittest.TestCase):
         self.tab.notebook.select(self.tab.samples_tab)
         self.tab.name.set('Học từ video')
         self.tab.save()
-        self.assertIn('Học từ video', self.fixture.studio.fields['voice'].get())
+        # Owner 05/11/2026: saving only learns the voice; Video đơn keeps its voice until Áp dụng giọng… is used.
+        self.assertNotIn('Học từ video', self.fixture.studio.fields['voice'].get())
+        self.assertIn('Chưa áp dụng', self.tab.status.get())
         self.assertEqual(self.fixture.notebook.select(), self.fixture.notebook.tabs()[0])
 
 

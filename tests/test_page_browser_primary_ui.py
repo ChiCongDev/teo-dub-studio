@@ -91,7 +91,8 @@ class PageBrowserPrimaryUITests(unittest.TestCase):
         self.assertIn('API chưa kết nối', state)
         self.assertNotIn('đã đăng nhập', state)
         self.owner.load_pages_button.invoke()
-        self.assertEqual(session.commands.get_nowait(), {'action': 'load_pages'})
+        command = session.commands.get_nowait()  # 11/11/2026: saved Pages ride along (renamed Page found by ID).
+        self.assertEqual(command['action'], 'load_pages')
         self.assertEqual(str(self.owner.load_pages_button['state']), 'disabled')
 
     def test_tracked_load_uses_original_account_keeps_selection_and_scope(self):
