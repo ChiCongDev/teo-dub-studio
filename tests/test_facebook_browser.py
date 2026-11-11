@@ -212,6 +212,17 @@ class FacebookBrowserTests(unittest.TestCase):
         self.context.cookies.assert_not_called()
         self.context.storage_state.assert_not_called()
 
+    def test_load_pages_hands_the_saved_pages_of_the_account_to_the_reader(self):
+        known = [dict(page_id='61595943214900', url='https://www.facebook.com/profile.php?id=61595943214900')]
+        self.commands.put(dict(action='load_pages', known=known))
+        seen = {}
+        def scan(context, **kwargs):
+            seen.update(kwargs)
+            return dict(items=[dict(name='Kỹ Năng Câu Cá', url='https://facebook.com/Page')], status='observed', message='ok')
+        with patch('teodub.facebook_page_discovery.read_managed_pages', side_effect=scan):
+            self.assertEqual(self.browse(), 'finished')
+        self.assertEqual(seen['known'], known)
+
     def test_load_page_error_keeps_browser_available_without_automatic_retry(self):
         self.commands.put(dict(action='load_pages'))
         self.commands.put(BUSINESS_SUITE)

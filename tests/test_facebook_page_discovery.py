@@ -40,6 +40,54 @@ class FacebookDiscoveryTests(unittest.TestCase):
         self.assertEqual([row['page_id'] for row in rows], ['123', '456', '789', ''])
         self.assertEqual(rows[0]['url'], 'https://www.facebook.com/profile.php?id=123')
 
+    # Owner 11/11/2026: a Page the list shows only by its username is recognised through the number link of a saved Page: Facebook sends
+    # facebook.com/profile.php?id=NUMBER to the Page's text link.
+    def probe_landing(self, landings):
+        """A second tab whose address, after opening each number link, is the next of `landings`."""
+        probe = Mock()
+        addresses = iter(landings)
+        def goto(url, **kwargs):
+            probe.opened.append(url)
+            probe.url = next(addresses)
+        probe.opened = []
+        probe.goto.side_effect = goto
+        self.context.new_page.side_effect = [self.page, probe]
+        return probe
+
+    def test_a_saved_page_that_facebook_sends_to_a_username_gets_that_row_its_number(self):
+        self.snapshot['items'] = [dict(name='Sài Thật Nói Thật', url='https://www.facebook.com/reviewsaithatnoithat'),
+                                  dict(name='Kỹ Năng Câu Cá', url='https://www.facebook.com/profile.php?id=123')]
+        probe = self.probe_landing(['https://www.facebook.com/reviewsaithatnoithat/'])
+        result = self.scan(known=[dict(page_id='61595943214900', url='https://www.facebook.com/profile.php?id=61595943214900'),
+                                  dict(page_id='123', url='https://www.facebook.com/profile.php?id=123')])
+        by_name = {row['name']: row['page_id'] for row in result['items']}
+        self.assertEqual(by_name, {'Sài Thật Nói Thật': '61595943214900', 'Kỹ Năng Câu Cá': '123'})
+        self.assertEqual(probe.opened, ['https://www.facebook.com/profile.php?id=61595943214900'])  # Only the Page the list did not show.
+        probe.close.assert_called_once()
+
+    def test_a_saved_page_that_lands_somewhere_else_or_cannot_be_opened_changes_nothing(self):
+        self.snapshot['items'] = [dict(name='Page chữ', url='https://www.facebook.com/pagechu')]
+        known = [dict(page_id='55555', url='https://www.facebook.com/profile.php?id=55555')]
+        self.probe_landing(['https://www.facebook.com/khac/'])
+        self.assertEqual([row['page_id'] for row in self.scan(known=known)['items']], [''])
+        probe = Mock()
+        probe.goto.side_effect = RuntimeError('timeout')
+        self.context.new_page.side_effect = [self.page, probe]
+        self.assertEqual([row['page_id'] for row in self.scan(known=known)['items']], [''])
+        self.context.new_page.side_effect = [self.page, RuntimeError('no tab')]
+        self.assertEqual([row['page_id'] for row in self.scan(known=known)['items']], [''])
+
+    def test_two_saved_pages_landing_on_one_username_are_not_trusted(self):
+        self.snapshot['items'] = [dict(name='Một', url='https://www.facebook.com/mot')]
+        known = [dict(page_id='11111', url='x'), dict(page_id='22222', url='y')]
+        self.probe_landing(['https://www.facebook.com/mot/', 'https://www.facebook.com/mot'])
+        self.assertEqual([row['page_id'] for row in self.scan(known=known)['items']], [''])
+
+    def test_without_saved_pages_or_username_rows_no_second_tab_is_opened(self):
+        self.scan()
+        self.scan(known=[dict(page_id='123', url='https://www.facebook.com/profile.php?id=123')])
+        self.assertEqual(self.context.new_page.call_count, 2)  # One scan tab per scan, never a probe tab.
+
     def test_navigation_or_external_links_are_not_treated_as_page_cards(self):
         self.assertEqual(normalize_items([
             dict(name='Friends', url='https://facebook.com/friends'),

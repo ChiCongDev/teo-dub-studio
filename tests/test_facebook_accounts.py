@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from teodub.facebook_accounts import FACEBOOK_HOME, FACEBOOK_PAGES, BUSINESS_SUITE, FacebookAccounts, facebook_url
 from teodub.pipeline import _job_lock
@@ -156,6 +157,115 @@ class FacebookAccountTests(unittest.TestCase):
         self.assertEqual((manual['name'], manual['url'], manual['source']),
                          ('Tên do tôi đặt', 'https://www.facebook.com/custom', 'manual'))
         self.assertEqual(manual['discovered_name'], 'Tên từ Facebook')
+
+    # Owner 11/11/2026: Facebook renamed a Page; the saved row is the same Page and must follow, never a second row.
+    def renamed_setup(self):
+        account = self.store.add_account('Một')
+        self.store.merge_discovered_pages(account['id'], [dict(name='Review sản phẩm', url='facebook.com/profile.php?id=123456', page_id='123456')])
+        record = self.store.load()['pages'][0]['id']
+        row = self.store.save_page(account['id'], 'Review sản phẩm', 'facebook.com/profile.php?id=123456', '123456', record_id=record)
+        return account, row
+
+    def test_a_renamed_page_found_by_its_number_takes_the_new_name_when_nothing_waits(self):
+        account, row = self.renamed_setup()
+        found = dict(name='Sài Thật Nói Thật', url='facebook.com/saithatnoithat', page_id='123456')
+        result = self.store.merge_discovered_pages(account['id'], [found], rename_ok=lambda record_id: True)
+        pages = self.store.load()['pages']
+        self.assertEqual((len(pages), pages[0]['id'], pages[0]['name']), (1, row['id'], 'Sài Thật Nói Thật'))
+        self.assertEqual(pages[0]['previous_names'], ['Review sản phẩm'])
+        self.assertEqual(pages[0]['url'], 'https://www.facebook.com/profile.php?id=123456')  # The saved link is not touched.
+        self.assertEqual((result['added'], result['renamed']), (0, 1))
+
+    def test_a_renamed_page_with_posts_waiting_keeps_its_name_and_remembers_the_new_one(self):
+        account, row = self.renamed_setup()
+        found = dict(name='Sài Thật Nói Thật', url='facebook.com/saithatnoithat', page_id='123456')
+        self.store.merge_discovered_pages(account['id'], [found], rename_ok=lambda record_id: False)
+        page = self.store.load()['pages'][0]
+        self.assertEqual((page['name'], page['facebook_name']), ('Review sản phẩm', 'Sài Thật Nói Thật'))
+        self.store.merge_discovered_pages(account['id'], [found], rename_ok=lambda record_id: True)  # Later, nothing waits.
+        page = self.store.load()['pages'][0]
+        self.assertEqual((page['name'], page.get('facebook_name')), ('Sài Thật Nói Thật', None))
+
+    def test_a_name_chosen_by_the_owner_is_kept_while_facebook_has_not_changed_its_own(self):
+        account = self.store.add_account('Một')
+        self.store.merge_discovered_pages(account['id'], [dict(name='Tên Facebook', url='facebook.com/profile.php?id=777', page_id='777')])
+        record = self.store.load()['pages'][0]['id']
+        self.store.save_page(account['id'], 'Tên tôi đặt', 'facebook.com/profile.php?id=777', '777', record_id=record)
+        self.store.merge_discovered_pages(account['id'], [dict(name='Tên Facebook', url='facebook.com/profile.php?id=777', page_id='777')],
+                                          rename_ok=lambda record_id: True)
+        self.assertEqual(self.store.load()['pages'][0]['name'], 'Tên tôi đặt')
+
+    def test_the_duplicate_row_made_by_an_earlier_scan_is_merged_only_when_unused(self):
+        account, row = self.renamed_setup()
+        self.store.merge_discovered_pages(account['id'], [dict(name='Sài Thật Nói Thật', url='facebook.com/saithatnoithat')])
+        self.assertEqual(len(self.store.load()['pages']), 2)  # The old behaviour: a second row without a number.
+        found = dict(name='Sài Thật Nói Thật', url='facebook.com/saithatnoithat', page_id='123456')
+        before = self.store.path.read_bytes()
+        with self.assertRaises(ValueError):  # Used by a schedule: left alone, nothing written.
+            self.store.merge_discovered_pages(account['id'], [found], in_use=lambda record_id: True)
+        self.assertEqual(self.store.path.read_bytes(), before)
+        with self.assertRaises(ValueError):  # Without the check the old refusal stays.
+            self.store.merge_discovered_pages(account['id'], [found])
+        result = self.store.merge_discovered_pages(account['id'], [found], in_use=lambda record_id: False)
+        pages = self.store.load()['pages']
+        self.assertEqual((len(pages), pages[0]['id'], result['merged']), (1, row['id'], 1))
+
+    def test_an_automatic_page_with_posts_waiting_keeps_its_name_and_link_when_facebook_renames_it(self):
+        account = self.store.add_account('Một')
+        self.store.merge_discovered_pages(account['id'], [dict(name='Tên cũ', url='facebook.com/profile.php?id=321', page_id='321')])
+        found = dict(name='Tên mới', url='facebook.com/tenmoi', page_id='321')
+        self.store.merge_discovered_pages(account['id'], [found], rename_ok=lambda record_id: False)
+        page = self.store.load()['pages'][0]
+        self.assertEqual((page['name'], page['url'], page['facebook_name']), ('Tên cũ', 'https://www.facebook.com/profile.php?id=321', 'Tên mới'))
+        result = self.store.merge_discovered_pages(account['id'], [found], rename_ok=lambda record_id: True)
+        page = self.store.load()['pages'][0]
+        self.assertEqual((page['name'], page['url'], page.get('facebook_name'), result['renamed']), ('Tên mới', 'https://www.facebook.com/tenmoi', None, 1))
+
+    # Owner 11/11/2026: the rename moves into the posts, schedules and plans not sent yet (`rename`), then into the Page list.
+    def test_a_rename_that_is_done_everywhere_changes_the_saved_name_and_keeps_the_saved_link(self):
+        account, row = self.renamed_setup()  # Saved by hand, with the number link.
+        calls = []
+        def rename(record_id, old, new):
+            calls.append((record_id, old, new))
+        found = dict(name='Sài Thật Nói Thật', url='facebook.com/reviewsaithatnoithat', page_id='123456')
+        result = self.store.merge_discovered_pages(account['id'], [found], rename=rename)
+        page = self.store.load()['pages'][0]
+        self.assertEqual(calls, [(row['id'], 'Review sản phẩm', 'Sài Thật Nói Thật')])
+        self.assertEqual((page['name'], page['url'], page.get('facebook_name'), page['previous_names']),
+                         ('Sài Thật Nói Thật', 'https://www.facebook.com/profile.php?id=123456', None, ['Review sản phẩm']))
+        self.assertEqual((result['renamed'], result['added']), (1, 0))
+
+    def test_a_rename_that_was_not_possible_changes_nothing_and_says_why(self):
+        account, row = self.renamed_setup()
+        found = dict(name='Sài Thật Nói Thật', url='facebook.com/reviewsaithatnoithat', page_id='123456')
+        result = self.store.merge_discovered_pages(account['id'], [found], rename=lambda record_id, old, new: 'Page đang chuẩn bị đăng.')
+        page = self.store.load()['pages'][0]
+        self.assertEqual((page['name'], page['facebook_name']), ('Review sản phẩm', 'Sài Thật Nói Thật'))
+        self.assertEqual(result['rename_blocked'], ['Page đang chuẩn bị đăng.'])
+        self.assertNotIn('renamed', result)
+        self.store.merge_discovered_pages(account['id'], [found], rename=lambda record_id, old, new: None)  # Tried again later.
+        page = self.store.load()['pages'][0]
+        self.assertEqual((page['name'], page.get('facebook_name')), ('Sài Thật Nói Thật', None))
+
+    def test_an_automatic_page_found_by_its_number_keeps_its_number_link_and_follows_the_name(self):
+        account = self.store.add_account('Một')
+        self.store.merge_discovered_pages(account['id'], [dict(name='Tên cũ', url='facebook.com/profile.php?id=321', page_id='321')])
+        self.store.merge_discovered_pages(account['id'], [dict(name='Tên mới', url='facebook.com/tenmoi', page_id='321')],
+                                          rename=lambda record_id, old, new: None)
+        page = self.store.load()['pages'][0]
+        self.assertEqual((page['name'], page['url']), ('Tên mới', 'https://www.facebook.com/profile.php?id=321'))
+
+    def test_when_the_list_cannot_be_saved_the_rename_is_put_back(self):
+        account, row = self.renamed_setup()
+        calls = []
+        def rename(record_id, old, new):
+            calls.append((old, new))
+        found = dict(name='Sài Thật Nói Thật', url='facebook.com/reviewsaithatnoithat', page_id='123456')
+        before = self.store.path.read_bytes()
+        with patch('teodub.facebook_accounts.atomic_json', side_effect=OSError('disk full')), self.assertRaises(OSError):
+            self.store.merge_discovered_pages(account['id'], [found], rename=rename)
+        self.assertEqual(calls, [('Review sản phẩm', 'Sài Thật Nói Thật'), ('Sài Thật Nói Thật', 'Review sản phẩm')])
+        self.assertEqual(self.store.path.read_bytes(), before)
 
     def test_discovery_stays_in_account_scope_and_retains_manual_label_selection_and_extensions(self):
         one = self.store.add_account('Một')

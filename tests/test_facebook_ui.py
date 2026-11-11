@@ -670,6 +670,20 @@ class FacebookUITests(unittest.TestCase):
         self.tab.save_page_link()
         self.assertEqual(self.tab.store.path.read_bytes(), before)
 
+    # Owner 11/11/2026: Facebook renamed a Page; Load Page finds it by its number and renames it, never a second row.
+    def test_load_page_renames_a_page_that_facebook_renamed_instead_of_adding_a_row(self):
+        account = self.account()
+        self.tab.store.merge_discovered_pages(account, [dict(name='Review sản phẩm', url='facebook.com/profile.php?id=123', page_id='123')])
+        self.tab.load_pages()
+        session = self.tab.sessions[account]
+        session.messages.put(('opened', 'Chrome đang mở'))
+        session.messages.put(('pages_loaded', dict(items=[dict(name='Sài Thật Nói Thật', url='facebook.com/reviewsaithatnoithat', page_id='123')],
+                                                 message='Đã đọc 1', status='observed')))
+        self.drain()
+        pages = self.tab.store.load()['pages']
+        self.assertEqual([(row['name'], row['url']) for row in pages],
+                         [('Sài Thật Nói Thật', 'https://www.facebook.com/profile.php?id=123')])
+        self.assertIn('Đã đổi tên 1 Page', self.tab.status.get())
 
 if __name__ == '__main__':
     unittest.main()

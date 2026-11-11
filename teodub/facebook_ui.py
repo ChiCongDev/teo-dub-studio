@@ -442,6 +442,13 @@ class FacebookTab(ttk.Frame):
             return False
         session = self.sessions.get(account_id)
         command = dict(action='load_pages')
+        try:  # Owner 11/11/2026: lets Load Page recognise a saved Page that Facebook now lists by a text link.
+            known = [dict(page_id=row['page_id'], url=row['url']) for row in self.store.load()['pages']
+                     if row['account_id'] == account_id and str(row.get('page_id', '')).isdigit()]
+        except (OSError, ValueError, KeyError, TypeError):
+            known = []
+        if known:
+            command['known'] = known
         request_cancel = threading.Event() if request_id else None
         expires_at = time.monotonic()+360 if request_id else None
         if request_id:
@@ -604,7 +611,8 @@ class FacebookTab(ttk.Frame):
                     state = self.browser_state(row['account_id'])+' · '+('API cần kết nối lại'
                              if connection['status'] == 'reconnect' or connection['page_id'] != row.get('page_id')
                              else 'Đã kết nối đọc API')
-            self.tree.insert('', 'end', iid=row['id'], values=(row['name'], row.get('page_id') or '—',
+            shown = row['name']+(f' (tên mới trên Facebook: {row["facebook_name"]})' if row.get('facebook_name') else '')
+            self.tree.insert('', 'end', iid=row['id'], values=(shown, row.get('page_id') or '—',
                              row['url'], state))
         if select and self.tree.exists(select):
             self.tree.selection_set(select)
@@ -1080,10 +1088,27 @@ class FacebookTab(ttk.Frame):
                     session.loading_pages = False
                     session.page_load_active = ''
                     try:
+                        from teodub.facebook_page_usage import PageUsage
+                        from teodub.page_rename import RenameBlocked, rename_page
+                        usage = PageUsage(self.studio.data_dir, account_id)
+
+                        def rename(record_id, old_name, new_name):
+                            # Owner 11/11/2026: the new name follows into the posts, schedules and plans not sent yet, or nothing changes.
+                            try:
+                                rename_page(self.studio.data_dir, account_id, record_id, old_name, new_name)
+                            except RenameBlocked as exc:
+                                return str(exc)
+                            return None
+
                         summary = self.store.merge_discovered_pages(account_id, value['items'],
-                            message=value.get('message', ''), status=value.get('status', 'observed'))
-                        session.page_load_status = (f'Load Page: thêm {summary["added"]}, đã có/cập nhật {summary["updated"]}. '
-                                                    +value.get('message', ''))
+                            message=value.get('message', ''), status=value.get('status', 'observed'),
+                            rename=rename, in_use=lambda record_id: usage.in_use(record_id))
+                        extra = ''.join((f' Đã đổi tên {summary["renamed"]} Page theo tên mới trên Facebook (kể cả bài và lịch chưa đăng).'
+                                         if summary.get('renamed') else '',
+                                         f' Đã gộp {summary["merged"]} dòng Page trùng.' if summary.get('merged') else '',
+                                         ''.join(f' CHƯA đổi tên: {reason}' for reason in summary.get('rename_blocked', []))))
+                        session.page_load_status = (f'Load Page: thêm {summary["added"]}, đã có/cập nhật {summary["updated"]}.'
+                                                    +extra+' '+value.get('message', ''))
                         session.status = session.page_load_status
                         if request:
                             request.update(state='done', message=session.page_load_status, result=summary)

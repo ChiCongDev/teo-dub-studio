@@ -274,44 +274,120 @@ class FacebookAccounts:
                 raise ValueError('Không còn Page này trong tài khoản. Bấm Làm mới.')
             value['pages'].remove(row)
 
-    def merge_discovered_pages(self, account_id, items, *, message='', status='observed'):
-        """Merge one browser scan atomically. Partial scans never delete saved Pages."""
+    def merge_discovered_pages(self, account_id, items, *, message='', status='observed', rename_ok=None, in_use=None, rename=None):
+        """Merge one browser scan atomically. Partial scans never delete saved Pages.
+
+        Owner 11/11/2026: a Page that Facebook renamed (or gave a username) is the SAME Page when its numeric ID is the same.
+        * `rename(record_id, old_name, new_name)` moves the new name into everything of the Page that is not sent yet (page_rename) and
+          returns None when that is done, or the reason (text) when it was not possible: then nothing changed, the saved name stays and
+          the new one is remembered as `facebook_name`. A Page found by its ID keeps its saved link (Facebook sends the number link to
+          the text link); only its name follows. If the list cannot be saved afterwards, the schedules and plans are put back.
+        * `rename_ok(record_id)` (older, simpler form, used when `rename` is not given) only says whether the name may change now.
+          Without either, names never change by themselves (a manually chosen name is kept; Facebook's is only remembered).
+        * `in_use(record_id)` says whether a saved Page already has schedules, plans or posts. A duplicate row created by an earlier
+          scan (same Page, no ID, automatic source) is merged into the real one only when it is not in use."""
         if (not isinstance(items, list) or len(items) > 1000
                 or any(not isinstance(row, dict) for row in items)):
             raise ValueError('Danh sách Page không hợp lệ hoặc vượt quá 1.000 Page/lượt.')
         if status not in {'observed', 'partial'}:
             raise ValueError('Trạng thái Load Page không hợp lệ; chưa lưu danh sách.')
         fields = [_page_values(row['name'], row['url'], row.get('page_id', '')) for row in items]
-        added = updated = seen = 0
+        added = updated = seen = renamed = merged = 0
+        blocked = []
+        done = []  # (record id, old name, new name) of the renames already moved into the schedules and plans
         timestamp = _now()
-        with self._edit() as value:
-            account = self._account(value, account_id)
-            visited = set()
-            for found in fields:
-                matches = [row for row in value['pages'] if row['account_id'] == account_id
-                    and (row['url'].casefold() == found['url'].casefold()
-                         or found['page_id'] and found['page_id'] == row.get('page_id'))]
-                if len(matches) > 1:
-                    raise ValueError('Hai Page đã lưu có cùng ID/link của Page vừa đọc; dùng Sửa Page để kiểm tra trước.')
-                row = matches[0] if matches else None
-                if row and row.get('page_id') and found['page_id'] and row['page_id'] != found['page_id']:
-                    raise ValueError('Page ID đã lưu khác với Page vừa đọc; dữ liệu cũ được giữ để kiểm tra.')
-                if row is None:
-                    row = dict(id=uuid.uuid4().hex, account_id=account_id, created_at=timestamp,
-                               source='browser_managed_pages', **found)
-                    value['pages'].append(row)
-                    added += 1
-                elif row['id'] not in visited:
-                    # Respect manually chosen names/links; refresh names only for auto-added records.
-                    if row.get('source') == 'browser_managed_pages':
-                        row.update(found)
-                    elif not row.get('page_id') and found['page_id']:
-                        row['page_id'] = found['page_id']
-                    updated += 1
-                row.update(last_seen_at=timestamp, discovered_name=found['name'])
-                if row['id'] not in visited:
-                    seen += 1
-                    visited.add(row['id'])
-            account['page_load'] = dict(at=timestamp, status=status, read_count=seen,
-                                        message=str(message)[:2000])
-        return dict(added=added, updated=updated, read_count=seen)
+
+        def follow(row, new_name):
+            """The same Page under a new name on Facebook. True when the saved name changed."""
+            nonlocal renamed
+            if rename is not None:
+                reason = rename(row['id'], row['name'], new_name)
+                if reason:
+                    blocked.append(reason)
+                    row['facebook_name'] = new_name
+                    return False
+                done.append((row['id'], row['name'], new_name))
+            elif rename_ok is None or not rename_ok(row['id']):
+                row['facebook_name'] = new_name
+                return False
+            row.setdefault('previous_names', []).append(row['name'])
+            row['name'] = new_name
+            row.pop('facebook_name', None)
+            renamed += 1
+            return True
+
+        try:
+            with self._edit() as value:
+                account = self._account(value, account_id)
+                visited = set()
+                for found in fields:
+                    matches = [row for row in value['pages'] if row['account_id'] == account_id
+                        and (row['url'].casefold() == found['url'].casefold()
+                             or found['page_id'] and found['page_id'] == row.get('page_id'))]
+                    if len(matches) > 1:
+                        keep = [row for row in matches if found['page_id'] and row.get('page_id') == found['page_id']]
+                        extra = [row for row in matches if row not in keep]
+                        removable = (len(keep) == 1 and in_use is not None and all(
+                            not row.get('page_id') and row.get('source') == 'browser_managed_pages' and not in_use(row['id'])
+                            for row in extra))
+                        if not removable:
+                            raise ValueError('Hai Page đã lưu có cùng ID/link của Page vừa đọc; dùng Sửa Page để kiểm tra trước.')
+                        value['pages'] = [row for row in value['pages'] if row not in extra]
+                        merged += len(extra)
+                        matches = keep
+                    row = matches[0] if matches else None
+                    if row and row.get('page_id') and found['page_id'] and row['page_id'] != found['page_id']:
+                        raise ValueError('Page ID đã lưu khác với Page vừa đọc; dữ liệu cũ được giữ để kiểm tra.')
+                    if row is None:
+                        row = dict(id=uuid.uuid4().hex, account_id=account_id, created_at=timestamp,
+                                   source='browser_managed_pages', **found)
+                        value['pages'].append(row)
+                        added += 1
+                    elif row['id'] not in visited:
+                        previous_seen = row.get('discovered_name')
+                        same_page = bool(found['page_id']) and row.get('page_id') == found['page_id']
+                        automatic = row.get('source') == 'browser_managed_pages'
+                        if same_page and rename is not None:
+                            # Facebook may now list the Page by a text link: keep the saved link, follow the name.
+                            if row['name'] != found['name']:
+                                if automatic or (previous_seen and previous_seen != found['name']) or row.get('facebook_name') == found['name']:
+                                    follow(row, found['name'])
+                        elif automatic:
+                            changed = row['name'] != found['name'] or row['url'].casefold() != found['url'].casefold()
+                            if changed and rename_ok is not None and not rename_ok(row['id']):
+                                row['facebook_name'] = found['name']  # Posts are waiting with the old name and link: not now.
+                            else:
+                                if changed and rename_ok is not None and row['name'] != found['name']:
+                                    row.setdefault('previous_names', []).append(row['name'])
+                                    renamed += 1
+                                row.update(found)
+                        elif not row.get('page_id') and found['page_id']:
+                            row['page_id'] = found['page_id']
+                        elif (same_page and row['name'] != found['name']
+                              and ((previous_seen and previous_seen != found['name']) or row.get('facebook_name') == found['name'])):
+                            # Facebook changed the name of this same Page (the name we chose is not what Facebook had before).
+                            follow(row, found['name'])
+                        if row.get('facebook_name') and row['name'] == row['facebook_name']:
+                            row.pop('facebook_name')
+                        updated += 1
+                    row.update(last_seen_at=timestamp, discovered_name=found['name'])
+                    if row['id'] not in visited:
+                        seen += 1
+                        visited.add(row['id'])
+                account['page_load'] = dict(at=timestamp, status=status, read_count=seen,
+                                            message=str(message)[:2000])
+        except BaseException:
+            for record_id, old_name, new_name in done:  # The list was not saved: put the schedules and plans back as they were.
+                try:
+                    rename(record_id, new_name, old_name)
+                except Exception:
+                    pass
+            raise
+        summary = dict(added=added, updated=updated, read_count=seen)
+        if renamed:
+            summary['renamed'] = renamed
+        if merged:
+            summary['merged'] = merged
+        if blocked:
+            summary['rename_blocked'] = blocked
+        return summary

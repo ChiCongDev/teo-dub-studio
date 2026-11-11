@@ -289,8 +289,10 @@ def open_facebook_browser(profile_dir, *, url=FACEBOOK_HOME, cancel=None, finish
                                     load_stop = (_PostCancellation(cancel,load_cancel,load_expires)
                                                  if load_cancel is not None or load_expires is not None else cancel)
                                     check_cancel(load_stop)
+                                    known = target.get('known') if isinstance(target.get('known'), list) else None
                                     result = read_managed_pages(context, cancel=load_stop, finished=finished,
-                                        progress=lambda message: load_notify('pages_progress', message))
+                                        progress=lambda message: load_notify('pages_progress', message),
+                                        **({'known': known} if known else {}))
                                     load_notify('pages_loaded', result)
                                 except (ValueError, Cancelled) as exc:
                                     load_notify('pages_error', str(exc))
