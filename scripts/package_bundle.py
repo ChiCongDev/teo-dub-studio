@@ -25,6 +25,10 @@ TOP = 'Teo'  # short top folder keeps the extracted paths short
 PBS_TAG = '20261026'
 PBS_FILE = 'cpython-3.13.18+20261026-x86_64-pc-windows-msvc-install_only.tar.gz'
 PBS_BASE = f'https://github.com/astral-sh/python-build-standalone/releases/download/{PBS_TAG}/'
+# Microsoft's Visual C++ runtime, copied from this PC next to python.exe. A new PC without the "Visual C++ Redistributable" otherwise
+# fails with "Could not find module ctranslate2.dll (or one of its dependencies)" (12/11/2026). All five are taken from the same
+# build (the portable Python brings an older vcruntime140 that does not match a newer msvcp140). Microsoft allows shipping these.
+VC_RUNTIME_DLLS = ('msvcp140.dll', 'msvcp140_1.dll', 'vcomp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 MODEL_DIRS = (  # relative to models/
     'whisper/models--Systran--faster-whisper-small',
     'whisper/models--Systran--faster-whisper-medium',
@@ -115,8 +119,20 @@ def build_runtime(work, requirements_lines, say=print):
     return python_dir
 
 
-def iter_files(project, python_dir, models, models_dir, codex, node_runtime, include_models=True, include_runtime=True):
-    """(source Path, archive name) for everything that goes into the bundle."""
+def system_runtime_dlls(system_dir=None):
+    """The Visual C++ runtime files of this PC, as (path, file name); stops when one is missing."""
+    folder = Path(system_dir) if system_dir else Path(os.environ.get('SystemRoot', r'C:\Windows'))/'System32'
+    missing = [name for name in VC_RUNTIME_DLLS if not (folder/name).is_file()]
+    if missing:
+        raise SystemExit('Máy này thiếu '+', '.join(missing)+f' trong {folder}. Cài "Microsoft Visual C++ Redistributable" '
+                         '(https://aka.ms/vs/17/release/vc_redist.x64.exe) rồi đóng gói lại.')
+    return [(folder/name, name) for name in VC_RUNTIME_DLLS]
+
+
+def iter_files(project, python_dir, models, models_dir, codex, node_runtime, include_models=True, include_runtime=True,
+               system_dlls=()):
+    """(source Path, archive name) for everything that goes into the bundle. `system_dlls`: (path, name) of files that go next
+    to python.exe and replace a file of the same name that came with Python."""
     project = Path(project)
     for name in CODE_ITEMS:
         path = project/name
@@ -127,9 +143,14 @@ def iter_files(project, python_dir, models, models_dir, codex, node_runtime, inc
         elif path.is_file():
             yield path, f'{TOP}/{name}'
     if include_runtime and python_dir:
+        replaced = {name.lower() for _, name in system_dlls}
         for item in sorted(Path(python_dir).rglob('*')):
             if item.is_file() and '__pycache__' not in item.parts:
-                yield item, f'{TOP}/runtime/python/{item.relative_to(python_dir).as_posix()}'
+                relative = item.relative_to(python_dir).as_posix()
+                if relative.lower() not in replaced:
+                    yield item, f'{TOP}/runtime/python/{relative}'
+        for source, name in system_dlls:
+            yield source, f'{TOP}/runtime/python/{name}'
     if include_models:
         for relative in models:
             base = Path(models_dir)/relative
@@ -182,7 +203,9 @@ def main(argv=None):
     python_dir = None
     if not options.no_runtime and not options.dry_run:
         python_dir = build_runtime(options.work, cpu_requirements(lock))
-    files = list(iter_files(PROJECT, python_dir, found, models_dir, codex, node, not options.no_models, python_dir is not None))
+    system_dlls = system_runtime_dlls() if python_dir is not None else ()
+    files = list(iter_files(PROJECT, python_dir, found, models_dir, codex, node, not options.no_models, python_dir is not None,
+                            system_dlls))
     total = sum(source.stat().st_size for source, _ in files)
     print(f'{len(files)} tệp, khoảng {total/1e9:.2f} GB trước khi nén.')
     if options.dry_run:

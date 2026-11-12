@@ -285,6 +285,27 @@ class BundleTests(unittest.TestCase):
         self.assertFalse([name for name in names if 'large-v3' in name or 'voice-references' in name
                           or '.venv' in name or '__pycache__' in name or name.endswith('.pyc')])
 
+    def test_visual_cpp_runtime_goes_next_to_python_and_replaces_the_one_that_came_with_it(self):
+        system = self.root/'system'
+        system.mkdir()
+        for name in package_bundle.VC_RUNTIME_DLLS:
+            (system/name).write_bytes(b'system '+name.encode())
+        (self.python/'vcruntime140.dll').write_bytes(b'old')
+        found, _ = package_bundle.model_sources(self.models)
+        files = list(package_bundle.iter_files(self.project, self.python, found, self.models, self.codex, self.node,
+                                               system_dlls=package_bundle.system_runtime_dlls(system)))
+        names = [name for _, name in files]
+        for name in package_bundle.VC_RUNTIME_DLLS:
+            self.assertEqual(names.count('Teo/runtime/python/'+name), 1, name)
+        self.assertEqual(dict((n, s) for s, n in files)['Teo/runtime/python/vcruntime140.dll'].read_bytes(), b'system vcruntime140.dll')
+
+    def test_a_pc_without_the_visual_cpp_runtime_cannot_build_a_bundle_that_lacks_it(self):
+        empty = self.root/'empty'
+        empty.mkdir()
+        with self.assertRaises(SystemExit) as caught:
+            package_bundle.system_runtime_dlls(empty)
+        self.assertIn('msvcp140.dll', str(caught.exception))
+
     def test_models_and_runtime_can_be_left_out(self):
         names = self.names(include_models=False, include_runtime=False)
         self.assertFalse([name for name in names if '/models/' in name or '/runtime/' in name])
