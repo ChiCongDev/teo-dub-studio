@@ -9,7 +9,8 @@ from tkinter import ttk
 from teodub import machine_check
 
 PROJECT = Path(__file__).resolve().parents[1]
-TITLES = ('Google Chrome', 'Dịch bằng ChatGPT (Codex)', 'Mô hình trên máy', 'Thư mục cài đặt', 'Dịch thử một câu')
+TITLES = ('Google Chrome', 'Dịch bằng ChatGPT (Codex)', 'Mô hình trên máy', 'Thư mục cài đặt', 'Thư viện Microsoft Visual C++',
+          'Dịch thử một câu')
 
 
 class MachineCheckWindow(tk.Toplevel):
@@ -64,7 +65,7 @@ class MachineCheckWindow(tk.Toplevel):
         if 'quick' in self.busy:
             return
         self.busy.add('quick')
-        for title in TITLES[:4]:
+        for title in TITLES[:-1]:
             self.rows[title]['mark'].configure(text='…', foreground='')
         threading.Thread(target=lambda: self.results.put(('quick', machine_check.quick_checks(self.project))), daemon=True).start()
 

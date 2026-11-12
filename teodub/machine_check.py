@@ -1,5 +1,6 @@
 """First-run checks of this PC: browser, ChatGPT sign-in for Codex, models, install path. Pure logic, no windows."""
 from dataclasses import dataclass
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ from teodub import codex_translation
 from teodub.models import model_directory
 
 MARKER = 'first_run_check.json'
+VC_RUNTIME = ('msvcp140.dll', 'msvcp140_1.dll', 'vcomp140.dll')  # what ctranslate2, onnxruntime and numba load
 LONG_PATH = 60  # an install folder longer than this risks Windows' 260-character path limit
 REQUIRED_MODELS = (
     ('Whisper small (nhận dạng lời)', 'whisper', 'models--Systran--faster-whisper-small', 'model.bin'),
@@ -83,6 +85,24 @@ def check_install_path(project):
     return Check('path', 'Thư mục cài đặt', True, 'Đường dẫn thư mục đủ ngắn.')
 
 
+def check_vc_runtime(load=None):
+    """12/11/2026: a PC without the Visual C++ runtime fails every video with "Could not find module ctranslate2.dll"."""
+    title = 'Thư viện Microsoft Visual C++'
+    load = load or ctypes.WinDLL
+    missing = []
+    for name in VC_RUNTIME:
+        try:
+            load(name)
+        except OSError:
+            missing.append(name)
+    if missing:
+        return Check('vcruntime', title, False,
+                     'Máy thiếu '+', '.join(missing)+'. Video sẽ lỗi "Could not find module ctranslate2.dll". Tải và cài '
+                     '"Microsoft Visual C++ Redistributable" (x64) từ https://aka.ms/vs/17/release/vc_redist.x64.exe, '
+                     'khởi động lại máy nếu được hỏi, rồi bấm Kiểm tra lại.')
+    return Check('vcruntime', title, True, 'Đã có thư viện Visual C++ cần cho nhận dạng giọng nói và giọng đọc.')
+
+
 def test_translation(invoke=None):
     """One real sentence through Codex, so a quota or sign-in problem shows up now and not in the middle of a video."""
     title = 'Dịch thử một câu'
@@ -102,7 +122,7 @@ def test_translation(invoke=None):
 
 
 def quick_checks(project):
-    return [check_chrome(), check_codex_login(), check_models(), check_install_path(project)]
+    return [check_chrome(), check_codex_login(), check_models(), check_install_path(project), check_vc_runtime()]
 
 
 def needs_attention(checks):

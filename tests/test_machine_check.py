@@ -62,6 +62,20 @@ class MachineCheckTests(unittest.TestCase):
         self.assertTrue(mc.check_install_path(Path('C:/Teo')).ok)
         self.assertFalse(mc.check_install_path(Path('C:/'+'a'*70)).ok)
 
+    def test_missing_visual_cpp_runtime_is_named_with_the_download_link(self):
+        found = mc.check_vc_runtime(load=lambda name: None)
+        self.assertTrue(found.ok)
+
+        def load(name):
+            if name in ('msvcp140.dll', 'vcomp140.dll'):
+                raise OSError('not found')
+        found = mc.check_vc_runtime(load=load)
+        self.assertFalse(found.ok)
+        self.assertIn('msvcp140.dll', found.message)
+        self.assertIn('vcomp140.dll', found.message)
+        self.assertNotIn('msvcp140_1.dll', found.message)
+        self.assertIn('aka.ms/vs/17/release/vc_redist.x64.exe', found.message)
+
     def test_translation_test_ok_and_failures(self):
         ok = mc.test_translation(lambda prompt, schema: ({'vi': 'Chiếc chảo chống dính.'}, {}))
         self.assertTrue(ok.ok)
