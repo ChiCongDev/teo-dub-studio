@@ -128,6 +128,36 @@ class MakeAgainTests(Redo):
         self.assertEqual(self.again, [('Trúc Ly', 1)])  # The second was not started.
         self.assertIn('redo', self.item(a, 2))  # Still asked for: the next run makes it.
 
+    def test_a_remake_stopped_by_the_owner_is_still_asked_for_on_the_next_run(self):
+        """Owner 12/11/2026: Dừng or a restart during a remake must not drop the video from the queue."""
+        a = self.finished(2)
+        self.new_voice(a)
+        campaign_redo.apply(a, [1])
+        old = self.item(a, 1)['outputs']
+        self.outcomes[('redo', 1)] = dict(status='cancelled', message='')
+        campaign._run_campaign_locked(a, runner=self.remake)
+        item = self.item(a, 1)
+        self.assertEqual((item['status'], item['outputs']), ('completed', old))  # The old video is back as it was.
+        self.assertIn('redo', item)  # And it is still to be made again.
+        del self.outcomes[('redo', 1)]
+        campaign._run_campaign_locked(a, runner=self.remake)
+        item = self.item(a, 1)
+        self.assertNotIn('redo', item)
+        self.assertTrue(item['outputs']['video'].endswith('_lan-2.mp4'))
+
+    def test_a_remake_stopped_by_a_quota_is_also_kept_but_a_plain_failure_is_not(self):
+        a = self.finished(2)
+        self.new_voice(a)
+        campaign_redo.apply(a, [1, 2])
+        self.outcomes[('redo', 1)] = dict(status='failed', message='Hết hạn mức AI')
+        campaign._run_campaign_locked(a, runner=self.remake)
+        self.assertIn('redo', self.item(a, 1))
+        self.outcomes[('redo', 2)] = dict(status='failed', message='Lỗi lạ')
+        del self.outcomes[('redo', 1)]
+        campaign._run_campaign_locked(a, runner=self.remake)
+        self.assertNotIn('redo', self.item(a, 2))
+        self.assertIn('redo_failed', self.item(a, 2))
+
     def test_a_link_with_nothing_left_accepts_a_new_voice_only_for_remaking(self):
         a = self.finished(2)
         with self.assertRaises(ValueError):

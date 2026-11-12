@@ -153,7 +153,8 @@ class ConfigDialogTests(LinkFixture):
         window.apply()
         self.assertTrue(self.items()[1].get('redo'))
 
-    def test_a_video_made_with_other_ai_models_is_left_alone_when_remaking(self):
+    def test_a_video_made_with_other_ai_models_is_made_again_and_translated_again(self):
+        """Owner 12/11/2026: no longer left alone; it is translated again with AI, and the plan says so."""
         self.finish({1, 2})
         window = self.dialog()
         model = self.other_model(window, 'translation_model')
@@ -161,13 +162,37 @@ class ConfigDialogTests(LinkFixture):
         window.choose_model('translation_model')
         window.check()
         text = window.result.get('1.0', 'end')
-        self.assertIn('Sẽ làm lại: 0 video', text)
-        self.assertIn('tốn AI', text)
+        self.assertIn('Sẽ làm lại: 2 video', text)
+        self.assertIn('dịch lại bằng AI', text)
         window.redo.set(True)
         window.apply()
-        self.assertEqual(next_settings(self.directory)['settings']['translation_model'], model)  # New videos use it.
+        self.assertEqual(next_settings(self.directory)['settings']['translation_model'], model)
+        self.assertEqual(sorted(n for n, item in self.items().items() if item.get('redo')), [1, 2])
+
+    def test_save_with_nothing_changed_only_queues_the_finished_videos_when_the_tick_is_on(self):
+        """Owner 12/11/2026: the settings are already the link's; the tick alone makes Lưu chỉnh sửa queue the finished, unposted videos."""
+        self.finish({1, 2})
+        first = self.dialog()
+        model = self.other_model(first, 'translation_model')
+        first.model_labels['translation_model'].set(CHOICES['translation_model'][model])
+        first.choose_model('translation_model')
+        first.apply()  # Saved for the next videos, the tick is off: the finished ones keep their old version.
+        saved = next_settings(self.directory)['id']
+        first.close()
         self.assertFalse(any(item.get('redo') for item in self.items().values()))
-        self.assertIn('Không có video đã xong nào cần làm lại', self.link.message.get())
+        second = self.dialog()
+        second.redo.set(True)
+        second.apply()
+        self.assertEqual(next_settings(self.directory)['id'], saved)  # Nothing was saved again.
+        self.assertEqual(sorted(n for n, item in self.items().items() if item.get('redo')), [1, 2])
+        self.assertIn('dịch lại bằng AI', self.link.message.get())
+
+    def test_save_with_nothing_changed_and_no_tick_still_says_nothing_changed(self):
+        self.finish({1, 2})
+        window = self.dialog()
+        window.apply()
+        self.assertIn('Chưa đổi gì', window.status.get())
+        self.assertFalse(any(item.get('redo') for item in self.items().values()))
 
     def test_a_link_with_everything_finished_needs_the_tick(self):
         self.finish({1, 2, 3, 4})

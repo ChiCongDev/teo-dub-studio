@@ -25,6 +25,10 @@ def describe(plan, order, name_of=lambda number: f'Video {number}'):
     lines = [f'Sẽ làm lại: {len(todo)} video đã hoàn thành, chưa đăng.'
              +(f' Trong đó {plan["scheduled"]} video có lịch đăng; lịch giữ giờ, Page và caption, chuyển sang file mới khi nó xong.'
                if plan['scheduled'] else '')]
+    again = plan.get('retranslate') or []
+    if again:
+        lines.append(f'  Trong đó {len(again)} video làm bằng mô hình nhận dạng/dịch khác: sẽ dịch lại bằng AI (tốn AI; lời Việt có thể '
+                     f'khác bản cũ một chút).')
     if order:
         lines.append('Làm trước, theo giờ đăng gần nhất:')
         lines += [f'  {index}. {name_of(number)} — đăng {datetime.fromtimestamp(due, LOCAL_TIME).strftime("%d/%m %H:%M")}'

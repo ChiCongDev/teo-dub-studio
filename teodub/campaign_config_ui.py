@@ -13,7 +13,7 @@ from teodub import campaign_redo, config_presets
 from teodub.common import atomic_json
 from teodub.campaign import read_json
 from teodub.campaign_settings import (VOICE_KEYS, current_voice_config, made_with_everything, same_language_models,
-                                      save_next_settings, validate_settings)
+                                      save_next_settings, validate_settings, next_settings)
 from teodub.campaign_subtitle_redo_ui import describe
 
 # Taken unchanged from the Video đơn page (teodub.app.Studio); they only use the fields, labels and rows built below.
@@ -27,7 +27,9 @@ CHANGES = (('giọng và cách đọc', set(VOICE_KEYS)), ('tốc độ hình', 
            ('Google Drive', {'drive_upload'}))
 REDO_FILE = 'config-redo-choice.json'
 REDO_NOTE = 'Đang tick: bấm Lưu chỉnh sửa sẽ làm lại cả video đã xong chưa đăng (chỉ video chưa làm đúng cấu hình này).'
-SKIP_LANGUAGE = 'Làm bằng mô hình nhận dạng/dịch khác; làm lại sẽ phải dịch lại (tốn AI), nên để nguyên.'
+# Owner 12/11/2026: a finished video made with another recognition/translation model is made again too; it is translated again
+# with AI (its Vietnamese lines may differ a little). This is only said in the plan, never a reason to skip it.
+RETRANSLATE = 'sẽ dịch lại bằng AI (làm bằng mô hình nhận dạng/dịch khác; tốn AI, lời Việt có thể khác bản cũ một chút)'
 
 
 def read_redo_choice(directory):
@@ -491,10 +493,14 @@ class LinkConfigDialog(tk.Toplevel):
         return merged, settings, changed_parts(validate_settings(self.base), settings)
 
     def plan(self, settings, settings_id=None):
-        return campaign_redo.build_plan(
-            self.directory, settings_id=settings_id, unchanged=lambda config: made_with_everything(config, settings),
-            blocked=lambda config: '' if same_language_models(config, settings) else SKIP_LANGUAGE,
+        plan = campaign_redo.build_plan(
+            self.directory, settings_id=settings_id,
+            unchanged=lambda config: made_with_everything(config, settings) and same_language_models(config, settings),
             same_reason='Đã có đúng cấu hình này.')
+        plan['retranslate'] = [number for number in plan['numbers']
+                               if not campaign_redo.job_config_matches(self.directory, number,
+                                                                       lambda config: same_language_models(config, settings))]
+        return plan
 
     def say(self, text):
         self.result.configure(state='normal')
@@ -524,7 +530,7 @@ class LinkConfigDialog(tk.Toplevel):
             self.status.set('Chưa lưu: '+str(exc))
             return
         if not changed:
-            self.status.set('Chưa đổi gì: sửa một ô rồi bấm Lưu chỉnh sửa.')
+            self.redo_only(settings)
             return
         try:
             keep = config_presets.preset_settings(self.capture())
@@ -553,6 +559,34 @@ class LinkConfigDialog(tk.Toplevel):
             self.status.set('Đã lưu cho link. Muốn dùng lại cấu hình này sau? Đặt tên rồi bấm Lưu mẫu, hoặc bấm Không cần.')
         else:
             self.close()
+
+    def redo_only(self, settings):
+        """Owner 12/11/2026: the settings are already the link's, but the tick asks for the finished, unposted videos to follow them:
+        Lưu chỉnh sửa queues those videos only (the saved settings are not written again)."""
+        if not self.redo.get():
+            self.status.set('Chưa đổi gì: sửa một ô rồi bấm Lưu chỉnh sửa.')
+            return
+        try:
+            update = next_settings(self.directory)
+            if not update:
+                self.status.set('Chưa đổi gì: link chưa có cấu hình đã lưu; sửa một ô rồi bấm Lưu chỉnh sửa.')
+                return
+            plan = self.plan(settings, update['id'])
+            if not plan['numbers']:
+                self.status.set('Chưa đổi gì và không có video đã xong nào cần làm lại.')
+                return
+            outcome = campaign_redo.apply(self.directory, plan['numbers'])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.status.set('Chưa xếp làm lại: '+str(exc))
+            return
+        message = (f'Cấu hình của "{self.name}" giữ nguyên. Đã xếp làm lại {len(plan["numbers"])} video đã xong chưa đăng theo cấu hình '
+                   'này, video có lịch đăng gần nhất làm trước; '
+                   +('link đang chạy sẽ làm chúng trước video kế tiếp.' if outcome['mode'] == 'request' else 'bấm Chạy để làm.'))
+        if plan.get('retranslate'):
+            message += f' {len(plan["retranslate"])} video sẽ dịch lại bằng AI.'
+        self.tab.message.set(message)
+        self.tab.refresh(full=True)
+        self.close()
 
     def close(self):
         self.closed = True

@@ -272,6 +272,20 @@ def restore_redo(item, reason):
     item['redo_failed'] = dict(at=datetime.now().astimezone().isoformat(timespec='seconds'), message=reason[:500])
 
 
+def hold_redo(item, reason):
+    """Owner 12/11/2026: a remake that was STOPPED (Dừng, "Khởi động lại, giữ công việc", an AI quota or a login) is not the video's
+    fault: the old finished video comes back as it was (as in `restore_redo`) but the video stays asked for, so the next run makes
+    it again, from the steps its revision job already kept."""
+    redo = item['redo']
+    for key in REDO_KEEP:
+        if key in redo['previous']:
+            item[key] = redo['previous'][key]
+        else:
+            item.pop(key, None)
+    item['status'] = 'completed'
+    redo['stopped'] = dict(at=datetime.now().astimezone().isoformat(timespec='seconds'), message=reason[:500])
+
+
 def absorb_redo(directory, manifest):
     """Apply the redo requests the desktop left while this campaign's worker ran, as `absorb_exclusions` does."""
     changed = []
@@ -597,14 +611,17 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                     result = dict(status='failed', message='Video chưa trả kết quả kết thúc hợp lệ. Kiểm tra rồi thử lại video lỗi.')
                 if redoing:
                     reason = str(result.get('message') or '')
+                    stopped = result['status'] == 'cancelled' or (result['status'] != 'completed' and any(
+                        value in reason.lower() for value in ('hạn mức', 'quota', 'usage limit', 'rate limit', 'đăng nhập', 'login', 'credits')))
                     if result['status'] == 'completed' and result.get('outputs'):
                         finish_redo(item, result)
                         item['completed_at'] = item['last_attempt_finished_at']
+                    elif stopped:  # Owner 12/11/2026: stopped, not failed: old video back, still to be made again next run.
+                        hold_redo(item, reason or 'Đã dừng khi đang làm lại; giữ bản cũ, lần chạy sau làm tiếp.')
                     else:  # The old finished video stays exactly as it was; the link does not turn into a failure.
                         restore_redo(item, reason or 'Bản làm lại chưa xong.')
                     atomic_json(directory/'campaign.json', manifest)
-                    if result['status'] == 'cancelled' or (result['status'] != 'completed' and any(
-                            value in reason.lower() for value in ('hạn mức', 'quota', 'usage limit', 'rate limit', 'đăng nhập', 'login', 'credits'))):
+                    if stopped:
                         manifest['status'] = 'paused'
                         manifest['message'] = reason or 'Đã dừng khi đang làm lại video bằng giọng mới; giữ bản cũ.'
                         break

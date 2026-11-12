@@ -119,6 +119,15 @@ def _accepts(directory, item, unchanged):
         return False
 
 
+def job_config_matches(directory, number, check):
+    """Read only: `check(config)` for the job config of video `number` (False when it cannot be read)."""
+    try:
+        item = next(x for x in read_json(Path(directory)/'campaign.json')['items'] if x['number'] == number)
+    except (OSError, ValueError, KeyError, StopIteration):
+        return False
+    return _accepts(Path(directory).resolve(), item, check)
+
+
 def _answer(directory, item, blocked):
     from teodub.campaign_settings import effective_job
     try:
