@@ -1,5 +1,12 @@
 # Tèo Dub Studio
 
+## Menu tài khoản Facebook bị kẹt khi tải — Tèo tự đóng mở lại — 12/11/2026
+
+- **Vấn đề:** 11:00 ngày 12/11 bài Video 36 của Page "du lịch toàn cầu" dừng "Chưa đọc được danh tính đang chọn trong menu Facebook". Ảnh chụp Chrome cho thấy Facebook mở menu tài khoản nhưng chỉ hiện khung xám (chưa có tên nào) và 7 phút sau vẫn vậy. Trước đây Tèo chỉ chờ 30 giây rồi dừng.
+- **Nay:** nếu menu đã mở mà 10 giây vẫn không có danh sách (chỉ khung xám), Tèo nhấn Esc để đóng rồi mở lại (tối đa 2 lần), sau đó tải lại trang Page một lần và đọc menu lại. Chỉ khi vẫn kẹt Tèo mới dừng, báo "Menu tài khoản Facebook bị kẹt khi tải" và lưu ảnh Chrome lúc đó vào `%LOCALAPPDATA%\TeoDubStudio\page-publishing\diagnostics` (giữ 5 ảnh mới nhất).
+- **An toàn:** tất cả xảy ra trước khi nhập caption hay tải video. Tab đang có hộp soạn bài thì Tèo không đóng hay tải lại (dừng như trước). Không thêm cú bấm Đăng nào, không tự đăng lại.
+- **Dùng ở:** bước chọn Page trước khi soạn bài, và bước kiểm tra danh tính ngay trước khi bấm Đăng (trong tab tạm riêng).
+
 ## Bài hẹn giờ ít bị dừng hơn khi Facebook tải chậm — 02/11/2026
 
 - **Vấn đề:** thỉnh thoảng bài đến giờ vẫn dừng "Cần kiểm tra" dù chưa có gì sai (nhất là khi nhiều bài chạy cùng lúc và máy đang làm video). Nhật ký cho thấy Tèo bỏ cuộc khi Facebook tải chậm hơn thời gian chờ: "Không xác định duy nhất nút Chuyển ngay" (hay gặp nhất), "không thấy tên Page", "không thấy menu Trang cá nhân", "Chưa đọc được danh tính", và nút Tiếp của thước phim bị thanh thông báo của Facebook che.

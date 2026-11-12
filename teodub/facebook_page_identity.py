@@ -10,9 +10,11 @@ with named buttons and an explicit ', selected' / ', đang chọn' marker. Read 
 post ("Execution context was destroyed"), and an old tab that no longer answered held the account 20 minutes.
 Reads here wait for the new document within their deadline, and other tabs are checked with a time limit.
 """
+import os
 import re
 import time
 import unicodedata
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from teodub.common import Cancelled, check_cancel
@@ -31,6 +33,11 @@ HOSTS = {'www.facebook.com', 'facebook.com', 'm.facebook.com'}
 TAB_CHECK_SECONDS = 3  # Each other tab gets this long to answer before a switch is refused.
 SWITCH_RELOAD_SECONDS = 5  # After choosing a profile, how long to look for Facebook's reload before reading.
 SELECTOR_SECONDS = 30  # 02/11/2026: was 12; the account button / profile list of a slow Facebook page (checked before Publish too).
+STUCK_MENU_SECONDS = 10  # 12/11/2026: an account menu that shows no heading and no button this long is a skeleton Facebook never filled.
+STUCK_REOPENS = 2  # ...it is closed and opened again this many times, then the page is reloaded once, then the post stops.
+STUCK_PICTURES = 5  # Pictures of a stuck menu kept in page-publishing/diagnostics.
+STUCK_TEXT = ('Menu tài khoản Facebook bị kẹt khi tải (chỉ hiện khung xám). Tèo đã đóng mở lại và tải lại trang nhưng vẫn kẹt; '
+              'chưa nhập hoặc đăng bài. Ảnh Chrome lúc đó nằm trong thư mục page-publishing\\diagnostics.')
 
 CHOICES_SCRIPT = r"""dialog => {
  const visible=e=>!!e.getClientRects().length && getComputedStyle(e).visibility!=='hidden'
@@ -143,9 +150,71 @@ def _choice(row):
     return dict(row, name=label.strip(), selected=selected)
 
 
-def _selector(tab, *, cancel=None, finished=None, timeout=SELECTOR_SECONDS):
+class _MenuStuck(Exception):
+    """The account menu is open but Facebook never filled it (internal; _selector decides what to do)."""
+
+
+def _close_menu(tab, cancel=None, finished=None):
+    """Press Escape and wait a little for the account menu to go away. Never clicks a button."""
+    tab.keyboard.press('Escape')
+    deadline = time.monotonic()+3
+    while time.monotonic() < deadline:
+        _stop(cancel, finished)
+        if not _steady(tab, lambda: _visible(tab.get_by_role('dialog', name=PROFILE_NAMES)), deadline):
+            return
+        tab.wait_for_timeout(100)
+
+
+def _diagnostics_dir():
+    return Path(os.environ.get('LOCALAPPDATA', Path.home()/'.local'/'share'))/'TeoDubStudio'/'page-publishing'/'diagnostics'
+
+
+def _save_picture(tab):
+    """Keep a picture of Chrome for the owner/developer: what Facebook really showed. Never raises."""
+    try:
+        folder = _diagnostics_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        tab.screenshot(path=str(folder/('menu-ket-'+time.strftime('%Y%m%d-%H%M%S')+'.png')), timeout=10000)
+        for old in sorted(folder.glob('menu-ket-*.png'))[:-STUCK_PICTURES]:
+            old.unlink()
+    except Exception:
+        pass
+
+
+def _selector(tab, *, cancel=None, finished=None, timeout=SELECTOR_SECONDS, recover=False):
+    """The account menu with its profile rows. With `recover` (a tab that holds no composer), a menu Facebook leaves as an
+    empty skeleton is closed and opened again, then the page is reloaded once; without it the first stall just waits."""
+    reopened = reloaded = 0
+    while True:
+        try:
+            return _read_selector(tab, cancel=cancel, finished=finished, timeout=timeout,
+                                  stuck_after=STUCK_MENU_SECONDS if recover else None)
+        except _MenuStuck:
+            pass
+        _stop(cancel, finished)
+        if open_editor(tab) is not False:
+            raise ValueError('Menu tài khoản Facebook bị kẹt khi tải và tab có hộp soạn bài; Tèo không đóng hay tải lại tab. '
+                             'Kiểm tra Chrome; chưa nhập hoặc đăng bài.')
+        if reopened < STUCK_REOPENS:
+            reopened += 1
+            _close_menu(tab, cancel, finished)
+        elif not reloaded:
+            reloaded = 1
+            try:
+                tab.reload(wait_until='domcontentloaded', timeout=30000)
+            except Exception as exc:
+                if not _navigation(exc):
+                    raise
+            _reloading(tab, time.monotonic()+30)
+        else:
+            _save_picture(tab)
+            raise ValueError(STUCK_TEXT)
+
+
+def _read_selector(tab, *, cancel=None, finished=None, timeout=SELECTOR_SECONDS, stuck_after=None):
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
     deadline = time.monotonic()+timeout
+    stuck_since = None
     def checked(locator):
         _safe(tab)
         return _visible(locator)
@@ -169,7 +238,8 @@ def _selector(tab, *, cancel=None, finished=None, timeout=SELECTOR_SECONDS):
         if visible:
             dialog = visible[0]
             headings = dialog.get_by_role('heading', name=CHOOSER_NAMES)
-            if _steady(tab, lambda: _visible(headings), deadline):
+            shown = _steady(tab, lambda: _visible(headings), deadline)
+            if shown:
                 try:
                     rows = [_choice(row) for row in _steady(tab, lambda: dialog.evaluate(CHOICES_SCRIPT,
                         timeout=max(1, int((deadline-time.monotonic())*1000))), deadline)]
@@ -189,6 +259,14 @@ def _selector(tab, *, cancel=None, finished=None, timeout=SELECTOR_SECONDS):
                     opened_all = True
                 elif len(matches) > 1:
                     raise ValueError('Nhiều nút Xem tất cả trang cá nhân; chưa chuyển Page.')
+            if shown:
+                stuck_since = None
+            else:
+                stuck_since = stuck_since or time.monotonic()  # Open, no list of profiles yet: possibly a skeleton.
+                if stuck_after is not None and time.monotonic()-stuck_since >= stuck_after:
+                    raise _MenuStuck
+        else:
+            stuck_since = None
         if time.monotonic() >= deadline:
             raise ValueError('Chưa đọc được danh tính đang chọn trong menu Facebook. Mở Trang cá nhân của bạn → Xem tất cả trang cá nhân để kiểm tra.')
         tab.wait_for_timeout(100)
@@ -241,7 +319,7 @@ def ensure_page_actor(context, tab, target, *, cancel=None, finished=None, progr
     facebook_url(target['url'], page=True)
     if progress:
         progress('Đang kiểm tra danh tính Facebook và chọn Page '+target['name']+'…')
-    dialog, rows, active = _selector(tab, cancel=cancel, finished=finished)
+    dialog, rows, active = _selector(tab, cancel=cancel, finished=finished, recover=True)
     matches = [row for row in rows if _name(row['name']) == _name(target['name'])]
     if len(matches) != 1:
         raise ValueError('Không tìm thấy duy nhất Page “'+target['name']+'” trong danh sách chuyển trang cá nhân. '
@@ -298,7 +376,7 @@ def verify_page_actor(context, target, *, cancel=None, finished=None):
     tab = context.new_page()
     try:
         tab.goto('https://www.facebook.com/', wait_until='domcontentloaded', timeout=45000)
-        _, rows, active = _selector(tab, cancel=cancel, finished=finished)
+        _, rows, active = _selector(tab, cancel=cancel, finished=finished, recover=True)  # A scratch tab: no composer in it.
         matches = [row for row in rows if _name(row['name']) == _name(target['name'])]
         if len(matches) != 1 or not matches[0]['selected'] or _name(active['name']) != _name(target['name']):
             raise ValueError('Danh tính Facebook đã đổi sau khi chuẩn bị bài. Chọn lại đúng Page và kiểm tra bản nháp; chưa bấm Đăng.')
