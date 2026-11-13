@@ -15,6 +15,14 @@ def validate_audio_mix(config):
                 voice_gain=_gain(config.get('voice_gain', 1.0), 'Âm lượng giọng lồng'))
 
 
+def validate_voice_removal(config):
+    """13/11/2026 (owner): whether the original voices are removed from the video's own sound (default: no)."""
+    value = config.get('remove_original_voice', False)
+    if type(value) is not bool:
+        raise ValueError('Lựa chọn bỏ giọng nói gốc không hợp lệ.')
+    return dict(remove_original_voice=value)
+
+
 def validate_percent(value, label):
     """Parse a UI percentage (including Vietnamese decimals) into a gain."""
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):

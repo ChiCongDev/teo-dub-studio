@@ -32,14 +32,15 @@ def effective_job(directory, item):
 def validate_settings(settings):
     from teodub.campaign import CONFIG_KEYS
     from teodub.ai_models import validate_models
-    from teodub.audio_mix import validate_audio_mix
+    from teodub.audio_mix import validate_audio_mix, validate_voice_removal
     from teodub.subtitle_style import validate_subtitle_style
     from teodub.subtitle_clean import validate_clean
     from teodub.tts import validate_selection, selection_options
     from teodub.wording import validate_wording
     from teodub.drive_delivery import drive_delivery_settings
     selected = {key: settings[key] for key in CONFIG_KEYS if key in settings}
-    selected.update(validate_models(selected), **validate_audio_mix(selected), **validate_subtitle_style(selected))
+    selected.update(validate_models(selected), **validate_audio_mix(selected), **validate_voice_removal(selected),
+                    **validate_subtitle_style(selected))
     selected['wording'] = validate_wording(selected)
     selected['subtitle_clean'] = validate_clean(selected)
     selected['drive_upload'] = drive_delivery_settings(selected)
@@ -256,7 +257,7 @@ def save_next_subtitle_settings(data_dir, directory, burn_subtitles, subtitle_bo
 def made_with(config, settings):
     """True when a finished video's job config already has this Sub Việt choice, voice and the two export levels: making it
     again with `settings` would give the same video. An unreadable config counts as different (make it again)."""
-    from teodub.audio_mix import validate_audio_mix
+    from teodub.audio_mix import validate_audio_mix, validate_voice_removal
     from teodub.subtitle_style import validate_subtitle_style
 
     def picture(values):  # With no Sub in the picture its colour, size and box do not matter.
@@ -264,7 +265,8 @@ def made_with(config, settings):
         return style if style['burn_subtitles'] else dict(burn_subtitles=False)
     try:
         return (picture(config) == picture(settings) and _voice_view(config) == _voice_view(settings)
-                and validate_audio_mix(config) == validate_audio_mix(settings))
+                and validate_audio_mix(config) == validate_audio_mix(settings)
+                and validate_voice_removal(config) == validate_voice_removal(settings))
     except (ValueError, TypeError, KeyError):
         return False
 
@@ -336,6 +338,8 @@ def prepare_next_job(directory, item):
             if hash_file(source['path']) != source['sha256']:
                 raise ValueError('Video nguồn đã thay đổi; chưa áp dụng cấu hình mới.')
             reused['source'] = source
+            if state.get('background') and proposed.get('remove_original_voice') is True:
+                reused['background'] = state['background']  # 13/11/2026: the voice-free sound of this video is reused (the job checks it)
         caption = state.get('captions')
         if source and caption and same_language_models(config, proposed):
             if hash_file(caption['path']) != caption['sha256']:

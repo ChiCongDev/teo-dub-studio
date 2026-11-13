@@ -102,3 +102,52 @@ def delete_preset(data_dir, ident):
         _write(data_dir, kept)
     except (OSError, TypeError, ValueError) as exc:
         raise ValueError('Chưa xóa được cấu hình: '+str(exc)) from exc
+
+
+def _has_all(settings, kept):
+    return all(settings.get(key) == value for key, value in kept.items())
+
+
+def matching_name(presets, settings):
+    """The name of the saved config whose every setting `settings` has (the rule of the "Cấu hình áp dụng" column), or None.
+    A config saved before "Bỏ giọng nói gốc" existed does not mention it: it still names boxes that turn it on (13/11/2026, owner: the
+    window and the table must agree), but a config that states the setting exactly is preferred over one that does not."""
+    if not isinstance(settings, dict):
+        return None
+    wants = settings.get('remove_original_voice') is True
+    for exact in (True, False):
+        for preset in reversed(presets):
+            kept = preset['settings']
+            if exact and 'remove_original_voice' not in kept and wants:
+                continue
+            if _has_all(settings, kept):
+                return preset['name']
+    return None
+
+
+def lacks_removal(presets, name, settings):
+    """True when `settings` turn "Bỏ giọng nói gốc" on and the saved config `name` has no such setting (an older config)."""
+    if not name or not isinstance(settings, dict) or settings.get('remove_original_voice') is not True:
+        return False
+    row = next((row for row in presets if row['name'] == name), None)
+    return row is not None and 'remove_original_voice' not in row['settings']
+
+
+OWN = '(cấu hình riêng của link)'
+OLD_NOTE = ' + Bỏ giọng nói gốc (mẫu chưa có mục này)'
+
+
+def state_text(presets, saved, current):
+    """Owner 13/11/2026: what the saved-config row says. `saved` = the boxes as the link's own settings fill them, `current` = the boxes
+    now (None when they cannot be read). Display only."""
+    now = matching_name(presets, current) if current is not None else None
+    was = matching_name(presets, saved)
+    changed = current is not None and current != saved
+    if not changed:
+        return f'Đang dùng: "{was}"'+(OLD_NOTE if lacks_removal(presets, was, saved) else '') if was else f'Đang dùng: {OWN}'
+    tail = ' — các ô đã đổi, chưa lưu cho link'
+    if now:
+        return f'Các ô đang giống cấu hình "{now}"'+(OLD_NOTE if lacks_removal(presets, now, current) else '')+tail
+    if was:
+        return f'Đang dùng: "{was}", đã sửa so với mẫu'+tail
+    return f'Đang dùng: {OWN}, đã sửa'+tail

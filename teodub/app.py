@@ -21,7 +21,7 @@ from teodub.ai_models import CHOICES, LEGACY_MODELS, NEW_MODELS, validate_models
 from teodub.subtitle_style import SUBTITLE_BOXES, SUBTITLE_COLORS, SUBTITLE_WEIGHTS, validate_subtitle_style
 from teodub.wording import format_rule_text, parse_rule_text, rewrite_text, validate_wording
 from teodub.adam_voice import LABEL as ADAM_VOICE
-from teodub.audio_mix import validate_audio_mix, validate_percent
+from teodub.audio_mix import validate_audio_mix, validate_percent, validate_voice_removal
 
 
 VOICES = ('Mai Anh', 'Trúc Ly', 'Thùy Dung', 'Ngọc Huyền')
@@ -121,6 +121,7 @@ class Studio(ttk.Frame):
             'speed': tk.StringVar(master, value=next(iter(SPEEDS))),
             'original_volume': tk.StringVar(master, value='10'),
             'voice_volume': tk.StringVar(master, value='100'),
+            'remove_original_voice': tk.BooleanVar(master, value=False),
             'burn_subtitles': tk.BooleanVar(master, value=False),
             'subtitle_color': tk.StringVar(master, value='white'),
             'subtitle_weight': tk.StringVar(master, value='bold'),
@@ -422,10 +423,14 @@ class Studio(ttk.Frame):
         return dict(original_gain=validate_percent(self.fields['original_volume'].get(), 'Tiếng video gốc'),
                     voice_gain=validate_percent(self.fields['voice_volume'].get(), 'Giọng lồng tiếng'))
 
+    def voice_removal_selection(self):
+        return dict(remove_original_voice=bool(self.fields['remove_original_voice'].get()))
+
     def fill_audio_mix(self, config):
         levels = validate_audio_mix(config)
         self.fields['original_volume'].set(f"{levels['original_gain']*100:g}")
         self.fields['voice_volume'].set(f"{levels['voice_gain']*100:g}")
+        self.fields['remove_original_voice'].set(validate_voice_removal(config)['remove_original_voice'])
 
     def drive_selection(self):
         from teodub.google_drive import normalize_drive_config
@@ -920,7 +925,8 @@ class Studio(ttk.Frame):
                                                     ('burn_subtitles', 'subtitle_color', 'subtitle_weight', 'subtitle_size',
                                                      'subtitle_box')})
         directory = (self.jobs_dir/uuid.uuid4().hex).resolve()
-        audio_options = self.audio_mix_selection() if mode == 'full' else validate_audio_mix({})
+        audio_options = ({**self.audio_mix_selection(), **self.voice_removal_selection()} if mode == 'full'
+                         else validate_audio_mix({}))
         clean_options = {'subtitle_clean': self.clean_selection(require_bound=True)} if mode == 'full' else {}
         wording_options = {'wording': self.wording_selection()} if mode == 'full' else {}
         drive_options = ({'drive_upload': self.drive_selection(), 'drive_data_dir': str(self.data_dir)}
@@ -1397,7 +1403,8 @@ class Studio(ttk.Frame):
             preferences = json.loads((self.data_dir/'preferences.json').read_text(encoding='utf-8'))
             for key, variable in self.fields.items():
                 if key in ('voice_provider', 'voice', 'reference_audio', 'reading_style',
-                           'wording_enabled', 'wording_rules', 'drive_enabled', 'original_volume', 'voice_volume'):
+                           'wording_enabled', 'wording_rules', 'drive_enabled', 'original_volume', 'voice_volume',
+                           'remove_original_voice'):
                     continue
                 value = preferences.get(key)
                 if isinstance(variable, tk.BooleanVar) and type(value) is bool:
@@ -1413,7 +1420,7 @@ class Studio(ttk.Frame):
                 preferred_dialogue = (str(draft), str(preferences.get('input', '')))
                 preferred_dialogue_job = preferences.get('selection_job')
             self.fill_profile({**NEW_MODELS, **preferences, 'reading_style': preferences.get('reading_style', 'conversation')})
-            preferred_audio_mix = validate_audio_mix(preferences)
+            preferred_audio_mix = dict(validate_audio_mix(preferences), **validate_voice_removal(preferences))
             from teodub.subtitle_clean import validate_clean
             preferred_clean = validate_clean(preferences)
             self.clean_options = preferred_clean
@@ -1558,7 +1565,7 @@ class Studio(ttk.Frame):
         except (ValueError, OSError):
             pass
         try:
-            values.update(self.audio_mix_selection())
+            values.update(self.audio_mix_selection(), **self.voice_removal_selection())
         except (ValueError, TypeError):
             pass
         try:

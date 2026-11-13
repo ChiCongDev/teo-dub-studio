@@ -18,10 +18,10 @@ from teodub.campaign_subtitle_redo_ui import describe
 
 # Taken unchanged from the Video đơn page (teodub.app.Studio); they only use the fields, labels and rows built below.
 BORROWED = ('voice_selection', 'local_voices', 'reference_aliases', 'wording_selection', 'audio_mix_selection', 'drive_selection',
-            'fill_drive', 'update_drive_summary', 'choose_drive', 'choose_drive_api', 'fill_profile', 'fill_audio_mix',
+            'fill_drive', 'update_drive_summary', 'choose_drive', 'choose_drive_api', 'fill_profile', 'fill_audio_mix', 'voice_removal_selection',
             'fill_wording', 'update_profile_controls', 'update_subtitle_controls', 'choose_provider', 'choose_style',
             'choose_subtitle_color', 'choose_subtitle_weight', 'choose_subtitle_box', 'choose_reference')
-CHANGES = (('giọng và cách đọc', set(VOICE_KEYS)), ('tốc độ hình', {'speed'}), ('âm lượng', {'original_gain', 'voice_gain'}),
+CHANGES = (('giọng và cách đọc', set(VOICE_KEYS)), ('tốc độ hình', {'speed'}), ('âm lượng', {'original_gain', 'voice_gain'}), ('bỏ giọng nói gốc', {'remove_original_voice'}),
            ('Sub Việt', {'burn_subtitles', 'subtitle_color', 'subtitle_weight', 'subtitle_size', 'subtitle_box'}),
            ('từ ngữ', {'wording'}), ('mô hình AI', {'asr_model', 'translation_model', 'translation_effort'}),
            ('Google Drive', {'drive_upload'}))
@@ -84,6 +84,7 @@ class LinkConfigDialog(tk.Toplevel):
             'voice_speed': tk.StringVar(self, value=next(label for label, speed in app.VOICE_SPEED_LABELS.items() if speed == 1.0)),
             'speed': tk.StringVar(self, value=next(iter(app.SPEEDS))),
             'original_volume': tk.StringVar(self, value='10'), 'voice_volume': tk.StringVar(self, value='100'),
+            'remove_original_voice': tk.BooleanVar(self, value=False),
             'burn_subtitles': tk.BooleanVar(self, value=False), 'subtitle_color': tk.StringVar(self, value='white'),
             'subtitle_weight': tk.StringVar(self, value='bold'), 'subtitle_size': tk.StringVar(self, value='13'),
             'subtitle_box': tk.StringVar(self, value='none'), 'wording_enabled': tk.BooleanVar(self, value=False),
@@ -100,6 +101,8 @@ class LinkConfigDialog(tk.Toplevel):
         self.drive_summary = tk.StringVar(self, value='Drive: chưa bật tự lưu')
         self.status = tk.StringVar(self, '')
         self.preset_choice, self.preset_name = tk.StringVar(self), tk.StringVar(self)
+        self.preset_state = tk.StringVar(self)  # Owner 13/11/2026: which saved config the link uses now (display only).
+        self.saved_boxes = None  # The boxes as the link's own settings fill them.
         self.preset_offer = None  # The settings the name box is about to keep, while it is shown.
         self.close_after_name = False
         self.title('Chỉnh sửa cấu hình')
@@ -114,6 +117,7 @@ class LinkConfigDialog(tk.Toplevel):
         self.fields['drive_enabled'].trace_add('write', self.update_drive_summary)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.load()
+        self.watch_state()
 
     # The Video đơn page keeps these; the form has nothing to play, save or stop.
     def stop_playback(self, refresh=True):
@@ -308,6 +312,7 @@ class LinkConfigDialog(tk.Toplevel):
         self.preset_delete = ttk.Button(row, text='Xóa', command=self.delete_preset)
         self.preset_delete.pack(side='left', padx=(6, 0))
         ttk.Button(row, text='Lưu thành mẫu…', command=self.offer_current).pack(side='right')
+        ttk.Label(frame, textvariable=self.preset_state, foreground='#1a4f8a').pack(anchor='w', pady=(4, 0))
         self.name_row = ttk.Frame(frame)  # Shown only while a name is asked for.
         ttk.Label(self.name_row, text='Lưu cấu hình này để dùng lại. Tên:').pack(side='left')
         self.name_entry = ttk.Entry(self.name_row, textvariable=self.preset_name, width=34)
@@ -439,8 +444,40 @@ class LinkConfigDialog(tk.Toplevel):
             self.status.set('Chưa đọc được cấu hình hiện tại của link: '+str(exc))
             return
         self.status.set('Đang hiện cấu hình link dùng cho video chưa làm. Chưa lưu gì.')
+        self.remember_saved_boxes()
         self.save_button.configure(state='normal')
         self.check_button.configure(state='normal')
+
+    def boxes(self):
+        """The boxes as a saved config keeps them, or None when they cannot be read right now."""
+        try:
+            return config_presets.preset_settings(self.capture())
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def remember_saved_boxes(self):
+        """After the link's own settings fill the boxes: remember them, and show the name of the saved config they equal in the box."""
+        self.saved_boxes = self.boxes()
+        name = config_presets.matching_name(self.presets, self.saved_boxes)
+        self.preset_choice.set(name if name else '')
+        self.update_preset_buttons()
+        self.show_state()
+
+    def show_state(self):
+        if self.saved_boxes is None:
+            self.preset_state.set('')
+            return
+        self.preset_state.set(config_presets.state_text(self.presets, self.saved_boxes, self.boxes()))
+
+    def watch_state(self):
+        """The label follows the boxes (a light look once a second); it stops with the window."""
+        if getattr(self, 'closed', False):
+            return
+        try:
+            self.show_state()
+            self.after(1000, self.watch_state)
+        except tk.TclError:
+            pass  # The window is already gone.
 
     def fill(self, config):
         from teodub import app
@@ -473,7 +510,7 @@ class LinkConfigDialog(tk.Toplevel):
         fields['wording_rules'].set(self.rules.get('1.0', 'end').strip())
         selected = dict(self.voice_selection(), **validate_models({key: fields[key].get() for key in NEW_MODELS}),
                         **validate_subtitle_style({key: value.get() for key, value in fields.items()}),
-                        wording=self.wording_selection(), speed=speed, **self.audio_mix_selection())
+                        wording=self.wording_selection(), speed=speed, **self.audio_mix_selection(), **self.voice_removal_selection())
         selected['drive_upload'] = self.drive_selection()
         selected['drive_data_dir'] = str(self.data_dir)
         return selected
@@ -552,6 +589,7 @@ class LinkConfigDialog(tk.Toplevel):
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.status.set('Chưa lưu: '+str(exc))
             return
+        self.saved_boxes = self.boxes()  # What is saved for the link now is what the boxes say.
         self.tab.message.set(message)
         self.tab.refresh(full=True)
         # Owner 10/11/2026: after saving, a name can be given to keep these settings and use them again; "Không cần" closes.

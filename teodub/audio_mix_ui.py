@@ -35,7 +35,33 @@ class AudioMixControls(ttk.LabelFrame):
         self.controls = [*self.scales.values(), *self.entries.values(), self.reset_button]
         ttk.Label(self, text='0%: tắt tiếng · 100%: mức gốc · 200%: tăng gấp đôi').grid(
             row=1, column=0, columnspan=3, sticky='w', pady=(3, 0))
+        # Owner 13/11/2026: remove the original voices, keep the music and ambient sounds (local AI, set up with the GPU subtitle remover).
+        from teodub.voice_removal import installed
+        self.removal = fields.setdefault('remove_original_voice', tk.BooleanVar(self, value=False))
+        self.removal_box = ttk.Checkbutton(self, text='Bỏ giọng nói gốc, giữ nhạc nền và tiếng động', variable=self.removal,
+                                           command=self.removal_clicked)
+        self.removal_box.grid(row=2, column=0, columnspan=3, sticky='w', pady=(6, 0))
+        self.removal_note = ttk.Label(self, wraplength=900, justify='left', foreground='#164b78')
+        self.removal_note.grid(row=3, column=0, columnspan=3, sticky='w')
+        if installed():
+            self.controls.append(self.removal_box)
+            self.removal_note.configure(text='Tèo tách giọng bằng AI chạy trên máy (mất khoảng 0,75 lần thời lượng video). "Tiếng video gốc" '
+                                        'lúc này là mức nhạc nền và tiếng động. Nghe thử âm lượng vẫn dùng tiếng gốc đầy đủ.')
+        else:
+            self.removal_box.state(['disabled'])
+            self.removal_note.configure(text='Chưa cài bộ tách giọng: chạy tools/setup_inpaint.ps1 trong thư mục Tèo (cần mạng lần đầu).',
+                                        foreground='#8a6000')
         self.bind('<Destroy>', self.cleanup, add='+')
+
+    def removal_clicked(self):
+        """Ticked by hand while "Tiếng video gốc" is low: raise it to 70%, or the music and sounds stay hardly audible."""
+        try:
+            current = validate_percent(self.fields['original_volume'].get(), 'Tiếng video gốc')*100
+        except (ValueError, TypeError):
+            return
+        if self.removal.get() and current < 50:
+            self.fields['original_volume'].set('70')
+            self.removal_note.configure(text='Đã đặt Tiếng video gốc 70% để nghe rõ nhạc nền và tiếng động. Chỉnh lại nếu muốn.')
 
     def slide(self, key, amount):
         if not self.syncing:

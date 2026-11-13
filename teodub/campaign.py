@@ -24,7 +24,7 @@ CONFIG_KEYS = ('voice_provider', 'voice', 'reference_audio', 'reference_sha256',
                'reading_style', 'voice_speed', 'speed', 'original_gain', 'voice_gain',
                'asr_model', 'translation_model', 'translation_effort', 'tts_model',
                'burn_subtitles', 'subtitle_color', 'subtitle_weight', 'subtitle_size', 'subtitle_box', 'wording',
-               'drive_upload', 'drive_data_dir', 'subtitle_clean')
+               'drive_upload', 'drive_data_dir', 'subtitle_clean', 'remove_original_voice')
 
 
 REDO_REQUESTS = 'redo-*.json'  # 05/11/2026 (owner): "make this finished video again with the link's newest voice".
@@ -449,8 +449,9 @@ def _create_campaign(data_dir, name, records, settings, original_dir, output_dir
     from teodub.ai_models import validate_models
     from teodub.subtitle_style import validate_subtitle_style
     from teodub.tts import selection_options, validate_selection
-    from teodub.audio_mix import validate_audio_mix
+    from teodub.audio_mix import validate_audio_mix, validate_voice_removal
     validate_audio_mix(settings)
+    validate_voice_removal(settings)
     from teodub.subtitle_clean import validate_clean
     validate_clean(settings)
     validate_models(settings)

@@ -276,6 +276,20 @@ class Job:
         self.save(captions=dict(path=str(vietnamese), sha256=digest, count=len(cues)))
         return vietnamese, cues
 
+    def background(self, source):
+        """The video's sound without its voices (owner 13/11/2026), made once per job and kept; a remake of the video reuses it."""
+        from teodub.voice_removal import separate, verify_background
+        saved = self.state.get('background')
+        if saved:
+            try:
+                return verify_background(saved, source['sha256'])
+            except (OSError, ValueError, KeyError):
+                pass  # Carried from another job and no longer usable: make it again here.
+        result = separate(source['path'], self.directory/'voice-removal', cancel=self.cancel,
+                          progress=self.progress('voice_removal', 75, 80))
+        self.save(background=result)
+        return result
+
     def completed_outputs(self):
         rendered = self.state.get('rendered')
         if rendered:
@@ -392,6 +406,8 @@ class Job:
         validate_selection(voice, **voice_options)
         from teodub.audio_mix import validate_audio_mix
         audio_options = validate_audio_mix(self.config) if self.config.get('mode', 'full') == 'full' else {}
+        from teodub.audio_mix import validate_voice_removal
+        remove_voice = validate_voice_removal(self.config)['remove_original_voice'] if self.config.get('mode', 'full') == 'full' else False
         from teodub.subtitle_clean import validate_clean, preflight as clean_preflight, clean_video, verify_clean_source
         clean_options = validate_clean(self.config) if self.config.get('mode', 'full') == 'full' else dict(enabled=False)
         speech_cache = self.directory/('preview-cache' if self.config.get('mode') == 'preview' else 'voice')
@@ -426,6 +442,10 @@ class Job:
         if clean_options['enabled'] and not (self.directory/'subtitle-clean'/'clean.json').exists():
             self.emit('subtitle_clean', 'Đang kiểm tra bộ xóa chữ và GPU trước khi dịch/tạo giọng.', 2)
             clean_preflight()
+        if remove_voice and not self.state.get('background') and not (self.directory/'voice-removal'/'background.json').exists():
+            from teodub.voice_removal import preflight as removal_preflight
+            self.emit('voice_removal', 'Đang kiểm tra bộ tách giọng nói trước khi dịch/tạo giọng.', 2)
+            removal_preflight()
         if speed not in (.9, 1.0):
             raise ValueError('Chọn tốc độ hình 0,9× hoặc 1×.')
         vietnamese, cues = self.captions(source)
@@ -478,12 +498,17 @@ class Job:
         speech_plan = self.state.get('speech_plan')
         if speech_plan and hash_file(speech_plan['path']) != speech_plan['sha256']:
             raise ValueError('Kế hoạch lời đọc đã thay đổi trong lúc tạo giọng; chưa ghép thành phẩm.')
-        from teodub.render import clear_leftover_work, render_video
-        cleaned = None
+        from teodub.render import _video_info, clear_leftover_work, render_video
+        cleaned = background = None
+        stage = 75
+        if remove_voice and _video_info(Path(source['path']))['has_audio']:  # No sound, no voices to remove.
+            background = self.background(source)
+            stage = 80
         if clean_options['enabled']:
-            self.emit('subtitle_clean', 'Đang xóa vùng chữ gốc bằng GPU; Sub Việt sẽ được chèn sau.', 75)
+            self.emit('subtitle_clean', 'Đang xóa vùng chữ gốc bằng GPU; Sub Việt sẽ được chèn sau.', stage)
             cleaned = clean_video(source['path'], self.config, self.directory/'subtitle-clean',
-                                  cancel=self.cancel, progress=self.progress('subtitle_clean', 75, 85))
+                                  cancel=self.cancel, progress=self.progress('subtitle_clean', stage, stage+10))
+            stage += 10
         output_root = Path(self.config['output_dir'])
         if not output_root.is_absolute():
             raise ValueError('Chọn thư mục thành phẩm đầy đủ.')
@@ -501,7 +526,8 @@ class Job:
         outputs = render_video(source['path'], spoken_cues, clips, destination, speed=speed, **audio_options,
                                gap_ms=settings['gap_ms'], **subtitle_options,
                                **({'cleaned_picture': cleaned} if cleaned else {}),
-                               cancel=self.cancel, progress=self.progress('render', 85 if cleaned else 75, 99))
+                               **({'background': background} if background else {}),
+                               cancel=self.cancel, progress=self.progress('render', stage, 99))
         if _read(outputs['quality']).get('source_sha256') != source['sha256']:
             raise ValueError('Thành phẩm không khớp video nguồn đã nhận dạng; chưa báo hoàn tất.')
         self.record_outputs(outputs)
@@ -509,6 +535,8 @@ class Job:
         subtitle_message = ('Sub Việt đã ghi trực tiếp vào hình' if subtitle_options['burn_subtitles']
                             else 'phụ đề Việt có thể bật/tắt')
         subtitle_message += ('; đã chạy GPU xóa vùng Sub gốc' if cleaned else '; KHÔNG chạy xóa Sub gốc')
+        if background:
+            subtitle_message += '; đã bỏ giọng nói gốc, giữ nhạc nền và tiếng động'
         return dict(status='completed', outputs=outputs, cue_count=len(cues), speech_group_count=len(spoken_cues),
                     human_review_required=True,
                     message=f'Đã xuất đủ nội dung {len(cues)} dòng lời: video lồng tiếng ({subtitle_message}) + một SRT Việt. Hãy nghe duyệt nội dung.')

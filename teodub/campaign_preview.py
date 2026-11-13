@@ -50,7 +50,7 @@ def next_video_config(directory, manifest, *, retry_failed=False, active=False):
 def describe_pipeline_settings(config):
     from teodub.voice_profiles import describe_voice_settings
     from teodub.ai_models import validate_models, ASR_MODELS, TRANSLATION_MODELS, REASONING_LEVELS
-    from teodub.audio_mix import validate_audio_mix
+    from teodub.audio_mix import validate_audio_mix, validate_voice_removal
     from teodub.subtitle_style import validate_subtitle_style, SUBTITLE_BOXES, SUBTITLE_COLORS, SUBTITLE_WEIGHTS
     models = validate_models(config)
     mix = validate_audio_mix(config)
@@ -70,6 +70,7 @@ def describe_pipeline_settings(config):
             ' · suy luận '+REASONING_LEVELS[models['translation_effort']]+
             ' | Hình '+speed+
             ' | Tiếng gốc '+percent(mix['original_gain'])+' · Giọng đọc '+percent(mix['voice_gain'])+
+            (' · Bỏ giọng nói gốc' if validate_voice_removal(config)['remove_original_voice'] else '')+
             ' | '+subtitle_text+
             ' | Từ ngữ: '+('Bật' if (config.get('wording') or {}).get('enabled') else 'Tắt')+
             ' | Xóa Sub gốc GPU: '+('Bật' if (config.get('subtitle_clean') or {}).get('enabled') else 'Tắt')+

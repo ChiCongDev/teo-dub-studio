@@ -269,9 +269,10 @@ def _envelope_input(path):
     return ['-f', 'f32le', '-ar', str(ENVELOPE_RATE), '-ch_layout', 'mono', '-i', str(path)]
 
 
-def _original_audio(speed, gain, duration, duck=None):
-    """The original sound's filter chain, shared by the export and its independent reference mix."""
-    chain = (f'[0:a:0]asetpts=PTS-STARTPTS,{_atempo(speed)},aresample={RATE},'
+def _original_audio(speed, gain, duration, duck=None, audio_input='0:a:0'):
+    """The original sound's filter chain, shared by the export and its independent reference mix. `audio_input`: where the sound comes
+    from (13/11/2026: the video's own, or its sound without the voices)."""
+    chain = (f'[{audio_input}]asetpts=PTS-STARTPTS,{_atempo(speed)},aresample={RATE},'
              f'aformat=channel_layouts=stereo,volume={gain:.9g},apad,atrim=duration={duration:.9f}')
     if duck is None:
         return chain
@@ -655,7 +656,7 @@ def clear_leftover_work(folder):
 
 def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gain=.1, voice_gain=1.0,
                  gap_ms=100, burn_subtitles=False, subtitle_color='white',
-                 subtitle_weight='bold', subtitle_size=13, subtitle_box='none', cleaned_picture=None, cancel=None,
+                 subtitle_weight='bold', subtitle_size=13, subtitle_box='none', cleaned_picture=None, background=None, cancel=None,
                  progress=None):
     """Render one fresh result directory and return absolute artifact paths."""
     import imageio_ffmpeg
@@ -696,6 +697,11 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
         if (any(picture_info[k] != info[k] for k in ('width', 'height')) or
                 abs(picture_info['duration_s']-info['duration_s']) > max(.1, 2/info['fps'])):
             raise ValueError('Bản xóa chữ bị sai kích thước hoặc thời lượng; chưa xuất.')
+    background_path = None
+    if background and info['has_audio']:  # 13/11/2026: the video's sound without its voices replaces the original sound.
+        background_path = Path(background['path']).resolve(strict=True)
+        if background['binding']['source_sha256'] != source_hash or hash_file(background_path) != background['sha256']:
+            raise ValueError('Bản nhạc nền đã tách không khớp nguồn hoặc đã thay đổi.')
     output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=False)
     destinations = dict(video=output/f'{output.name}.mp4', subtitles=output/f'{output.name}.srt',
@@ -742,9 +748,9 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
             envelope = work/'ducking.f32'
             ducking = _duck_envelope(envelope, placements, duration, DUCK_GAIN/original_gain)
         mix = None
-        if original_gain != .1 or voice_gain != 1.0:
+        if original_gain != .1 or voice_gain != 1.0 or background_path is not None:
             _notify(progress, 'Đang kiểm tra hai mức âm lượng đã chọn…', 17)
-            mix = _expected_audio_mix(source, narration, work, probes, duration, effective_speed,
+            mix = _expected_audio_mix(background_path or source, narration, work, probes, duration, effective_speed,
                                       info['has_audio'], original_gain, voice_gain, cancel, envelope)
         subtitles, video = work/'final.srt', work/'render.partial.mp4'
         _write_srt(subtitles, final_cues)
@@ -778,9 +784,11 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
         else:
             picture += '[v]'
         # The gain curve is the last input: after the cleaned picture and the subtitle track when they are used.
-        duck_input = 2+bool(cleaned_picture)+(not subtitle_options['burn_subtitles'])
+        background_input = 2+bool(cleaned_picture)+(not subtitle_options['burn_subtitles'])
+        duck_input = background_input+(background_path is not None)
         if info['has_audio']:
-            audio = (_original_audio(effective_speed, original_gain, duration, None if envelope is None else duck_input)+
+            audio = (_original_audio(effective_speed, original_gain, duration, None if envelope is None else duck_input,
+                                     f'{background_input}:a:0' if background_path else '0:a:0')+
                      '[original];'
                      f'[1:a:0]volume={voice_gain:.9g}[voice];'
                      '[original][voice]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,')
@@ -795,6 +803,8 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
             command += ['-i', str(picture_source)]
         if not subtitle_options['burn_subtitles']:
             command += ['-i', str(subtitles)]
+        if background_path is not None:
+            command += ['-i', str(background_path)]
         if envelope is not None:
             command += _envelope_input(envelope)
         command += ['-filter_complex_threads', '2', '-filter_complex_script', str(filters),
@@ -818,12 +828,17 @@ def render_video(source_path, cues, clips, output_dir, *, speed=.9, original_gai
             raise ValueError('Bản xóa chữ đã thay đổi khi dựng; không công bố bản xuất.')
         if hash_file(source) != source_hash or any(hash_file(item['source']) != item['sha256'] for item in placements):
             raise ValueError('Nguồn hoặc giọng đã thay đổi trong lúc dựng; không công bố bản xuất.')
+        if background_path is not None and hash_file(background_path) != background['sha256']:
+            raise ValueError('Bản nhạc nền đã tách thay đổi khi dựng; không công bố bản xuất.')
         plan = dict(schema=1, source=str(source), source_sha256=source_hash, source_duration_s=info['duration_s'],
                     requested_speed=speed, effective_picture_speed=effective_speed, duration_s=duration,
                     last_frame_held_s=round(max(0., duration-info['duration_s']/speed), 3),
                     line_fit=dict(max_tempo=MAX_FIT_TEMPO, catch_up_gap_ms=CATCH_UP_GAP_MS,
                                   faster_lines=sum(item['tempo'] > 1 for item in placements)),
                     ducking=ducking,
+                    voice_removal=(None if background_path is None else dict(
+                        engine=background['binding']['engine'], model_sha256=background['binding']['model_sha256'],
+                        background_sha256=background['sha256'])),
                     original_gain=original_gain, voice_gain=voice_gain, gap_ms=gap_ms, sample_rate=RATE,
                     source_embedded_text_removed=False, subtitle_clean=cleaned_picture,
                     source_text_removal_scope=('selected_rectangle_only' if cleaned_picture else 'none'),

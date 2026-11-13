@@ -1,5 +1,23 @@
 # Tèo Dub Studio
 
+## Ô "Cấu hình đã lưu" hiện tên cấu hình đang dùng — 13/11/2026
+
+- Trong **Chỉnh sửa cấu hình…** của link, ô **Cấu hình đã lưu** giờ hiện **tên cấu hình mà link đang dùng** khi cấu hình của link giống hệt một mẫu đã lưu. Bên dưới có một dòng chữ xanh nói rõ: `Đang dùng: "tên mẫu"`, hoặc `Đang dùng: (cấu hình riêng của link)` khi không giống mẫu nào.
+- Bạn sửa các ô thì dòng chữ đổi theo trong vòng một giây: `đã sửa so với mẫu … — chưa lưu cho link`, hoặc `Các ô đang giống cấu hình "…"` khi sửa đúng thành một mẫu khác.
+- Mẫu lưu trước khi có "Bỏ giọng nói gốc" vẫn được hiện tên (giống cột "Cấu hình áp dụng"), kèm ghi chú `+ Bỏ giọng nói gốc (mẫu chưa có mục này)` khi link đang bật mục đó. Lưu lại mẫu (cùng tên, ghi đè) thì ghi chú mất. Có mẫu ghi rõ mục này thì được ưu tiên hơn mẫu cũ.
+- Chỉ đổi phần hiển thị: không đổi cách làm video, cách lưu cấu hình hay các mẫu đã lưu. Tên lấy theo cùng cách với cột "Cấu hình áp dụng" trong bảng.
+
+## Bỏ giọng nói gốc, giữ nhạc nền và tiếng động — 13/11/2026
+
+- Trong **Âm lượng khi xuất video** (trang Video đơn và **Chỉnh sửa cấu hình…** của từng link) có ô **"Bỏ giọng nói gốc, giữ nhạc nền và tiếng động"**. Mặc định tắt.
+- Bật thì Tèo dùng AI chạy trên máy (Demucs htdemucs, bằng CPU, không gửi gì đi đâu) tách âm thanh của video gốc thành giọng người và phần còn lại; **phần còn lại** (nhạc nền, tiếng động, tiếng môi trường) thay cho tiếng gốc khi xuất video. Giọng lồng tiếng Việt và Vietsub giữ nguyên.
+- Thanh **"Tiếng video gốc"** lúc này là mức nhạc nền và tiếng động (vẫn hạ nhỏ khi giọng Việt đọc, như trước). Tick bằng tay khi thanh đang dưới 50% thì Tèo đặt 70%.
+- Thời gian tách khoảng **0,75 lần thời lượng video** trên CPU (video 3 phút khoảng 2 phút 15 giây), dùng khoảng 2 GB RAM. Nhận dạng giọng nói và dịch vẫn dùng âm thanh gốc nên chất lượng dịch không đổi.
+- Kết quả tách được lưu trong thư mục của video và dùng lại khi làm lại video; video không có âm thanh thì bỏ qua bước này.
+- **Làm lại video đã xong:** đổi cấu hình link (tick ô này) rồi dùng **Chỉnh sửa cấu hình… → Làm lại cả video ĐÃ HOÀN THÀNH** hoặc **Chạy video đã chọn**. Không tải lại, không gọi AI dịch; bản cũ giữ nguyên.
+- **Cần cài trên mỗi máy:** `tools/setup_inpaint.ps1` (thư viện tách giọng cài thêm vào `.venv-inpaint` và tải mô hình 80 MB vào `models/demucs/`, có kiểm SHA-256; cần mạng lần đầu). Chưa cài thì ô tick bị khóa và báo cách cài.
+- Giới hạn: giọng hát, tiếng cười, la hét của nhân vật cũng bị bỏ (đều là giọng người); video chỉ có người dẫn nói gần như không có nhạc thì phía sau giọng Việt chỉ còn im lặng; "Nghe thử âm lượng" vẫn dùng tiếng gốc đầy đủ.
+
 ## Chiến dịch hàng loạt: "Chạy video đã chọn" — 13/11/2026
 
 - Trong bảng video của một link, chọn một hoặc nhiều video (Ctrl / Shift) rồi bấm **Chạy video đã chọn** (cạnh nút Chạy). Tèo hiện bảng nói từng video sẽ được làm gì; bấm Đồng ý thì các video đã chọn được **làm trước** (theo thứ tự bảng đang hiện), xong mới làm tiếp các video khác như thường. Không chọn video nào thì Chạy như cũ.

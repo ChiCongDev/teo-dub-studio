@@ -387,7 +387,8 @@ class CampaignTab(ttk.Frame):
             selected = dict(self.studio.voice_selection(),
                 **validate_models({key: value.get() for key, value in fields.items()}),
                 **validate_subtitle_style({key: value.get() for key, value in fields.items()}),
-                wording=self.studio.wording_selection(), speed=speed, **self.studio.audio_mix_selection())
+                wording=self.studio.wording_selection(), speed=speed, **self.studio.audio_mix_selection(),
+                **(self.studio.voice_removal_selection() if hasattr(self.studio, 'voice_removal_selection') else {}))
             selected['drive_upload'] = (self.studio.drive_selection() if hasattr(self.studio, 'drive_selection')
                                             else dict(version=1, enabled=False, account_id='', folder_id='', folder_name=''))
             selected['drive_data_dir'] = str(self.data_dir)
