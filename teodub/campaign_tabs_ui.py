@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from teodub.table_sort import TableSort
-from teodub.campaign import read_json, requested_retries, totals
+from teodub.campaign import chosen_numbers, read_json, requested_retries, totals
 from teodub.campaign_preset_column import PresetColumn
 from teodub.campaign_tracking import campaign_notice, posting_label, row_tag, tracking_row
 from teodub.common import atomic_json
@@ -366,6 +366,9 @@ class CampaignLinkTab(ttk.Frame):
         buttons.grid(row=4, column=0, sticky='ew', pady=6)
         self.run_button = ttk.Button(buttons, text='Chạy', command=self.run)
         self.run_button.pack(side='left')
+        # Owner 13/11/2026: the videos picked in the table go first; with none picked, Chạy is as before.
+        self.selected_button = ttk.Button(buttons, text='Chạy video đã chọn', command=self.run_selected, state='disabled')
+        self.selected_button.pack(side='left', padx=(6, 0))
         self.stop_button = ttk.Button(buttons, text='Dừng link này', command=self.stop)
         self.stop_button.pack(side='left', padx=6)
         self.retry_button = ttk.Button(buttons, text='Thử lại video lỗi', command=self.retry)
@@ -432,6 +435,7 @@ class CampaignLinkTab(ttk.Frame):
         horizontal.grid(row=1, column=0, sticky='ew')
         self.tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
         self.tree.bind('<Double-1>', self.open_item)
+        self.tree.bind('<<TreeviewSelect>>', lambda _event: self.update_selected_button(), add='+')
         for tag, color in (('completed', '#237637'), ('review_required', '#8a6000'), ('retrying', '#8a6000'),
                            ('failed', '#b12727'), ('running', '#065ca8'), ('cancelled', '#777777')):
             self.tree.tag_configure(tag, foreground=color)
@@ -537,7 +541,8 @@ class CampaignLinkTab(ttk.Frame):
         text = (f'{line} · Xong {counts["completed"]}/{counts["total"]} · Lỗi {counts["failed"]}'
                 +(f' (chờ thử lại {len(retrying)})' if retrying else '')+f' · Chờ {counts["waiting"]}'
                 +(f' · Loại trừ {counts["excluded"]}' if counts['excluded'] else '')
-                +(f' · Không đăng {counts["no_post"]}' if counts['no_post'] else ''))
+                +(f' · Không đăng {counts["no_post"]}' if counts['no_post'] else '')
+                +(f' · Chạy trước {len(chosen_numbers(manifest))}' if chosen_numbers(manifest) else ''))
         if current is not None and active:
             row = tracking_row(current, active=True)
             text += f' · {row[0]}: {row[3]}'+(f' {row[4]}' if row[4] != '—' else '')
@@ -553,6 +558,7 @@ class CampaignLinkTab(ttk.Frame):
         self.run_button.configure(state='normal' if self.state in RUNNABLE and not busy else 'disabled')
         self.stop_button.configure(state='normal' if self.state in STOPPABLE else 'disabled')
         self.retry_button.configure(state='normal' if failed-retrying and not busy else 'disabled')
+        self.update_selected_button()
         # Owner 30/10/2026: only a link made from a channel has one to read again.
         self.more_button.configure(state='normal' if channel and not busy else 'disabled')
         self.likes_button.configure(state='normal' if channel and not busy else 'disabled')
@@ -571,6 +577,7 @@ class CampaignLinkTab(ttk.Frame):
         expected = {str(item['number']) for item in manifest['items']}
         for key in set(self.tree.get_children())-expected:
             self.tree.delete(key)
+        first = set(chosen_numbers(manifest))
         for item in manifest['items']:
             queued = item['number'] in retrying
             row = tracking_row(item, active=active, retrying=queued)
@@ -578,6 +585,8 @@ class CampaignLinkTab(ttk.Frame):
             drive = READING if reading else self.drive.get(item['number'], {}).get('label', 'Cần kiểm tra')
             preset = READING if reading else self.presets.get(item['number'], 'Cần kiểm tra')
             values = row[:4]+(preset,)+row[4:-1]+(posting, drive, row[-1])
+            if item['number'] in first:  # Owner 13/11/2026: chosen to run first.
+                values = values[:-1]+('Chạy trước · '+values[-1],)
             key, tags = str(item['number']), (row_tag(item, queued),)
             if self.tree.exists(key):
                 self.tree.item(key, values=values, tags=tags)
@@ -697,6 +706,48 @@ class CampaignLinkTab(ttk.Frame):
             return
         self.message.set('Đang dừng link này: video đang làm dừng lại và giữ các bước đã xong; các link khác vẫn chạy.'
                          if outcome else 'Link này đang không chạy.')
+        self.refresh(full=True)
+
+    def selected_numbers(self):
+        """The video numbers picked in the table, in the order the table shows them."""
+        picked = set(self.tree.selection())
+        return [int(key) for key in self.tree.get_children() if key in picked and key.isdigit()]
+
+    def update_selected_button(self):
+        busy = self.studio.process is not None or getattr(self.studio, 'login_pending', False)
+        self.selected_button.configure(state='normal' if self.tree.selection() and not busy else 'disabled')
+
+    def run_selected(self):
+        """Chạy video đã chọn (owner 13/11/2026): the picked videos first, after a window that says what each one will do."""
+        batch = getattr(self.studio, 'batch_controller', None)
+        numbers = self.selected_numbers()
+        if batch is None or not numbers:
+            return
+        from teodub.campaign_selected import describe, plan
+        try:
+            found = plan(self.directory, numbers)
+        except (OSError, ValueError, KeyError) as exc:
+            self.message.set('Chưa chạy: '+str(exc))
+            return
+        text = describe(found)
+        if not found['numbers']:
+            messagebox.showinfo('Chạy video đã chọn', 'Không có video nào làm được:\n\n'+text, parent=self)
+            return
+        if not messagebox.askokcancel('Chạy video đã chọn', 'Tèo sẽ làm trước các video đã chọn, theo cấu hình hiện tại của link, '
+                                      'rồi mới làm tiếp các video khác:\n\n'+text, parent=self):
+            return
+        try:
+            _, outcome = batch.run_selected(self.directory, found['numbers'])
+        except (OSError, ValueError) as exc:
+            self.message.set('Chưa chạy: '+str(exc))
+            self.refresh(full=True)
+            return
+        self.message.set(f'Đã xếp {len(found["numbers"])} video chạy trước. '+{
+            'already': 'Link đang chạy một mình nên Tèo làm chúng ngay từ video kế tiếp.',
+            'joined': 'Link chạy xen kẽ với các link khác; tới lượt là làm chúng trước.',
+            'handoff': 'Link đang chạy làm xong video hiện tại thì tới lượt link này.',
+            'started': 'Đã bắt đầu chạy link này.'}.get(outcome, ''))
+        self.studio.refresh_buttons()
         self.refresh(full=True)
 
     def retry(self):

@@ -1,5 +1,14 @@
 # Tèo Dub Studio
 
+## Chiến dịch hàng loạt: "Chạy video đã chọn" — 13/11/2026
+
+- Trong bảng video của một link, chọn một hoặc nhiều video (Ctrl / Shift) rồi bấm **Chạy video đã chọn** (cạnh nút Chạy). Tèo hiện bảng nói từng video sẽ được làm gì; bấm Đồng ý thì các video đã chọn được **làm trước** (theo thứ tự bảng đang hiện), xong mới làm tiếp các video khác như thường. Không chọn video nào thì Chạy như cũ.
+- Mỗi trạng thái: **chưa làm / dừng / gián đoạn** — làm trước; **lỗi** — thử lại một lần; **đã loại trừ** — bỏ loại trừ rồi làm; **đã xong** — làm lại theo cấu hình hiện tại của link (bản cũ giữ, bản mới là `_lan-2`; lịch đăng chưa gửi tự chuyển sang file mới).
+- **Không làm lại, kèm lý do:** video đã xong mà **đã đăng hoặc đã gửi lên Page** (cột Trạng thái đăng bài đối chiếu lịch với thành phẩm hiện tại nên file mới sẽ làm bài đã đăng thành "Cần kiểm tra"; bản trên Facebook cũng không đổi được), video có lịch đăng **dưới 30 phút**, video **Không đăng**, video **Xong · cần duyệt**, và video đã xong khi **link chưa có cấu hình mới** (Chỉnh sửa cấu hình… / Giọng & âm lượng…) hoặc đã làm bằng đúng cấu hình đó (làm lại cũng ra y hệt).
+- **Số video mỗi ngày:** video đã chọn chạy ngay dù hôm nay đã đủ số; các video thường sau đó vẫn theo giới hạn (link nghỉ tới 0h như cũ).
+- Link đang chạy cũng bấm được: Tèo lấy yêu cầu trước video kế tiếp. Link chạy xen kẽ vẫn mỗi link một video mỗi lượt. Video đã chọn hiện "Chạy trước · …" ở cột Chi tiết và dòng trạng thái ghi "Chạy trước N".
+- Nút Chạy, Thử lại video lỗi, lịch đăng, thứ tự mặc định không đổi.
+
 ## Chiến dịch hàng loạt: chọn link bằng danh sách thả xuống — 13/11/2026
 
 - **Vấn đề:** khi có nhiều link, hàng tab ngang (test · 95/100 · đang làm, demo, cau_ca…) dài và khó nhìn.

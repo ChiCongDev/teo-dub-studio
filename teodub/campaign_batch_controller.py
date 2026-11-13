@@ -239,6 +239,15 @@ class CampaignBatchController:
         count = request_retry(directory)
         return count, (self.run_link(directory) if count else None)
 
+    def run_selected(self, directory, numbers):
+        """Chạy video đã chọn on a link's tab (owner 13/11/2026): these videos go first (campaign_selected.apply: marked here, or left as a
+        request for the running worker), then the link runs like its Chạy, even while other links run. Returns (apply's result, run_link's
+        outcome). 'already' (it runs on its own): the worker takes the request before its next video."""
+        from teodub.campaign_selected import apply
+        directory = Path(directory).resolve()
+        outcome = apply(directory, numbers)
+        return outcome, self.run_link(directory)
+
     def stop_link(self, directory):
         """Dừng link này: only this link stops (its current video ends, keeping finished steps); 'stopping' or None."""
         from teodub.campaign_batch import remove_from_rotation

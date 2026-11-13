@@ -28,6 +28,7 @@ CONFIG_KEYS = ('voice_provider', 'voice', 'reference_audio', 'reference_sha256',
 
 
 REDO_REQUESTS = 'redo-*.json'  # 05/11/2026 (owner): "make this finished video again with the link's newest voice".
+PRIORITY_REQUESTS = 'first-*.json'  # 13/11/2026 (owner): "Chạy video đã chọn": these videos go first (see mark_selected).
 REDO_KEEP = ('outputs', 'message', 'completed_at', 'execution_job', 'execution_config_sha256', 'settings_version', 'google_drive')
 
 
@@ -64,13 +65,15 @@ def picking_order(directory, manifest):
     taken = set()
     while True:
         absorb_redo(directory, manifest)  # A redo asked for while the link runs is part of the order for the very next video.
+        absorb_priority(directory, manifest)  # 13/11/2026: so is a "Chạy video đã chọn" asked for while the link runs.
+        chosen = chosen_items(manifest)
         try:
             from teodub.campaign_redo import redo_priority
             first = redo_priority(directory, manifest)
         except Exception:  # The schedules cannot be read: the usual order, never a stopped link.
             first = []
-        urgent = {item['number'] for item in first}
-        item = next((item for item in [*first, *(x for x in run_order(manifest) if x['number'] not in urgent)]
+        urgent = {item['number'] for item in first}|{item['number'] for item in chosen}
+        item = next((item for item in [*chosen, *first, *(x for x in run_order(manifest) if x['number'] not in urgent)]
                      if item['number'] not in taken), None)
         if item is None:
             return
@@ -293,6 +296,81 @@ def absorb_redo(directory, manifest):
     for path in paths:
         try:
             changed += mark_redo(manifest, read_json(path).get('numbers', []))
+        except (OSError, ValueError, AttributeError, TypeError):
+            continue
+    if changed:
+        atomic_json(Path(directory)/'campaign.json', manifest)
+    for path in paths:
+        path.unlink(missing_ok=True)
+    return changed
+
+
+def chosen_numbers(manifest):
+    """The video numbers waiting at the front of the line ("Chạy video đã chọn"), in the order they were chosen."""
+    found = manifest.get('priority')
+    return [number for number in found if type(number) is int] if isinstance(found, list) else []
+
+
+def chosen_items(manifest):
+    """The chosen videos that still need work, in order. A number that no longer needs work is dropped from the list (in place)."""
+    by_number = {item['number']: item for item in manifest['items']}
+    keep = [number for number in chosen_numbers(manifest) if number in by_number and should_process(by_number[number])]
+    if keep != manifest.get('priority'):
+        if keep:
+            manifest['priority'] = keep
+        else:
+            manifest.pop('priority', None)
+    return [by_number[number] for number in keep]
+
+
+def settle_priority(manifest, item):
+    """A chosen video leaves the front of the line when it needs no more work (finished, or failed): a stop keeps it there."""
+    chosen = chosen_numbers(manifest)
+    if item['number'] in chosen and not should_process(item):
+        if len(chosen) > 1:
+            manifest['priority'] = [number for number in chosen if number != item['number']]
+        else:
+            manifest.pop('priority', None)
+
+
+def mark_selected(manifest, numbers):
+    """13/11/2026 (owner): put these videos first, whatever they are, and prepare each one the way its state asks: a failed one gets
+    one more try (`retry_once`), an excluded one is brought back, a finished one is asked to be made again with the link's current
+    config (`mark_redo`: the old output stays until the new one is ready). A pending, stopped or interrupted one needs nothing.
+    Skipped here (never marked): a finished video marked Không đăng, one that needs approval, and a number the link does not have.
+    A finished video that was already sent to a Page is refused by the desktop's plan before it gets here. Edits `manifest` in
+    place, puts the chosen ones at the front of `priority` (the newest request first) and returns them."""
+    chosen, was = [], manifest.get('status')
+    for number in dict.fromkeys(number for number in numbers if type(number) is int):
+        item = next((x for x in manifest['items'] if x['number'] == number), None)
+        if item is None:
+            continue
+        status = item['status']
+        if status == EXCLUDED:
+            mark_excluded(manifest, [number], restore=True)
+        elif status == 'failed':
+            item['retry_once'] = True
+        elif status == 'completed':
+            if item.get('no_post') or not (item.get('redo') or mark_redo(manifest, [number])):
+                continue
+        elif status in DONE:
+            continue
+        chosen.append(number)
+    if chosen:
+        manifest['priority'] = chosen+[number for number in chosen_numbers(manifest) if number not in chosen]
+        if was in ('completed', 'needs_attention'):  # (mark_redo may already have paused it, with its own words)
+            manifest['status'] = 'paused'
+            manifest['message'] = f'Đã xếp {len(chosen)} video chạy trước theo yêu cầu; bấm Chạy để làm.'
+    return chosen
+
+
+def absorb_priority(directory, manifest):
+    """Apply the "Chạy video đã chọn" requests the desktop left while this campaign's worker ran, as `absorb_redo` does."""
+    changed = []
+    paths = sorted(Path(directory).glob(PRIORITY_REQUESTS))
+    for path in paths:
+        try:
+            changed += mark_selected(manifest, read_json(path).get('numbers', []))
         except (OSError, ValueError, AttributeError, TypeError):
             continue
     if changed:
@@ -572,7 +650,9 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 # the videos made again as well as the new ones, in the order the picking order gives them. A video already
                 # running was never cut off.
                 from teodub.campaign_daily import rest_for
-                rest = rest_for(directory, manifest)
+                # 13/11/2026 (owner, "Chạy video đã chọn"): a video the owner chose runs now even when the day's number is reached; the
+                # normal videos after it still follow the limit.
+                rest = None if item['number'] in chosen_numbers(manifest) else rest_for(directory, manifest)
                 if rest is not None:
                     break
                 # Another campaign's turn: never in the middle of a video, only before the next one starts. Only a
@@ -620,6 +700,7 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                         hold_redo(item, reason or 'Đã dừng khi đang làm lại; giữ bản cũ, lần chạy sau làm tiếp.')
                     else:  # The old finished video stays exactly as it was; the link does not turn into a failure.
                         restore_redo(item, reason or 'Bản làm lại chưa xong.')
+                    settle_priority(manifest, item)
                     atomic_json(directory/'campaign.json', manifest)
                     if stopped:
                         manifest['status'] = 'paused'
@@ -641,6 +722,7 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 elif item['status'] == 'cancelled' and not item['message']:
                     item['message'] = ('Đã nhận yêu cầu Dừng. Các bước đã hoàn tất được giữ lại.' if stop.exists()
                                        else 'Bước xử lý đã bị ngắt; chưa xác định nguyên nhân. Có thể tiếp tục phần đã lưu.')
+                settle_priority(manifest, item)
                 atomic_json(directory/'campaign.json', manifest)
                 # Pause on interruptions or account limits instead of failing the entire channel.
                 text = item['message'].lower()
