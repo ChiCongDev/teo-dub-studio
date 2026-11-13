@@ -51,8 +51,8 @@ for page in pages:
     con = db('schedules.sqlite3')
     con.row_factory = sqlite3.Row
     rows = [dict(r) for r in con.execute('SELECT * FROM schedules WHERE page_key=? ORDER BY due_at', (page['id'],))]
-    shown = [r for r in rows if r['state'] not in ('armed', 'scheduled', 'removed', 'cancelled') or SINCE <= r['due_at'] <= time.time()+3600]
-    say(f'Lịch: {len(rows)} dòng; in {len(shown)} dòng lỗi/đã chạy/gần đây.')
+    shown = [r for r in rows if SINCE <= r['due_at'] <= time.time()+3600]
+    say(f'Lịch: {len(rows)} dòng; in {len(shown)} dòng có giờ đăng trong 3 ngày qua.')
     posts = []
     for r in shown:
         say(f"\n-- {r['source_key'].split(':')[-1]:>5} · giờ {when(r['due_at'])} · {r['state']} · phase={r['phase']} · "
@@ -60,8 +60,11 @@ for page in pages:
         say(f"   {r['message'][:400]}")
         posts.append(r['post_id'])
         for table in ('preparation_retries', 'immediate_requests', 'schedule_recoveries', 'schedule_new_attempts'):
-            for x in con.execute(f'SELECT at FROM {table} WHERE schedule_id=?', (r['id'],)):
-                say(f'   [{table}] {x[0]}')
+            try:
+                for x in con.execute(f'SELECT at FROM {table} WHERE schedule_id=?', (r['id'],)):
+                    say(f'   [{table}] {x[0]}')
+            except sqlite3.Error:
+                pass  # This machine never made that table: nothing of that kind happened here.
     act = db('activity.sqlite3')
     for post in posts:
         events = act.execute('SELECT at,state,message FROM events WHERE post_id=? ORDER BY id', (post,)).fetchall()
