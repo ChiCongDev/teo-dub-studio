@@ -70,6 +70,14 @@ for page in pages:
         events = act.execute('SELECT at,state,message FROM events WHERE post_id=? ORDER BY id', (post,)).fetchall()
         for at, state, message in events[-8:]:
             say(f'   bài {post[:8]} · {at} · {state} · {message[:300]}')
+        try:  # What Tèo saw when it tried to confirm the post (read only; cut short).
+            extra = act.execute('SELECT external_url,manual_url,browser_receipt,browser_tracking FROM posts WHERE id=?', (post,)).fetchone()
+            if extra:
+                say(f'   bài {post[:8]} · link={extra[0] or "-"} · link tay={extra[1] or "-"}')
+                say(f'   bài {post[:8]} · biên nhận: {str(extra[2])[:700]}')
+                say(f'   bài {post[:8]} · theo dõi: {str(extra[3])[:900]}')
+        except sqlite3.Error:
+            pass
 say('\n=== Lệnh gửi cho Chrome (3 ngày)')
 try:
     con = db('page-commands.sqlite3')
