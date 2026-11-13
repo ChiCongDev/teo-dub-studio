@@ -21,6 +21,10 @@ from teodub.common import atomic_json
 from teodub.subtitle_style import SUBTITLE_BOXES
 
 TABS_FILE = 'campaign-tabs.json'
+# Owner 13/11/2026: how the links are chosen. 'row' = the tab strip across the top (as before); 'list' = a drop-down showing only
+# the link on screen. The choice is remembered in campaign-tabs.json.
+LIST_MODES = ('row', 'list')
+LIST_STYLE = 'LinkList.TNotebook'  # A notebook whose tab strip has no tabs drawn: the drop-down replaces it.
 REFRESH_MS = 2000
 SLOW_S = 15  # Posting and Google Drive columns of the tab on screen.
 # Owner 11/11/2026 (lag): the slow columns are read on a background thread while the screen refreshes by itself, and a campaign.json that
@@ -61,8 +65,20 @@ class CampaignArea(ttk.Frame):
         super().__init__(parent)
         self.studio = studio
         self.data_dir = Path(studio.data_dir)
+        self.mode = 'row'
+        self.mode_var = tk.StringVar(value='row')
+        self.bar = ttk.Frame(self)
+        self.bar.pack(fill='x', padx=4, pady=(2, 0))
+        ttk.Label(self.bar, text='Cách xem các link:').pack(side='left')
+        for value, text in (('row', 'Hàng ngang'), ('list', 'Danh sách thả xuống')):
+            ttk.Radiobutton(self.bar, text=text, value=value, variable=self.mode_var, command=self.choose_mode).pack(side='left', padx=(10, 0))
+        self.picker_label = ttk.Label(self.bar, text='Link đang xem:')
+        self.picker = ttk.Combobox(self.bar, state='readonly', height=20, width=70)
+        self.picker.bind('<<ComboboxSelected>>', self.picked)
+        ttk.Style(self).layout(LIST_STYLE+'.Tab', [])
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill='both', expand=True)
+        self.tabs.bind('<<NotebookTabChanged>>', lambda _event: self.sync_list(), add='+')
         self.links = {}
         self.campaign_tab = None
         self.timer = None
@@ -78,6 +94,7 @@ class CampaignArea(ttk.Frame):
         """Put the existing workspace first, then reopen the links that were open last time (never runs them)."""
         self.campaign_tab = campaign_tab
         self.tabs.add(campaign_tab, text='＋ Thêm link')
+        self.set_mode(self.saved_mode(), save=False)
         for ident in self.saved_ids():
             directory = self.data_dir/'campaigns'/ident
             try:
@@ -95,11 +112,76 @@ class CampaignArea(ttk.Frame):
         ids = data.get('campaigns', []) if isinstance(data, dict) else []
         return [ident for ident in ids if isinstance(ident, str) and re.fullmatch(r'[0-9a-f]{32}', ident)]
 
+    def saved_mode(self):
+        try:
+            data = read_json(self.data_dir/TABS_FILE)
+        except (OSError, ValueError):
+            return 'row'
+        mode = data.get('list_mode') if isinstance(data, dict) else None
+        return mode if mode in LIST_MODES else 'row'
+
     def save(self):
         try:
-            atomic_json(self.data_dir/TABS_FILE, dict(version=1, campaigns=[Path(key).name for key in self.links]))
+            atomic_json(self.data_dir/TABS_FILE, dict(version=1, campaigns=[Path(key).name for key in self.links],
+                                                      list_mode=self.mode))
         except OSError:
-            pass  # Only which tabs were open is lost.
+            pass  # Only which tabs were open (and how they are listed) is lost.
+
+    def choose_mode(self):
+        self.set_mode(self.mode_var.get())
+
+    def set_mode(self, mode, *, save=True):
+        """'row': the tab strip. 'list': a drop-down with the link on screen; the notebook's strip is hidden. Nothing else changes:
+        every link keeps running and refreshing exactly as before."""
+        mode = mode if mode in LIST_MODES else 'row'
+        self.mode = mode
+        self.mode_var.set(mode)
+        if mode == 'list':
+            self.tabs.configure(style=LIST_STYLE)
+            self.picker_label.pack(side='left', padx=(24, 4))
+            self.picker.pack(side='left', fill='x', expand=True)
+            self.sync_list()
+        else:
+            self.picker_label.pack_forget()
+            self.picker.pack_forget()
+            self.tabs.configure(style='TNotebook')
+        if save:
+            self.save()
+
+    def list_names(self, tabs):
+        """The tab titles as the drop-down shows them; two equal titles get (2), (3)… so each row picks its own tab."""
+        names, seen = [], {}
+        for tab in tabs:
+            title = self.tabs.tab(tab, 'text')
+            seen[title] = seen.get(title, 0)+1
+            names.append(title if seen[title] == 1 else f'{title} ({seen[title]})')
+        return names
+
+    def sync_list(self):
+        """Keep the drop-down equal to the notebook: the titles (which carry progress and state) and the tab on screen."""
+        if self.mode != 'list':
+            return
+        try:
+            tabs = self.tabs.tabs()
+            names = self.list_names(tabs)
+            if tuple(self.picker['values']) != tuple(names):
+                self.picker['values'] = names
+            selected = self.tabs.select()
+            index = tabs.index(selected) if selected in tabs else 0
+            if names and self.picker.current() != index:
+                self.picker.current(index)
+        except tk.TclError:
+            pass
+
+    def picked(self, _event=None):
+        try:
+            tabs = self.tabs.tabs()
+            index = self.picker.current()
+            if 0 <= index < len(tabs):
+                self.tabs.select(tabs[index])
+            self.picker.selection_clear()
+        except tk.TclError:
+            pass
 
     def open_link(self, directory, *, select=True, save=True, message=''):
         key = str(Path(directory).resolve())
@@ -108,6 +190,7 @@ class CampaignArea(ttk.Frame):
             tab = CampaignLinkTab(self.tabs, self, Path(key))
             self.links[key] = tab
             self.tabs.add(tab, text=tab.title())
+            self.sync_list()
             if save:
                 self.save()
         if message:
@@ -116,6 +199,7 @@ class CampaignArea(ttk.Frame):
             self.tabs.select(tab)
             self.show()
         tab.refresh(full=True)
+        self.sync_list()  # The refresh wrote the real title (name, progress, state).
         return tab
 
     def close_link(self, tab):
@@ -125,6 +209,7 @@ class CampaignArea(ttk.Frame):
         except tk.TclError:
             pass
         tab.destroy()
+        self.sync_list()
         self.save()
 
     def show(self):
@@ -158,6 +243,7 @@ class CampaignArea(ttk.Frame):
                 tab.refresh(full=tab is visible, background=True)
             except tk.TclError:
                 continue
+        self.sync_list()  # The titles (progress, state) changed while polling.
         self.timer = self.after(REFRESH_MS, self.poll)
 
     @property

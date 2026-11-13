@@ -1,5 +1,12 @@
 # Tèo Dub Studio
 
+## Chiến dịch hàng loạt: chọn link bằng danh sách thả xuống — 13/11/2026
+
+- **Vấn đề:** khi có nhiều link, hàng tab ngang (test · 95/100 · đang làm, demo, cau_ca…) dài và khó nhìn.
+- **Nay:** phía trên các link có dòng **"Cách xem các link: ( ) Hàng ngang ( ) Danh sách thả xuống"**. Chọn **Danh sách thả xuống** thì hàng tab ngang ẩn đi, chỉ còn một ô "Link đang xem" hiện link đang xem; bấm vào ô thì danh sách mọi link (kèm tiến độ và trạng thái) xổ xuống theo hàng dọc, chọn link nào thì chỉ link đó hiện. "＋ Thêm link" là dòng đầu danh sách. Có thanh cuộn khi nhiều link. Chọn **Hàng ngang** để về như cũ.
+- Tèo nhớ lựa chọn (trong `campaign-tabs.json`, khóa `list_mode`); mở lại vẫn giữ.
+- **Không đổi logic:** chỉ đổi cách chọn link để xem. Link bị ẩn vẫn chạy và cập nhật ngầm như trước; Chạy/Dừng, thứ tự, số video mỗi ngày, lịch đăng không đổi.
+
 ## Menu tài khoản Facebook bị kẹt khi tải — Tèo tự đóng mở lại — 12/11/2026
 
 - **Vấn đề:** 11:00 ngày 12/11 bài Video 36 của Page "du lịch toàn cầu" dừng "Chưa đọc được danh tính đang chọn trong menu Facebook". Ảnh chụp Chrome cho thấy Facebook mở menu tài khoản nhưng chỉ hiện khung xám (chưa có tên nào) và 7 phút sau vẫn vậy. Trước đây Tèo chỉ chờ 30 giây rồi dừng.
