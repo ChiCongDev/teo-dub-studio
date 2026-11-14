@@ -42,7 +42,8 @@ CALL_PROMPT_WAIT_SECONDS = 12
 LATER_NAMES = re.compile(r'^(Lúc khác|Not now|Maybe later)$', re.I)
 NOTIFICATION_NAMES = re.compile(r'^(Thông báo|Notifications)(?:,.*)?$', re.I)
 OPEN_NAMES = re.compile(r"^(Create post|Create a post|Tạo bài viết|Bạn đang nghĩ gì(?: thế)?\??|.+ ơi, bạn đang nghĩ gì thế\??|What's on your mind(?:, .+)?\??)$", re.I)
-_HOSTS = {'facebook.com', 'www.facebook.com', 'm.facebook.com'}
+# 14/11/2026: Facebook sends this machine's Chrome to web.facebook.com (a Page opened there, nothing wrong); it is Facebook's own address.
+_HOSTS = {'facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com'}
 INSPECT_RESULT_WAIT_SECONDS = 20
 OPENER_WAIT_SECONDS = 20  # 02/11/2026: how long the Page's "Tạo bài viết" button is waited for before looking for "Chuyển ngay".
 PAGE_READY_SECONDS = 30  # 02/11/2026: was 12; the Page name/header of a slow Facebook page.
@@ -264,7 +265,7 @@ INSIGHTS_RESULT_SCRIPT = r"""({body}) => {
     return visible(e) && !e.closest(excluded) && r.bottom>0 && r.top<innerHeight
       && r.right>0 && r.left<innerWidth; };
   const profile = e => { try { const u=new URL(e.href);
-    return u.protocol==='https:' && ['facebook.com','www.facebook.com','m.facebook.com'].includes(u.hostname)
+    return u.protocol==='https:' && ['facebook.com','www.facebook.com','m.facebook.com','web.facebook.com'].includes(u.hostname)
       && !u.username && !u.password && (!u.port || u.port==='443')
       && (/^\/[0-9]+\/?$/.test(u.pathname) || /^\/pages\/[^/]+\/[0-9]+\/?$/.test(u.pathname)
         || u.pathname==='/profile.php' && /^[0-9]+$/.test(u.searchParams.get('id')||''));
@@ -2188,7 +2189,7 @@ class BrowserPagePublisher:
                 }
                 const owners=[...scope.querySelectorAll('a[href]')].filter(e=>inside(e) && !prefix.contains(e))
                   .map(e=>{try {const u=new URL(e.href);if(u.protocol!=='https:' || u.username || u.password
-                      || u.port && u.port!=='443' || !['facebook.com','www.facebook.com','m.facebook.com'].includes(u.hostname)) return null;
+                      || u.port && u.port!=='443' || !['facebook.com','www.facebook.com','m.facebook.com','web.facebook.com'].includes(u.hostname)) return null;
                     const ids=u.searchParams.getAll('id');
                     const id=u.pathname==='/profile.php' && ids.length===1 ? ids[0]
                       : /^\/[0-9]+\/?$/.test(u.pathname) ? u.pathname.split('/')[1]

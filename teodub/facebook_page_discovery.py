@@ -50,7 +50,7 @@ SNAPSHOT_SCRIPT = "() => {" + _HEADING_HELPERS + r"""
     'business','help','privacy','policies','bookmarks','home.php','photo','photo.php','stories','profile_switcher','people']);
   const candidate = a => {
     let u; try { u = new URL(a.getAttribute('href'), location.href); } catch { return null; }
-    if (!['facebook.com','www.facebook.com','m.facebook.com'].includes(u.hostname)
+    if (!['facebook.com','www.facebook.com','m.facebook.com','web.facebook.com'].includes(u.hostname)
         || !['http:','https:'].includes(u.protocol) || u.username || u.password) return null;
     const path = u.pathname.replace(/\/$/, '');
     const bits = path.split('/').filter(Boolean);
@@ -130,7 +130,7 @@ SCROLL_SCRIPT = "() => {" + _HEADING_HELPERS + r"""
 
 def _list_url(url):
     parts = urlsplit(url)
-    return (parts.hostname in {'facebook.com', 'www.facebook.com', 'm.facebook.com'}
+    return (parts.hostname in {'facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com'}
             and parts.path.rstrip('/') == '/pages'
             and parse_qs(parts.query).get('category') == ['your_pages'])
 
@@ -177,7 +177,7 @@ def _first_segment(url):
         parts = urlsplit(url)
     except ValueError:
         return ''
-    if parts.hostname not in {'facebook.com', 'www.facebook.com', 'm.facebook.com'}:
+    if parts.hostname not in {'facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com'}:
         return ''
     bits = [bit for bit in parts.path.split('/') if bit]
     if len(bits) != 1 or bits[0].endswith('.php') or bits[0].isdigit():
@@ -272,7 +272,7 @@ def _read_managed_pages(context, trace, *, cancel=None, finished=None, progress=
             if finished is not None and finished.is_set():
                 raise Cancelled('Đã dừng Load Page để đóng trình duyệt. Danh sách đã lưu trước đó được giữ.')
             parts = urlsplit(tab.url)
-            if parts.hostname not in {'facebook.com', 'www.facebook.com', 'm.facebook.com'}:
+            if parts.hostname not in {'facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com'}:
                 raise ValueError('Trang đọc Page chuyển sang địa chỉ khác Facebook; chưa lưu danh sách.')
             if parts.path.startswith(('/login', '/checkpoint', '/recover')) or not _list_url(tab.url):
                 notify('Chưa ở Trang bạn quản lý. Bạn tự đăng nhập/xác minh hoặc mở danh sách Page trong '

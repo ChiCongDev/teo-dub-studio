@@ -8,6 +8,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 DATA = Path(os.environ['LOCALAPPDATA'])/'TeoDubStudio'
 PUB = DATA/'page-publishing'
@@ -78,6 +79,46 @@ for page in pages:
                 say(f'   bài {post[:8]} · theo dõi: {str(extra[3])[:900]}')
         except sqlite3.Error:
             pass
+say('\n=== Chrome của tài khoản đã mở trang đăng nhập / xác minh (3 ngày)')
+# Read only: a COPY of the account's Chrome history is read, so the running Chrome is never touched. Only the Facebook pages that ask
+# for a login or a check are printed (time and address), nothing else of the history.
+import shutil
+import tempfile
+GATES = ('/login', '/checkpoint', '/recover', '/two_step_verification', '/two_factor', '/confirmemail', '/authentication')
+for account_id in sorted({page['account_id'] for page in pages}):
+    history = PUB/'browser-profiles'/account_id/'chrome'/'Default'/'History'
+    say(f'-- tài khoản {names.get(account_id, "?")}')
+    if not history.exists():
+        say('   (không thấy lịch sử Chrome)')
+        continue
+    with tempfile.TemporaryDirectory() as folder:
+        copy = Path(folder)/'History'
+        try:
+            shutil.copyfile(history, copy)
+            con = sqlite3.connect(copy)
+            since = int((SINCE+11644473600)*1_000_000)  # Chrome counts microseconds from 1601.
+            found = 0
+            hosts = {}  # Which Facebook address Chrome was on, first and last time (14/11: web.facebook.com is not accepted).
+            for url, stamp in con.execute('SELECT urls.url, visits.visit_time FROM visits JOIN urls ON urls.id=visits.url '
+                                          'WHERE visits.visit_time>=? ORDER BY visits.visit_time', (since,)):
+                host = urlsplit(url).hostname or ''
+                if host.endswith('facebook.com'):
+                    seen = hosts.setdefault(host, [stamp, stamp, 0])
+                    seen[1], seen[2] = stamp, seen[2]+1
+            for host, (first, last, count) in sorted(hosts.items(), key=lambda item: item[1][0]):
+                say(f'   địa chỉ {host}: {count} lần · từ {when(first/1_000_000-11644473600)} đến {when(last/1_000_000-11644473600)}')
+            for url, stamp in con.execute('SELECT urls.url, visits.visit_time FROM visits JOIN urls ON urls.id=visits.url '
+                                          'WHERE visits.visit_time>=? ORDER BY visits.visit_time', (since,)):
+                bits = urlsplit(url)
+                if bits.hostname and bits.hostname.endswith('facebook.com') and bits.path.startswith(GATES):
+                    found += 1
+                    say(f'   {when(stamp/1_000_000-11644473600)} · {bits.hostname}{bits.path[:80]}')
+            con.close()
+            if not found:
+                say('   Không có lần nào Facebook đưa tới trang đăng nhập/xác minh.')
+        except (OSError, sqlite3.Error) as exc:
+            say(f'   Chưa đọc được lịch sử Chrome: {exc}')
+
 say('\n=== Lệnh gửi cho Chrome (3 ngày)')
 try:
     con = db('page-commands.sqlite3')

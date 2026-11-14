@@ -29,7 +29,8 @@ CREATE_NAMES = re.compile(r'^(Tạo bài viết|Create post|Create a post)$', re
 EDIT_NAMES = re.compile(r'^(Tạo bài viết|Create post|Create a post|Tạo thước phim|Create reel|Tạo video|Create video|Chỉnh sửa bài viết|Edit post)$', re.I)
 SELECTED = re.compile(r',\s*(đang chọn|đã chọn|selected|currently selected)$', re.I)
 NOTIFICATIONS = re.compile(r',\s*\d+\s+(thông báo|notifications?)$', re.I)
-HOSTS = {'www.facebook.com', 'facebook.com', 'm.facebook.com'}
+# 14/11/2026: Facebook sends this machine's Chrome to web.facebook.com (a Page opened there, nothing wrong); it is Facebook's own address.
+HOSTS = {'www.facebook.com', 'facebook.com', 'm.facebook.com', 'web.facebook.com'}
 TAB_CHECK_SECONDS = 3  # Each other tab gets this long to answer before a switch is refused.
 SWITCH_RELOAD_SECONDS = 5  # After choosing a profile, how long to look for Facebook's reload before reading.
 SELECTOR_SECONDS = 30  # 02/11/2026: was 12; the account button / profile list of a slow Facebook page (checked before Publish too).

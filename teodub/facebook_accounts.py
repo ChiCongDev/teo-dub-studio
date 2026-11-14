@@ -16,7 +16,8 @@ FACEBOOK_PAGES = 'https://www.facebook.com/pages/?category=your_pages'
 BUSINESS_SUITE = 'https://business.facebook.com/latest/home'
 META_APPS = 'https://developers.facebook.com/apps/'
 META_EXPLORER = 'https://developers.facebook.com/tools/explorer/'
-_HOSTS = {'facebook.com', 'www.facebook.com', 'm.facebook.com', 'business.facebook.com'}
+# 14/11/2026: Facebook sends this machine's Chrome to web.facebook.com (a Page opened there, nothing wrong); it is Facebook's own address.
+_HOSTS = {'facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com', 'business.facebook.com'}
 
 
 def facebook_url(value, *, page=False):
@@ -97,7 +98,7 @@ def facebook_result_url(value):
         insights = parsed.path.rstrip('/') == '/content/insights'
         if insights:
             identifiers = parse_qs(parsed.query, keep_blank_values=True).get('content_id', [])
-            if (parsed.scheme != 'https' or parsed.hostname not in {'facebook.com', 'www.facebook.com', 'm.facebook.com'}
+            if (parsed.scheme != 'https' or parsed.hostname not in {'facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com'}
                     or parsed.username is not None or parsed.password is not None or parsed.port not in (None, 443)
                     or len(identifiers) != 1 or not identifiers[0] or len(identifiers[0]) > 2048
                     or any(ord(char) <= 32 or ord(char) == 127 for char in identifiers[0])):
@@ -124,7 +125,7 @@ def username_of(url):
         parts = urlsplit(str(url))
     except ValueError:
         return ''
-    if parts.hostname not in {'facebook.com', 'www.facebook.com', 'm.facebook.com'}:
+    if parts.hostname not in {'facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com'}:
         return ''
     bits = [bit for bit in parts.path.split('/') if bit]
     if len(bits) != 1 or not re.fullmatch(r'[A-Za-z0-9.\-_]{3,80}', bits[0]) or bits[0].isdigit() or bits[0].casefold() in _NOT_A_USERNAME:
