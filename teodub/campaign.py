@@ -27,6 +27,8 @@ CONFIG_KEYS = ('voice_provider', 'voice', 'reference_audio', 'reference_sha256',
                'drive_upload', 'drive_data_dir', 'subtitle_clean', 'remove_original_voice')
 
 
+REDO_TRIES = 3  # Owner 16/11/2026: a remake that fails is tried again at once, 3 tries in all; then the video is dropped for good.
+STOP_WORDS = ('hạn mức', 'quota', 'usage limit', 'rate limit', 'đăng nhập', 'login', 'credits')  # A pause, not the video's fault.
 REDO_REQUESTS = 'redo-*.json'  # 05/11/2026 (owner): "make this finished video again with the link's newest voice".
 PRIORITY_REQUESTS = 'first-*.json'  # 13/11/2026 (owner): "Chạy video đã chọn": these videos go first (see mark_selected).
 REDO_KEEP = ('outputs', 'message', 'completed_at', 'execution_job', 'execution_config_sha256', 'settings_version', 'google_drive')
@@ -233,6 +235,17 @@ def absorb_exclusions(directory, manifest):
     return changed
 
 
+def remake_failed(result, stop):
+    """A remake that came back as a plain failure (not Dừng, a restart, an AI quota or a login): worth another try."""
+    if stop.exists():
+        return False
+    if not isinstance(result, dict) or result.get('status') not in DONE | {'failed', 'cancelled'}:
+        return True
+    if result['status'] in DONE:
+        return not result.get('outputs')  # Finished but with nothing made: a failure too.
+    return result['status'] == 'failed' and not any(word in str(result.get('message') or '').lower() for word in STOP_WORDS)
+
+
 def mark_redo(manifest, numbers):
     """05/11/2026 (owner): ask for these FINISHED videos to be made again (with the link's newest saved settings, in a new
     revision job: the downloaded video and the Vietnamese lines are reused, so no download and no AI call). A video stays
@@ -242,7 +255,7 @@ def mark_redo(manifest, numbers):
     stamp = datetime.now().astimezone().isoformat(timespec='seconds')
     for item in manifest['items']:
         if (item['number'] in wanted and item['status'] == 'completed' and item.get('outputs')
-                and not item.get('no_post') and not item.get('redo')):
+                and not item.get('no_post') and not item.get('redo') and not item.get('redo_dropped')):
             item['redo'] = dict(at=stamp, previous={key: item[key] for key in REDO_KEEP if key in item})
             item.pop('redo_failed', None)
             changed.append(item['number'])
@@ -273,6 +286,20 @@ def restore_redo(item, reason):
             item.pop(key, None)
     item['status'] = 'completed'
     item['redo_failed'] = dict(at=datetime.now().astimezone().isoformat(timespec='seconds'), message=reason[:500])
+
+
+def drop_redo(item, reason, tries):
+    """Owner 16/11/2026: the remake failed `tries` times in a row. The video is dropped for good: never made again, never posted
+    (its Page schedule is removed by the schedule controller, see page_schedule_voice). The old finished files stay on disk."""
+    redo = item.pop('redo')
+    for key in REDO_KEEP:
+        if key in redo['previous']:
+            item[key] = redo['previous'][key]
+        else:
+            item.pop(key, None)
+    item.pop('redo_failed', None)
+    item['status'] = 'completed'
+    item['redo_dropped'] = dict(at=datetime.now().astimezone().isoformat(timespec='seconds'), tries=tries, message=reason[:500])
 
 
 def hold_redo(item, reason):
@@ -678,10 +705,16 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 if not redoing:
                     item.pop('completed_at', None)
                 atomic_json(directory/'campaign.json', manifest)
-                try:
-                    result = runner(job/'config.json', stop)
-                except Exception as exc:
-                    result = dict(status='failed', message=str(exc) or type(exc).__name__)
+                tries = 0
+                while True:
+                    tries += 1
+                    try:
+                        result = runner(job/'config.json', stop)
+                    except Exception as exc:
+                        result = dict(status='failed', message=str(exc) or type(exc).__name__)
+                    # Owner 16/11/2026: a remake that fails is tried again at once, 3 tries in all (one video for "Số video mỗi ngày").
+                    if not (redoing and tries < REDO_TRIES and remake_failed(result, stop)):
+                        break
                 processed += 1
                 previous_seconds = item.get('processing_seconds', 0)
                 if type(previous_seconds) not in (int, float) or not math.isfinite(previous_seconds) or previous_seconds < 0:
@@ -692,15 +725,15 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                     result = dict(status='failed', message='Video chưa trả kết quả kết thúc hợp lệ. Kiểm tra rồi thử lại video lỗi.')
                 if redoing:
                     reason = str(result.get('message') or '')
-                    stopped = result['status'] == 'cancelled' or (result['status'] != 'completed' and any(
-                        value in reason.lower() for value in ('hạn mức', 'quota', 'usage limit', 'rate limit', 'đăng nhập', 'login', 'credits')))
+                    stopped = result['status'] == 'cancelled' or stop.exists() or (result['status'] != 'completed' and any(
+                        value in reason.lower() for value in STOP_WORDS))
                     if result['status'] == 'completed' and result.get('outputs'):
                         finish_redo(item, result)
                         item['completed_at'] = item['last_attempt_finished_at']
                     elif stopped:  # Owner 12/11/2026: stopped, not failed: old video back, still to be made again next run.
                         hold_redo(item, reason or 'Đã dừng khi đang làm lại; giữ bản cũ, lần chạy sau làm tiếp.')
-                    else:  # The old finished video stays exactly as it was; the link does not turn into a failure.
-                        restore_redo(item, reason or 'Bản làm lại chưa xong.')
+                    else:  # Owner 16/11/2026: failed every try: dropped for good; the link goes on with the next video.
+                        drop_redo(item, f'{reason or "Bản làm lại chưa xong"} (đã thử {tries} lần)', tries)
                     settle_priority(manifest, item)
                     atomic_json(directory/'campaign.json', manifest)
                     if stopped:

@@ -338,6 +338,26 @@ class PageScheduleStore:
                 conn.execute('UPDATE schedules SET due_at=?,message=? WHERE id=?',
                     (float(due_at), 'Đã xếp lại theo lượt thích: giờ đăng mới '+display_time(due_at)+' (UTC+7). Giữ Tèo chạy và Chrome có phiên đăng nhập.', ident))
 
+    def retime(self, account_id, page_key, assignments, expected, messages):
+        """16/11/2026 (owner, voice made again): give armed, never-touched appointments of this Page other times, in ONE transaction.
+
+        `assignments` = {id: new due_at} (a new time may be now: a video that takes the place of one that is not ready), `expected` =
+        {id: the due_at the caller saw}, `messages` = {id: the line the row shows afterwards}. Every row must still be armed with that
+        time and untouched, or nothing changes. Video, caption and draft stay as they are; the old times are kept in `schedule_reorders`."""
+        if set(assignments) != set(expected) or set(assignments) != set(messages) or not assignments:
+            raise ValueError('Không có lịch nào để đổi giờ.')
+        with self.database() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            for ident in assignments:
+                row = conn.execute('SELECT * FROM schedules WHERE id=?', (ident,)).fetchone()
+                if (not row or (row['account_id'], row['page_key']) != (account_id, page_key) or row['state'] != 'armed'
+                        or row['due_at'] != expected[ident] or row['attempted_at'] or row['request_id'] or row['finished_at'] or row['phase']):
+                    raise ValueError('Một lịch đã đổi trạng thái hoặc giờ; chưa đổi lịch nào.')
+            for ident, due_at in assignments.items():
+                conn.execute('INSERT INTO schedule_reorders (schedule_id,at,previous_due_at,new_due_at) VALUES (?,?,?,?)',
+                    (ident, now(), expected[ident], float(due_at)))
+                conn.execute('UPDATE schedules SET due_at=?,message=? WHERE id=?', (float(due_at), str(messages[ident])[:2000], ident))
+
     REPLACEABLE = {'scheduled', 'armed', 'paused', 'needs_attention'}
 
     def replace_video(self, ident, expected, new_source):
@@ -532,6 +552,7 @@ class PageScheduleController:
         self.validation = queue.Queue()
         self.last_tick = 0
         self.redo_checked = 0
+        self.dropped_checked = 0
         # Only a continuously observed, locally owned wait can extend the
         # lateness allowance. These witnesses are deliberately never persisted.
         self.queue_waits = {}
@@ -923,6 +944,9 @@ class PageScheduleController:
         row = self.store.get(ident)
         if (row['account_id'], row['page_key']) != (account_id, page_key):
             raise ValueError('Lịch không thuộc tài khoản/Page này.')
+        reason = self._voice_block(row)
+        if reason:  # Owner 16/11/2026: not even "Đăng ngay" posts a video with its old voice.
+            raise ValueError(reason+'; Tèo không đăng bản giọng cũ. Chờ bản giọng mới xong rồi bấm Đăng ngay.')
         session = self.owner.sessions.get(account_id)
         if (session and (session.loading_pages or any(request['state'] in {'queued', 'running'}
                 for request in session.post_actions.values())) or any(
@@ -1161,6 +1185,29 @@ class PageScheduleController:
                     return True
         return False
 
+    def _voice_block(self, row, manifests=None):
+        """Why this video must not be posted now (its new voice is not ready, or it was dropped), or ''."""
+        from teodub.page_schedule_voice import blocked_reason
+        return blocked_reason(row, manifests)
+
+    def _hold_or_swap(self, row, reason):
+        from teodub.page_schedule_voice import hold_or_swap
+        try:
+            hold_or_swap(self, row, reason)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.owner.status.set('Lịch đăng cần kiểm tra: '+str(exc))
+
+    def _apply_dropped_videos(self, clock):
+        """Every few seconds: the schedules of videos whose remake failed 3 times are removed, and the next ready video takes the time."""
+        if clock-self.dropped_checked < 20:
+            return
+        self.dropped_checked = clock
+        from teodub.page_schedule_voice import apply_dropped
+        try:
+            apply_dropped(self)
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+            self.owner.status.set('Lịch đăng cần kiểm tra: '+str(exc))
+
     def _follow_redone_videos(self, clock, only=None):
         """05/11/2026: a schedule never sent follows its video's new file (made again with a new voice). Every few seconds for
         all, and at once for one that is due now. Returns that one's fresh row when it moved, else None."""
@@ -1185,6 +1232,7 @@ class PageScheduleController:
         try:
             self._observe_queue(clock)
             self._follow_redone_videos(clock)
+            self._apply_dropped_videos(clock)
             while True:
                 try:
                     ident,error = self.validation.get_nowait()
@@ -1294,6 +1342,11 @@ class PageScheduleController:
                     continue
                 if row['state']=='armed' and row['due_at']<=time.time():
                     if getattr(self.owner.studio,'restart_draining',False):
+                        continue
+                    # Owner 16/11/2026: a video whose new voice is not ready is never posted with the old one.
+                    reason = self._voice_block(row)
+                    if reason:
+                        self._hold_or_swap(row, reason)
                         continue
                     try:
                         if self._wait_for_account(row, time.time(), clock):

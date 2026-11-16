@@ -79,6 +79,26 @@ for page in pages:
                 say(f'   bài {post[:8]} · theo dõi: {str(extra[3])[:900]}')
         except sqlite3.Error:
             pass
+    # Owner 16/11/2026: which videos of the Page's campaigns wait for a new voice, failed their remake, or were dropped (read only).
+    sources = [json.loads(r['source']) if isinstance(r['source'], str) else r['source'] for r in rows]
+    for directory in sorted({s.get('campaign') for s in sources if s.get('campaign')}):
+        try:
+            manifest = json.loads((Path(directory)/'campaign.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            say(f'\n-- Chiến dịch {Path(directory).name[:12]}: không đọc được ({exc})')
+            continue
+        waiting = [x['number'] for x in manifest.get('items', []) if x.get('redo')]
+        failed = [x for x in manifest.get('items', []) if x.get('redo_failed')]
+        dropped = [x for x in manifest.get('items', []) if x.get('redo_dropped')]
+        say(f'\n-- Chiến dịch {Path(directory).name[:12]} · làm lại giọng mới: {len(waiting)} video đang chờ, '
+            f'{len(failed)} lỗi lần gần nhất, {len(dropped)} đã bỏ')
+        if waiting:
+            say('   chờ làm lại: '+', '.join(map(str, sorted(waiting))))
+        for item in failed:
+            say(f"   lỗi · Video {item['number']} · {item['redo_failed'].get('at', '')} · {str(item['redo_failed'].get('message', ''))[:200]}")
+        for item in dropped:
+            say(f"   đã bỏ · Video {item['number']} · {item['redo_dropped'].get('at', '')} · {item['redo_dropped'].get('tries', '?')} lần · "
+                f"{str(item['redo_dropped'].get('message', ''))[:200]}")
 say('\n=== Chrome của tài khoản đã mở trang đăng nhập / xác minh (3 ngày)')
 # Read only: a COPY of the account's Chrome history is read, so the running Chrome is never touched. Only the Facebook pages that ask
 # for a login or a check are printed (time and address), nothing else of the history.

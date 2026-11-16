@@ -70,11 +70,22 @@ def redone_day(item):
         return None
 
 
+def dropped_day(item):
+    """The day a remake was given up (3 tries failed), or None. Owner 16/11/2026: the tries of one video count as ONE video."""
+    dropped = item.get('redo_dropped')
+    if item.get('status') != 'completed' or not isinstance(dropped, dict):
+        return None
+    try:
+        return datetime.fromisoformat(dropped.get('at')).astimezone().date()
+    except (TypeError, ValueError):
+        return None
+
+
 def counts_today(manifest, now=None):
     """(new videos finished today, videos made again today). Owner 10/11/2026: both count towards the day's number."""
     today = datetime.fromtimestamp(time.time() if now is None else now).astimezone().date()
     return (sum(finished_day(item) == today for item in manifest['items']),
-            sum(redone_day(item) == today for item in manifest['items']))
+            sum(redone_day(item) == today or dropped_day(item) == today for item in manifest['items']))
 
 
 def done_today(manifest, now=None):

@@ -148,6 +148,9 @@ def tracking_row(item, active=True, retrying=False):
     elif item.get('redo') and status == 'completed':  # 05/11/2026: finished, to be made again with a new voice; the old file stays.
         label += ' · chờ làm lại giọng'
         message = 'Đang xếp/làm lại bằng giọng mới; bản cũ vẫn dùng được cho tới khi bản mới xong. '+str(event.get('message') or '')
+    elif item.get('redo_dropped') and status == 'completed':  # 16/11/2026: the remake failed 3 times; dropped, never posted.
+        label += ' · đã bỏ'
+        message = 'Đã bỏ, không đăng: làm lại giọng mới lỗi '+str(item['redo_dropped'].get('tries', 3))+' lần liên tiếp: '+str(item['redo_dropped'].get('message', ''))
     elif item.get('redo_failed') and status == 'completed':
         message = 'Lần làm lại giọng gần nhất chưa xong, giữ bản cũ: '+str(item['redo_failed'].get('message', ''))+' | '+message
     if status == 'running':

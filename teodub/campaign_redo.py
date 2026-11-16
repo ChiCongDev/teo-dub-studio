@@ -82,6 +82,8 @@ def build_plan(directory, *, settings_id=None, now=None, unchanged=None, blocked
         found = rows.get(item['number'], [])
         if item.get('no_post'):
             entry['reason'] = 'Đã đặt Không đăng.'
+        elif item.get('redo_dropped'):
+            entry['reason'] = 'Đã bỏ vì làm lại lỗi 3 lần liên tiếp.'
         elif item.get('redo'):
             entry['reason'] = 'Đã xếp hàng làm lại.'
         elif not item.get('outputs'):

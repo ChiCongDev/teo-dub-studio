@@ -102,7 +102,8 @@ class MakeAgainTests(Redo):
         campaign._run_campaign_locked(a, runner=self.remake)
         self.assertEqual(self.again, [('Trúc Ly', 2)])
 
-    def test_a_failed_new_version_puts_the_old_finished_video_back_exactly(self):
+    def test_a_new_version_that_fails_every_try_is_dropped_and_the_old_files_stay_as_they_were(self):
+        """Owner 16/11/2026 (was: the old video came back and stayed): 3 tries, then the video is dropped for good."""
         a = self.finished(2)
         before = {key: self.item(a, 1).get(key) for key in campaign.REDO_KEEP}
         self.new_voice(a)
@@ -112,10 +113,11 @@ class MakeAgainTests(Redo):
         item = self.item(a, 1)
         self.assertEqual(item['status'], 'completed')
         self.assertEqual({key: item.get(key) for key in campaign.REDO_KEEP}, before)
-        self.assertEqual(item['redo_failed']['message'], 'Codex hết lượt')
+        self.assertEqual(self.again, [('Trúc Ly', 1)]*3)  # Three tries.
+        self.assertEqual((item['redo_dropped']['tries'], 'Codex hết lượt' in item['redo_dropped']['message']), (3, True))
         self.assertNotIn('redo', item)
-        self.assertEqual(result['status'], 'completed')  # A failed remake does not turn the link into a failure.
-        self.assertIn('chưa xong', tracking_row(item)[6])
+        self.assertEqual(result['status'], 'completed')  # A dropped remake does not turn the link into a failure.
+        self.assertIn('đã bỏ', tracking_row(item)[3])
 
     def test_stopping_during_a_remake_keeps_the_old_video_and_pauses_the_link(self):
         a = self.finished(2)
@@ -156,7 +158,7 @@ class MakeAgainTests(Redo):
         del self.outcomes[('redo', 1)]
         campaign._run_campaign_locked(a, runner=self.remake)
         self.assertNotIn('redo', self.item(a, 2))
-        self.assertIn('redo_failed', self.item(a, 2))
+        self.assertIn('redo_dropped', self.item(a, 2))  # A plain failure 3 times: dropped (owner 16/11/2026).
 
     def test_a_link_with_nothing_left_accepts_a_new_voice_only_for_remaking(self):
         a = self.finished(2)
