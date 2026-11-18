@@ -165,9 +165,9 @@ Other venvs: `.venv-inpaint` (STTN GPU inpaint), `.venv-web` (Flask).
 
 ## Shipright state
 Level: L3 (production, operating) — HARDEN for Page publishing
-Active: Signed Tcl/Tk repair for the other machine (Tkinter would not open on its portable Python 3.13.18). Tests 12/12, Studio smoke OK on a fixture copy; package `work/20261118-signed-tk/sua-tk-may-kia.zip`, NOT yet run on the other machine
-Next: owner sends the zip to the other machine and runs `Sua Tk.cmd` (Tèo closed); then apply Codex's source-only Page ID patch (work/20261118-page-id-fix) and re-save Page settings. Project is a git repo (v1.0.7); work/ is ignored
-Last shipped: Tk repair package (18/11) -> signal: Tèo opens on the other machine after `Sua Tk.cmd`, no rollback message; check by the owner's first run there. Older pending: "Lấy thêm video mới…" (30/10) -> demo grows past Video 100 with only new videos
+Active: Page ID auto-read in Load Page (18/11) released as 1.0.8; Tk repair done on the other PC (Tèo opens there)
+Next: owner updates the other PC (button), Load Page on A Cẩu Ngáo, saves settings; then a first real post to confirm the ID works for publishing (untested). Project is a git repo; work/ is ignored
+Last shipped: 1.0.8 auto Page ID -> signal: after Load Page every username Page shows a number in "Page ID" and the red "chuỗi số" line is gone; check by the owner on the other PC. Older pending: "Lấy thêm video mới…" (30/10)
 Last updated: 2026-11-18
 Skills active: none installed; bundled: /security-review, /code-review (user-run), /run
 Registry: desktop app + browser automation + AI (Codex CLI)
