@@ -1,5 +1,12 @@
 # Tèo Dub Studio
 
+## Page thiếu ID bằng số: kiểm tra trước khi gọi AI — 18/11/2026
+
+- Load Page có thể dò ID từ link số của nút trong cùng thẻ Page, chỉ nhận khi Facebook chuyển về đúng link chữ. Không xác minh được thì không đoán ID.
+- Thiếu Page ID: từ chối lưu thiết lập AI và dừng cấu hình cũ trước khi gọi AI, báo cách bổ sung. Hiển thị riêng trạng thái tự động từ chiến dịch và lịch gọi AI.
+- Sau cập nhật: Load Page, kiểm tra ID; nếu còn thiếu, Nâng cao → Sửa Page để bổ sung ID đã xác minh. Mở lại quản lý Page và lưu lại thiết lập. Không tự bật lại lượt lỗi.
+- Đã kiểm thử ngoại tuyến; chưa xác minh trên Facebook thật của máy A Cẩu Ngáo. Gói chuyển máy và hướng dẫn: `work/20261118-page-id-fix/`.
+
 ## Ô "Cấu hình đã lưu" hiện tên cấu hình đang dùng — 13/11/2026
 
 - Trong **Chỉnh sửa cấu hình…** của link, ô **Cấu hình đã lưu** giờ hiện **tên cấu hình mà link đang dùng** khi cấu hình của link giống hệt một mẫu đã lưu. Bên dưới có một dòng chữ xanh nói rõ: `Đang dùng: "tên mẫu"`, hoặc `Đang dùng: (cấu hình riêng của link)` khi không giống mẫu nào.

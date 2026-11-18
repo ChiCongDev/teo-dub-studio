@@ -38,6 +38,16 @@ def _digest(value):
     return hashlib.sha256(_json(value).encode('utf-8')).hexdigest()
 
 
+def require_page_id(target):
+    """Validate before saving or sending AI work; a username is not a Page ID."""
+    number = target.get('page_id') if isinstance(target, dict) else None
+    if not isinstance(number, str) or not re.fullmatch(r'[0-9]{1,32}', number):
+        raise ValueError('Page chưa có Page ID bằng số. Vào Quản lý Page → Load Page của tài khoản; '
+                         'nếu vẫn thiếu, dùng Nâng cao → Sửa Page để bổ sung Page ID đã xác minh. '
+                         'Sau đó mở lại cửa sổ quản lý Page và lưu lại thiết lập. Chưa gọi AI, chưa bật lịch mới.')
+    return target
+
+
 def _integer(value, low, high):
     if type(value) is not int or not low <= value <= high:
         raise ValueError('Số lượng/ngày hoặc số ngày không hợp lệ.')
@@ -333,6 +343,7 @@ class PageAIStore:
     def save(self, account, page, config, due_at, enabled):
         validate_config(config)
         target = self.plans._page(account, page)
+        require_page_id(target)
         # The strategy chat is optional; without one the AI plans from Page data only.
         link = self.plans.get_connection(account, page)
         if type(enabled) is not bool or type(config) is not dict:
@@ -513,6 +524,7 @@ class PageAIStore:
         return dict(row, id=ident, clock=clock)
 
     def live(self, task):
+        require_page_id(task['config'].get('target'))
         row = self.policy(task['account_id'], task['page_key'])
         if not row or row['revision'] != task['revision']:
             raise ValueError('Cấu hình đã đổi hoặc tạm dừng; không dùng phản hồi cũ để đăng.')

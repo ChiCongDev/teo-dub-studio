@@ -95,7 +95,13 @@ SNAPSHOT_SCRIPT = "() => {" + _HEADING_HELPERS + r"""
       const ids = new Set(links.filter(a => !(isButton(text(a)) && numericAddress(a))).map(candidate).filter(Boolean).map(x => x.url));
       const shown = a => (a.innerText || '').replace(/\s+/g, ' ').trim();  // Not the label of a picture (aria-label).
       const sameCard = links.every(a => !shown(a) || isButton(shown(a)) || candidate(a)?.url === found.url);
-      if (sameCard && ids.size === 1 && ids.has(found.url)) { items.set(found.url, {name, ...found}); outcome = 'nhận'; }
+      if (sameCard && ids.size === 1 && ids.has(found.url)) {
+        // These are only probe candidates. Never assign an action link's number
+        // as the Page ID without verifying its redirect back to this username.
+        const id_candidates = [...new Set(links.filter(a => isButton(text(a)) && numericAddress(a))
+          .map(candidate).filter(Boolean).map(x => x.page_id).filter(Boolean))];
+        items.set(found.url, {name, ...found, ...(id_candidates.length ? {id_candidates} : {})}); outcome = 'nhận';
+      }
       else outcome = 'thẻ bị từ chối: link Page trong thẻ: ' + [...ids].join(' | ') + '; link có chữ lạ: '
         + links.filter(a => shown(a) && !isButton(shown(a)) && candidate(a)?.url !== found.url)
                .map(a => shown(a).slice(0, 30) + ' -> ' + (candidate(a)?.url || '(không phải Page)')).slice(0, 6).join(' / ');
@@ -215,7 +221,7 @@ def resolve_page_ids(context, rows, known=None, *, cancel=None, finished=None, p
             if finished is not None and finished.is_set():
                 raise Cancelled('Đã dừng Load Page để đóng trình duyệt. Danh sách đã lưu trước đó được giữ.')
             if progress:
-                progress(f'Đang kiểm tra Page đã lưu có đổi tên/đổi link không ({count}/{len(candidates)})…')
+                progress(f'Đang xác minh Page ID qua link số ({count}/{len(candidates)})…')
             try:
                 tab.goto('https://www.facebook.com/profile.php?id='+number, wait_until='domcontentloaded', timeout=25000)
                 segment = _first_segment(tab.url)
@@ -255,6 +261,8 @@ def _read_managed_pages(context, trace, *, cancel=None, finished=None, progress=
     if finished is not None and finished.is_set():
         raise Cancelled('Đã dừng Load Page để đóng trình duyệt.')
     rows = {}
+    card_candidates = set()
+    probes = list(known or [])
     started = changed = time.monotonic()
     last_message = ''
     def notify(message):
@@ -295,6 +303,16 @@ def _read_managed_pages(context, trace, *, cancel=None, finished=None, progress=
                 tab.wait_for_timeout(500)
                 continue
             found = normalize_items(snapshot.get('items', []))
+            accepted = {row['url'] for row in found}
+            for raw in snapshot.get('items', []):
+                # Only accepted managed cards contribute hints; supplied page_id
+                # remains ignored by normalize_items. Every hint is rechecked.
+                if isinstance(raw, dict) and raw.get('url') in accepted:
+                    hints = raw.get('id_candidates', [])
+                    if isinstance(hints, list):
+                        card_candidates.update(h for h in hints if isinstance(h, str)
+                                               and re.fullmatch(r'[0-9]{5,25}', h))
+            probes = list(known or []) + [dict(page_id=h) for h in sorted(card_candidates)]
             before = len(rows)
             for row in found:
                 rows[row['page_id'] or row['url'].casefold()] = row
@@ -308,13 +326,13 @@ def _read_managed_pages(context, trace, *, cancel=None, finished=None, progress=
                 if not rows:
                     raise ValueError('Chưa đọc được thẻ Page hợp lệ trên Trang bạn quản lý. '
                                      'Có thể tài khoản chưa có Page hoặc giao diện đã đổi; danh sách cũ được giữ.')
-                return dict(items=resolve_page_ids(context, list(rows.values()), known, cancel=cancel, finished=finished, progress=progress, trace=trace),
+                return dict(items=resolve_page_ids(context, list(rows.values()), probes, cancel=cancel, finished=finished, progress=progress, trace=trace),
                     status='observed', message=f'Đã đọc {len(rows)} Page từ danh sách đang hiển thị và cuộn tới cuối phần đã tải. '
                             'Chưa xác minh tổng Page hoặc quyền API.')
             tab.evaluate(SCROLL_SCRIPT)
             tab.wait_for_timeout(500)
         if rows:
-            return dict(items=resolve_page_ids(context, list(rows.values()), known, cancel=cancel, finished=finished, progress=progress, trace=trace),
+            return dict(items=resolve_page_ids(context, list(rows.values()), probes, cancel=cancel, finished=finished, progress=progress, trace=trace),
                 status='partial', message=f'Hết thời gian chờ; đã đọc {len(rows)} Page. Có thể chưa đủ, giữ mọi Page cũ.')
         raise ValueError('Hết 3 phút nhưng chưa đọc được Page. Kiểm tra đăng nhập và màn hình Trang bạn quản lý, '
                          'sau đó chọn Load Page lại. Danh sách cũ được giữ.')
@@ -343,6 +361,10 @@ def read_managed_pages(context, **kwargs):
     """Same as before, and the result also carries `log`: what the page showed and what Tèo made of it."""
     trace = {}
     result = _read_managed_pages(context, trace, **kwargs)
+    missing = sum(not row.get('page_id') for row in result.get('items', []))
+    if missing:
+        result['message'] += (f' Có {missing} Page chưa xác minh được Page ID bằng số; '
+                              'chưa dùng được để lập kế hoạch AI. Vào Nâng cao → Sửa Page để bổ sung ID đã xác minh.')
     try:
         result['log'] = scan_log(trace, result.get('items', []))
     except Exception:  # The log never changes the result.

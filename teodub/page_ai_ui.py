@@ -633,6 +633,7 @@ class PageAIPanel(ttk.Frame):
             run=runs[0]
             message=LABELS.get(run['state'],run['state'])+' · '+run['message']
         if saved:
+            message+='\nTự động từ chiến dịch: '+('đang bật.' if saved['config'].get('auto_campaign') else 'đang tắt.')
             if saved['enabled']:
                 message+='\nGọi AI tiếp theo: '+display_time(saved['next_at'])
             else:
