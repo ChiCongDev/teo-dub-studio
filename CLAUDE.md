@@ -165,9 +165,9 @@ Other venvs: `.venv-inpaint` (STTN GPU inpaint), `.venv-web` (Flask).
 
 ## Shipright state
 Level: L3 (production, operating) — HARDEN for Page publishing
-Active: Channel autopilot phases 1–3 + caption review done and tested (804/804), NOT deployed (work/20261016-channel-autopilot, work/20261016-plan-review). Also NOT deployed: new-attempt fix (389/389). Result checks paused
-Next: user safe restart, then a first live trial (1 Page, 3 videos/scan) and review in Duyệt caption; Codex owns phase 0 (post verification). After the restart run `work/20261016-new-attempt-submitted/audit_data.py after` (expect unchanged); user checks Minh châu sneaker for duplicates (16 Publish clicks, 0 confirmed) before any new attempt; `git init` still awaiting approval (.gitignore must add .venv-inpaint 7.3 GB, tools/node-runtime). Other agent on this repo is Codex → consider AGENTS.md
-Last shipped: "Lấy thêm video mới…" on a link's tab (30/10) -> signal: demo grows past Video 100 with only new videos (no duplicates) and no "Cấu hình chiến dịch … đã thay đổi" pause; check by the owner's first real use
-Last updated: 2026-10-16
+Active: Signed Tcl/Tk repair for the other machine (Tkinter would not open on its portable Python 3.13.18). Tests 12/12, Studio smoke OK on a fixture copy; package `work/20261118-signed-tk/sua-tk-may-kia.zip`, NOT yet run on the other machine
+Next: owner sends the zip to the other machine and runs `Sua Tk.cmd` (Tèo closed); then apply Codex's source-only Page ID patch (work/20261118-page-id-fix) and re-save Page settings. Project is a git repo (v1.0.7); work/ is ignored
+Last shipped: Tk repair package (18/11) -> signal: Tèo opens on the other machine after `Sua Tk.cmd`, no rollback message; check by the owner's first run there. Older pending: "Lấy thêm video mới…" (30/10) -> demo grows past Video 100 with only new videos
+Last updated: 2026-11-18
 Skills active: none installed; bundled: /security-review, /code-review (user-run), /run
 Registry: desktop app + browser automation + AI (Codex CLI)

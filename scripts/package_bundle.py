@@ -92,6 +92,9 @@ def build_runtime(work, requirements_lines, say=print):
     wanted = hashlib.sha256('\n'.join(requirements_lines).encode()).hexdigest()
     if marker.is_file() and json.loads(marker.read_text(encoding='utf-8')).get('requirements') == wanted:
         say('Dùng lại runtime Python đã dựng.')
+        from signed_tk import install
+        say('Xác minh và thay bộ Tcl/Tk có chữ ký PSF…')
+        install(work)
         return python_dir
     shutil.rmtree(work/'runtime', ignore_errors=True)
     (work/'runtime').mkdir(parents=True)
@@ -115,7 +118,11 @@ def build_runtime(work, requirements_lines, say=print):
                            '--disable-pip-version-check', '-r', str(requirements)])
     if done.returncode:
         raise SystemExit('Cài thư viện bị lỗi; xem thông báo ở trên.')
-    marker.write_text(json.dumps(dict(requirements=wanted, built=time.strftime('%Y-%m-%d %H:%M:%S'))), encoding='utf-8')
+    from signed_tk import install
+    say('Xác minh và thay bộ Tcl/Tk có chữ ký PSF…')
+    install(work)
+    marker.write_text(json.dumps(dict(requirements=wanted, built=time.strftime('%Y-%m-%d %H:%M:%S'),
+                                    signed_tk='psf-3.13.17')), encoding='utf-8')
     return python_dir
 
 
