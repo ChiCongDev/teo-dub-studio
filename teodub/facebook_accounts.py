@@ -405,8 +405,12 @@ class FacebookAccounts:
                                     row.setdefault('previous_names', []).append(row['name'])
                                     renamed += 1
                                 row.update(found)
+                                if found['page_id'] and username_of(found['url']):
+                                    row['username'] = username_of(found['url'])  # 18/11: the number was checked against this very address.
                         elif not row.get('page_id') and found['page_id']:
                             row['page_id'] = found['page_id']
+                            if username_of(found['url']):
+                                row['username'] = username_of(found['url'])
                         elif (same_page and row['name'] != found['name']
                               and ((previous_seen and previous_seen != found['name']) or row.get('facebook_name') == found['name'])):
                             # Facebook changed the name of this same Page (the name we chose is not what Facebook had before).

@@ -252,6 +252,111 @@ def resolve_page_ids(context, rows, known=None, *, cancel=None, finished=None, p
     return rows
 
 
+# Owner 18/11/2026 (Mẹ Thiên Nhiên on this PC, A Cẩu Ngáo on the other): a Page with a username is listed with a text link and no number, and
+# no saved Page exists to probe with. Read on the real Facebook (probe of 18/11, nothing was clicked): the Page's own screen links to
+# facebook.com/<ID>/ad_center/ (the ID of the profile form, the one Tèo compares everywhere) and its pictures belong to the set "pb.<ID>.".
+# Numbers after page_id= / asset_id= (Business Suite, ads) are a second, older number for the same Page and are NOT collected: Tèo's
+# identity checks read the profile form. Every number is still only a candidate: it counts when facebook.com/profile.php?id=NUMBER lands on
+# this very username, and only when exactly one number does.
+MAX_PROFILE_WAITING = 6
+MAX_PROFILE_CHECKS = 6
+PROFILE_IDS_SCRIPT = r"""() => {
+  const hosts = ['facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com'];
+  const found = new Map();
+  const add = (id, rank) => { if (/^[0-9]{5,25}$/.test(id) && !(found.has(id) && found.get(id) <= rank)) found.set(id, rank); };
+  for (const a of document.querySelectorAll('a[href]')) {
+    let u; try { u = new URL(a.getAttribute('href'), location.href); } catch { continue; }
+    if (!hosts.includes(u.hostname) || u.username || u.password) continue;
+    const bits = u.pathname.split('/').filter(Boolean);
+    if (bits.length >= 2 && /^[0-9]+$/.test(bits[0])) add(bits[0], bits[1] === 'ad_center' ? 0 : 2);
+    const set = /^pb\.([0-9]+)\./.exec(u.searchParams.get('set') || '');
+    if (set) add(set[1], 1);
+  }
+  return [...found].sort((a, b) => a[1] - b[1]).map(x => x[0]);
+}"""
+
+
+def read_ids_from_pages(context, rows, *, cancel=None, finished=None, progress=None, trace=None):
+    """Give a number to the rows that still have only a text link, from the Page's own screen (see the note above). Read only: nothing is
+    clicked or typed. Never raises for a Page that cannot be opened (the row stays without a number); only a stop request ends it."""
+    waiting = [row for row in rows if not row.get('page_id') and _first_segment(row['url'])][:MAX_PROFILE_WAITING]
+    if not waiting:
+        return rows
+    tab = None
+    try:
+        try:
+            tab = context.new_page()
+        except Exception:  # No spare tab: keep the scan as it is.
+            return rows
+
+        def note(text):
+            if trace is not None:
+                trace.setdefault('profile_reads', []).append(text)
+
+        for row in waiting:
+            username = _first_segment(row['url'])
+            check_cancel(cancel)
+            if finished is not None and finished.is_set():
+                raise Cancelled('Đã dừng Load Page để đóng trình duyệt. Danh sách đã lưu trước đó được giữ.')
+            if progress:
+                progress('Đang đọc Page ID của '+row['name']+' từ màn hình Page…')
+            candidates = []
+            try:
+                tab.goto(row['url'], wait_until='domcontentloaded', timeout=30000)
+                for _ in range(3):  # The links appear a little after the page loads.
+                    tab.wait_for_timeout(3000)
+                    if _first_segment(tab.url) != username:
+                        break
+                    found = tab.evaluate(PROFILE_IDS_SCRIPT)
+                    candidates = [n for n in (found if isinstance(found, list) else [])
+                                  if isinstance(n, str) and re.fullmatch(r'[0-9]{5,25}', n)]
+                    if candidates:
+                        break
+                note(f'{username}: mở {str(tab.url)[:100]} · số thấy trong link: {candidates[:MAX_PROFILE_CHECKS]}')
+            except Cancelled:
+                raise
+            except Exception as exc:
+                note(f'{username}: không đọc được màn hình Page ({str(exc)[:100]})')
+                continue
+            matched = []
+            for number in candidates[:MAX_PROFILE_CHECKS]:
+                check_cancel(cancel)
+                try:
+                    tab.goto('https://www.facebook.com/profile.php?id='+number, wait_until='domcontentloaded', timeout=25000)
+                    segment, waited = _first_segment(tab.url), 0
+                    while not segment and waited < REDIRECT_WAIT_MS:
+                        tab.wait_for_timeout(500)
+                        waited += 500
+                        segment = _first_segment(tab.url)
+                except Cancelled:
+                    raise
+                except Exception as exc:
+                    note(f'{username}: link số {number} không mở được ({str(exc)[:80]})')
+                    continue
+                note(f'{username}: link số {number}: Facebook mở tới {str(tab.url)[:100]}')
+                if segment == username:
+                    matched.append(number)
+            if len(matched) == 1:
+                row['page_id'] = matched[0]
+                note(f'{username}: nhận Page ID {matched[0]}')
+            elif matched:
+                note(f'{username}: nhiều số cùng về Page này {matched}; không chọn, giữ trống')
+            else:
+                note(f'{username}: không số nào xác minh được; giữ trống')
+    finally:
+        if tab is not None:
+            try:
+                tab.close()
+            except Exception:
+                pass
+    return rows
+
+
+def _fill_ids(context, rows, known, *, cancel=None, finished=None, progress=None, trace=None):
+    rows = resolve_page_ids(context, rows, known, cancel=cancel, finished=finished, progress=progress, trace=trace)
+    return read_ids_from_pages(context, rows, cancel=cancel, finished=finished, progress=progress, trace=trace)
+
+
 def _read_managed_pages(context, trace, *, cancel=None, finished=None, progress=None, timeout=180, limit=1000, known=None):
     """Only read the known Pages-you-manage view; leave auth/verification to user."""
     from playwright._impl._errors import Error, TargetClosedError
@@ -317,7 +422,7 @@ def _read_managed_pages(context, trace, *, cancel=None, finished=None, progress=
             for row in found:
                 rows[row['page_id'] or row['url'].casefold()] = row
                 if len(rows) >= limit:
-                    return dict(items=resolve_page_ids(context, list(rows.values()), known, cancel=cancel, finished=finished, progress=progress, trace=trace),
+                    return dict(items=_fill_ids(context, list(rows.values()), known, cancel=cancel, finished=finished, progress=progress, trace=trace),
                         status='partial', message=f'Đã đọc {len(rows)} Page; tới giới hạn của lượt này. Giữ mọi Page cũ.')
             if len(rows) != before or snapshot.get('busy') or not snapshot.get('bottom'):
                 changed = time.monotonic()
@@ -326,13 +431,13 @@ def _read_managed_pages(context, trace, *, cancel=None, finished=None, progress=
                 if not rows:
                     raise ValueError('Chưa đọc được thẻ Page hợp lệ trên Trang bạn quản lý. '
                                      'Có thể tài khoản chưa có Page hoặc giao diện đã đổi; danh sách cũ được giữ.')
-                return dict(items=resolve_page_ids(context, list(rows.values()), probes, cancel=cancel, finished=finished, progress=progress, trace=trace),
+                return dict(items=_fill_ids(context, list(rows.values()), probes, cancel=cancel, finished=finished, progress=progress, trace=trace),
                     status='observed', message=f'Đã đọc {len(rows)} Page từ danh sách đang hiển thị và cuộn tới cuối phần đã tải. '
                             'Chưa xác minh tổng Page hoặc quyền API.')
             tab.evaluate(SCROLL_SCRIPT)
             tab.wait_for_timeout(500)
         if rows:
-            return dict(items=resolve_page_ids(context, list(rows.values()), probes, cancel=cancel, finished=finished, progress=progress, trace=trace),
+            return dict(items=_fill_ids(context, list(rows.values()), probes, cancel=cancel, finished=finished, progress=progress, trace=trace),
                 status='partial', message=f'Hết thời gian chờ; đã đọc {len(rows)} Page. Có thể chưa đủ, giữ mọi Page cũ.')
         raise ValueError('Hết 3 phút nhưng chưa đọc được Page. Kiểm tra đăng nhập và màn hình Trang bạn quản lý, '
                          'sau đó chọn Load Page lại. Danh sách cũ được giữ.')
@@ -354,6 +459,7 @@ def scan_log(trace, items):
     lines.append(f'Page đã lưu có ID: {trace.get("known", 0)} · hàng chỉ có link chữ: {trace.get("waiting", [])} · '
                  f'Page đã lưu không thấy trong danh sách (sẽ mở link số): {trace.get("candidates", [])}')
     lines += ['  ' + line for line in trace.get('probes', [])]
+    lines += ['  ' + line for line in trace.get('profile_reads', [])]
     return lines
 
 
