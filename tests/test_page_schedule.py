@@ -140,6 +140,7 @@ class ScheduleTests(unittest.TestCase):
 
     def test_one_prepare_one_publish_only_after_approved_snapshot_then_verified_result(self):
         row = self.ready_for_validation(self.schedule())
+        self.owner.after_page_published = Mock()  # 18/11: the Views numbers are read once the post is confirmed.
         self.assertEqual([x[-1] for x in self.calls],['prepare'])
         self.reply(row,'done','review')
         self.tick()
@@ -151,6 +152,8 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(self.store.get(row['id'])['state'],'published')
         self.assertEqual(len(self.calls),2)
         self.assertNotIn(row['id'],self.controller.active)
+        self.owner.after_page_published.assert_called_once_with(self.account,self.page)
+        self.assertIs(self.owner.sessions[self.account].auto_close,True)  # Tèo opened this Chrome for the schedule.
 
     def test_changed_body_blocks_publish_and_error_no_auto_retry(self):
         row = self.ready_for_validation(self.schedule())

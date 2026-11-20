@@ -51,7 +51,7 @@ class FacebookUITests(unittest.TestCase):
 
     def test_outer_page_screen_hides_advanced_controls_without_changing_services(self):
         self.assertFalse(self.tab.advanced_visible)
-        self.assertEqual(tuple(self.tab.tree['displaycolumns']),('name',))
+        self.assertEqual(tuple(self.tab.tree['displaycolumns']),('name','views','v3','v60','watch','span','at'))
         self.assertEqual(self.tab.page_link_form.winfo_manager(),'')
         self.assertEqual(self.tab.account_picker.winfo_manager(),'')
         for widget in (self.tab.business_button,self.tab.developers_button,self.tab.close_button,
@@ -77,7 +77,7 @@ class FacebookUITests(unittest.TestCase):
         self.tab.sessions[account]=session
         before=self.tab.store.load()
         self.tab.advanced_button.invoke()
-        self.assertEqual(tuple(self.tab.tree['displaycolumns']),('name','page_id','url','state'))
+        self.assertEqual(tuple(self.tab.tree['displaycolumns']),('name','views','v3','v60','watch','span','at','page_id','url','state'))
         self.assertEqual(self.tab.bridge_button.winfo_manager(),'pack')
         self.assertEqual(self.tab.account_picker.winfo_manager(),'grid')
         self.tab.page_link_button.invoke()

@@ -1080,8 +1080,14 @@ class PageScheduleController:
             phase=operation,request_id=request_id,attempted_at=row['attempted_at'] or now(),
             message={'prepare':'Đang chuẩn bị bài trong Chrome.', 'publish':'Đang gửi bài theo lịch đã duyệt.',
                      'verify':'Đã gửi — đang nối lại xác minh kết quả; không tải hoặc đăng lại.'}[operation])
+        sessions = getattr(self.owner,'sessions',None)
+        before = sessions.get(row['account_id']) if isinstance(sessions,dict) else None
         request = self.owner.submit_page_browser(row['account_id'],row['page_key'],row['post_id'],operation,
                                                request_id=request_id)
+        if request and isinstance(sessions,dict) and not (before and getattr(before,'pending',False)):
+            opened = sessions.get(row['account_id'])
+            if opened is not None:
+                opened.auto_close = True  # Tèo opened this Chrome for the schedule: it closes it when the work is done.
         if not request:
             if operation=='prepare':
                 self.store.update(row['id'],attempted_at='',request_id='')
@@ -1265,6 +1271,9 @@ class PageScheduleController:
                             and not any(post.get(key) != value for key, value in row['snapshot'].items())):
                         self.store.update(ident, state='published', finished_at=row['finished_at'] or now(), message=post['message'])
                         self.release(ident)
+                        hook = getattr(self.owner, 'after_page_published', None)
+                        if hook:
+                            hook(row['account_id'], row['page_key'])
                         continue
                 if row['request_id']:
                     session = self.owner.sessions.get(row['account_id'])
@@ -1319,6 +1328,9 @@ class PageScheduleController:
                             else:
                                 self.store.update(ident,state='published',finished_at=now(),message=post['message'])
                                 self.release(ident)
+                                hook = getattr(self.owner, 'after_page_published', None)
+                                if hook:
+                                    hook(row['account_id'], row['page_key'])
                         else:
                             self.fail(ident,result.get('message') or 'Thao tác đã dừng hoặc kết quả chưa rõ. Kiểm tra trên Page; không tự gửi lại.')
                     continue

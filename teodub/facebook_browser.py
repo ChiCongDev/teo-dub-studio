@@ -145,6 +145,31 @@ def open_facebook_browser(profile_dir, *, url=FACEBOOK_HOME, cancel=None, finish
                     # relaunch, account switch or silent swallowing of DOM errors.
                     event('post_error', str(exc) or type(exc).__name__)
 
+            def page_insights(command):
+                """Owner 18/11/2026: read the Page's Views numbers (read only) and save them; the table refreshes from the saved file."""
+                fields = dict(account_id=command.get('account_id', ''), page_keys=command.get('page_keys', []))
+                try:
+                    data_dir = command.get('data_dir')
+                    ranges = command.get('ranges')
+                    keys = fields['page_keys']
+                    if (not isinstance(data_dir, str) or not data_dir or not isinstance(ranges, list) or not ranges
+                            or not isinstance(keys, list) or not keys
+                            or not all(isinstance(v, str) and re.fullmatch(r'[0-9a-f]{32}', v) for v in [fields['account_id'], *keys])):
+                        raise ValueError('Yêu cầu lấy số liệu thiếu tài khoản/Page/khoảng thời gian hợp lệ.')
+                    if FacebookAccounts(data_dir).profile_directory(fields['account_id']).resolve() != directory:
+                        raise ValueError('Yêu cầu thuộc hồ sơ/tài khoản khác; chưa lấy số liệu.')
+                    from teodub.page_insights import collect
+                    result = collect(context, data_dir, fields['account_id'], keys, [str(r) for r in ranges],
+                                     switch=command.get('switch') is True, cancel=cancel, finished=finished,
+                                     progress=lambda message: notify('progress', message))
+                    problems = result['problems']
+                    message = ('Đã lấy %d số liệu.' % len(result['saved'])) + (' Chưa lấy được: '+' | '.join(problems)[:600] if problems else '')
+                    notify('insights_done', dict(fields, message=message, ok=bool(result['saved'])))
+                except Cancelled as exc:
+                    notify('insights_done', dict(fields, message=str(exc) or 'Đã dừng lấy số liệu.', ok=False))
+                except Exception as exc:  # A failed read never touches posting; the owner just sees why.
+                    notify('insights_done', dict(fields, message='Chưa lấy được số liệu: '+(str(exc) or type(exc).__name__), ok=False))
+
             def navigate(target, *, initial=False, navigation_id=None, request_cancel=None, expires_at=None):
                 target = facebook_browser_url(target)
                 def navigation(state, message):
@@ -270,6 +295,8 @@ def open_facebook_browser(profile_dir, *, url=FACEBOOK_HOME, cancel=None, finish
                                     return 'restart_saved'  # finally flushes this account profile.
                             elif isinstance(target, dict) and target.get('action') == 'page_post':
                                 page_post(target)
+                            elif isinstance(target, dict) and target.get('action') == 'read_insights':
+                                page_insights(target)
                             elif isinstance(target, dict) and target.get('action') == 'load_pages':
                                 from teodub.facebook_page_discovery import read_managed_pages
                                 load_id = target.get('request_id')

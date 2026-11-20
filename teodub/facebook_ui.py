@@ -1,5 +1,6 @@
 """Facebook browser sessions, saved Pages and explicit Page management windows."""
 from dataclasses import dataclass, field
+import datetime
 from copy import deepcopy
 from collections import Counter
 import os
@@ -13,6 +14,8 @@ from tkinter import messagebox, simpledialog, ttk
 
 from teodub.facebook_accounts import BUSINESS_SUITE, FACEBOOK_HOME, FACEBOOK_PAGES, META_APPS, FacebookAccounts, facebook_browser_url
 from teodub.page_publish_settings import result_checks_enabled, set_result_checks_enabled
+from teodub.page_insights import (AFTER_POST, AFTER_POST_MIN_MINUTES, STANDARD as INSIGHT_STANDARD, CHOICES as INSIGHT_CHOICES, PageInsights, custom_key, parse_date_text,
+                                  is_complete, parse_range, show_metric, span_of, yesterday)
 
 # 26/10/2026: the 20-minute watchdog ended a stuck prepare, but its Chrome call never returned, so the next
 # post waited unseen behind it. A started request that timed out and has not reported back for this long
@@ -40,6 +43,13 @@ def create_page_bridge(owner):
     return PageCommandBridge(owner, mailbox_root=bridge_mailbox_root())
 
 
+# Owner 18/11/2026: Chrome that Tèo opened by itself (a scheduled post, or reading numbers) closes when its work is done, unless another
+# post of that account is due this soon. Chrome the owner opened is never closed by Tèo.
+AUTO_CLOSE_KEEP_MINUTES = 10
+INSIGHT_ALL_COLUMNS = ('name', 'views', 'v3', 'v60', 'watch', 'span', 'at', 'page_id', 'url', 'state')
+INSIGHT_SIMPLE_COLUMNS = ('name', 'views', 'v3', 'v60', 'watch', 'span', 'at')
+
+
 @dataclass
 class BrowserSession:
     account_id: str
@@ -61,6 +71,8 @@ class BrowserSession:
     worker: object = None
     restart_error: str = ''
     stalled: dict = field(default_factory=dict)  # A started request that timed out and has not reported back.
+    insights_running: int = 0  # Views-number reads queued or running in this account's Chrome.
+    auto_close: bool = False  # Tèo opened this Chrome for its own work; it closes it when that work is done.
 
 
 class FacebookTab(ttk.Frame):
@@ -97,6 +109,10 @@ class FacebookTab(ttk.Frame):
         self.bridge_notice = tk.StringVar(self)
         self.result_checks_enabled = tk.BooleanVar(self, result_checks_enabled(studio.data_dir))
         self.result_checks_notice = tk.StringVar(self)
+        self.insight_key = '28d'
+        self.insight_custom = None  # (key, label) of the custom range the owner picked last.
+        self.insight_keys = []
+        self.insight_note = tk.StringVar(self)
         self.build()
         self.update_result_checks_notice()
         self.reload()
@@ -231,9 +247,11 @@ class FacebookTab(ttk.Frame):
             row=3, column=0, columnspan=3, sticky='w', pady=(6, 0))
         self.page_hint_label = ttk.Label(table, textvariable=self.page_hint, wraplength=570)
         self.page_hint_label.grid(row=1, column=0, sticky='w', pady=(0, 8))
-        columns = ('name', 'page_id', 'url', 'state')
+        columns = INSIGHT_ALL_COLUMNS
         self.tree = ttk.Treeview(table, columns=columns, show='headings', selectmode='browse', height=10)
-        for key, text, width in [('name', 'Tên Page', 150), ('page_id', 'Page ID', 105),
+        for key, text, width in [('name', 'Tên Page', 200), ('views', 'Lượt xem', 105), ('v3', 'Xem ≥3 giây', 105),
+                                 ('v60', 'Xem ≥1 phút', 105), ('watch', 'Thời gian xem', 140), ('span', 'Khoảng ngày', 150),
+                                 ('at', 'Lấy lúc', 90), ('page_id', 'Page ID', 105),
                                  ('url', 'Link Page', 220), ('state', 'Trình duyệt / API', 220)]:
             self.tree.heading(key, text=text)
             self.tree.column(key, width=width, minwidth=90)
@@ -243,6 +261,18 @@ class FacebookTab(ttk.Frame):
         horizontal = ttk.Scrollbar(table, orient='horizontal', command=self.tree.xview)
         horizontal.grid(row=3, column=0, sticky='ew')
         self.tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        bar = ttk.Frame(table)
+        bar.grid(row=4, column=0, columnspan=2, sticky='ew', pady=(8, 0))
+        ttk.Label(bar, text='Số liệu Lượt xem theo khoảng:').pack(side='left')
+        self.insight_picker = ttk.Combobox(bar, state='readonly', width=36)
+        self.insight_picker.pack(side='left', padx=6)
+        self.insight_picker.bind('<<ComboboxSelected>>', self.choose_range)
+        self.insight_one_button = ttk.Button(bar, text='Lấy số liệu Page đã chọn', command=self.read_insights_selected)
+        self.insight_one_button.pack(side='left', padx=(0, 6))
+        self.insight_all_button = ttk.Button(bar, text='Lấy số liệu cả tài khoản', command=self.read_insights_account)
+        self.insight_all_button.pack(side='left')
+        ttk.Label(table, textvariable=self.insight_note, wraplength=900).grid(row=5, column=0, columnspan=2, sticky='w', pady=(4, 0))
+        self.fill_range_picker()
         self.tree.bind('<<TreeviewSelect>>', lambda _: self.refresh_buttons())
         self.tree.bind('<Double-1>', lambda _: self.open_page())
         actions = ttk.Frame(self)
@@ -301,9 +331,9 @@ class FacebookTab(ttk.Frame):
                 widget.pack_forget()
             self.detail_label.grid_remove()
             self.guidance_label.grid_remove()
-        self.tree.configure(displaycolumns=('name','page_id','url','state') if visible else ('name',))
+        self.tree.configure(displaycolumns=INSIGHT_ALL_COLUMNS if visible else INSIGHT_SIMPLE_COLUMNS)
         if visible:
-            for key, width in [('name',150),('page_id',105),('url',220),('state',220)]:
+            for key, width in [('page_id',105),('url',220),('state',220)]:
                 self.tree.column(key,width=width)
         self.lists.pane(self.account_tree.master, weight=1 if visible else 0)
         self.lists.pane(self.tree.master, weight=2 if visible else 1)
@@ -624,6 +654,7 @@ class FacebookTab(ttk.Frame):
         select = select or (selection[0] if selection else '')
         self.tree.delete(*self.tree.get_children())
         rows = [row for row in self.data['pages'] if row['account_id'] == self.account_id]
+        insights, range_key = PageInsights(self.studio.data_dir).load(), self.insight_range_key()
         for row in rows:
             state = self.browser_state(row['account_id'])+' · API chưa kết nối'
             from teodub.page_activity import PageActivity
@@ -635,8 +666,8 @@ class FacebookTab(ttk.Frame):
                              if connection['status'] == 'reconnect' or connection['page_id'] != row.get('page_id')
                              else 'Đã kết nối đọc API')
             shown = row['name']+(f' (tên mới trên Facebook: {row["facebook_name"]})' if row.get('facebook_name') else '')
-            self.tree.insert('', 'end', iid=row['id'], values=(shown, row.get('page_id') or '—',
-                             row['url'], state))
+            self.tree.insert('', 'end', iid=row['id'], values=(shown, *self.insight_cells(row, insights, range_key),
+                             row.get('page_id') or '—', row['url'], state))
         if select and self.tree.exists(select):
             self.tree.selection_set(select)
         if not rows:
@@ -648,6 +679,235 @@ class FacebookTab(ttk.Frame):
             self.page_hint_label.grid_remove()
         self.detail.set(f'Đã lưu {len(rows)} Page cho tài khoản này. Các Page dùng chung phiên trình duyệt '
                         'của tài khoản; thêm/sửa Page không thay đổi phiên đăng nhập.')
+
+    # Owner 18/11/2026: the Views numbers of each Page (Professional Dashboard) beside its name, read after every post.
+    def insight_range_key(self):
+        try:
+            return parse_range(self.insight_key)['key']
+        except ValueError:
+            return ''
+
+    def insight_entry(self, account_id, page_key, key, items):
+        """The saved numbers shown for the chosen range. 'Hôm qua' shows only numbers read after that day ended (see is_complete)."""
+        entry = PageInsights(self.studio.data_dir).get(account_id, page_key, key, items) if key else None
+        if entry and self.insight_key == 'yesterday' and not is_complete(key, entry):
+            return None
+        return entry
+
+    def insight_cells(self, row, insights, range_key):
+        entry = self.insight_entry(row['account_id'], row['id'], range_key, insights)
+        if not entry:
+            return ('—', '—', '—', '—', '', 'chưa có')
+        metrics = entry['metrics']
+        try:
+            at = datetime.datetime.fromisoformat(entry['at']).strftime('%d/%m %H:%M')
+        except (KeyError, ValueError, TypeError):
+            at = ''
+        return (*(show_metric(metrics.get(key)) for key in ('views', 'v3', 'v60', 'watch')), span_of(str(entry.get('label', ''))), at)
+
+    def fill_range_picker(self):
+        labels = [label for _, label in INSIGHT_CHOICES]
+        keys = [key for key, _ in INSIGHT_CHOICES]
+        if self.insight_custom:
+            keys.append(self.insight_custom[0])
+            labels.append(self.insight_custom[1])
+        labels.append('Tùy chọn từ ngày … đến ngày …')
+        self.insight_keys = keys
+        self.insight_picker.configure(values=labels)
+        if self.insight_key in keys:
+            self.insight_picker.current(keys.index(self.insight_key))
+        self.insight_note.set('Số liệu tự lấy sau mỗi lần đăng bài thành công (7 ngày, 28 ngày, tháng này). Facebook chỉ tính đến hôm qua. '
+                              '▲ tăng, ▼ giảm so với khoảng liền trước dài bằng nhau. Dấu — là chưa lấy số liệu khoảng này: bấm “Lấy số liệu…”.')
+
+    def choose_range(self, _=None):
+        index = self.insight_picker.current()
+        if 0 <= index < len(self.insight_keys):
+            self.insight_key = self.insight_keys[index]
+        elif not self.custom_range_dialog():
+            self.fill_range_picker()
+            return
+        self.display_pages()
+        self.read_chosen_range()
+
+    def custom_range_dialog(self):
+        window = tk.Toplevel(self)
+        window.title('Chọn khoảng ngày')
+        window.transient(self.winfo_toplevel())
+        window.resizable(False, False)
+        form = ttk.Frame(window, padding=16)
+        form.pack(fill='both', expand=True)
+        last = yesterday()
+        start_text = tk.StringVar(window, (last-datetime.timedelta(days=6)).strftime('%d/%m/%Y'))
+        end_text = tk.StringVar(window, last.strftime('%d/%m/%Y'))
+        problem = tk.StringVar(window)
+        ttk.Label(form, text='Từ ngày (ngày/tháng/năm)').grid(row=0, column=0, sticky='w', pady=(0, 3))
+        ttk.Entry(form, textvariable=start_text, width=18).grid(row=1, column=0, sticky='w', pady=(0, 8))
+        ttk.Label(form, text='Đến ngày (ngày/tháng/năm)').grid(row=2, column=0, sticky='w', pady=(0, 3))
+        ttk.Entry(form, textvariable=end_text, width=18).grid(row=3, column=0, sticky='w')
+        ttk.Label(form, text='Facebook chỉ tính đến hôm qua.', wraplength=300).grid(row=4, column=0, sticky='w', pady=(8, 0))
+        ttk.Label(form, textvariable=problem, foreground='#a00000', wraplength=300).grid(row=5, column=0, sticky='w')
+        chosen = []
+
+        def accept():
+            try:
+                start, end = parse_date_text(start_text.get()), parse_date_text(end_text.get())
+                spec = parse_range(custom_key(start, end))
+            except ValueError as exc:
+                problem.set(str(exc))
+                return
+            chosen.append((spec['key'], spec['name']))
+            window.destroy()
+        buttons = ttk.Frame(form)
+        buttons.grid(row=6, column=0, sticky='e', pady=(12, 0))
+        ttk.Button(buttons, text='Chọn', command=accept).pack(side='left', padx=(0, 6))
+        ttk.Button(buttons, text='Hủy', command=window.destroy).pack(side='left')
+        window.grab_set()
+        self.wait_window(window)
+        if not chosen:
+            return False
+        self.insight_custom = chosen[0]
+        self.insight_key = chosen[0][0]
+        self.fill_range_picker()
+        return True
+
+    def read_chosen_range(self):
+        """Owner 18/11/2026: choosing a range only SHOWS the saved numbers, at once; Chrome is not used. The buttons read every standard
+        range in one go. Only a custom range nobody read yet is read, once, for the selected Page."""
+        store, key = PageInsights(self.studio.data_dir), self.insight_range_key()
+        items = store.load()
+        rows = [row for row in self.data['pages'] if row['account_id'] == self.account_id]
+        if not self.insight_key.startswith('custom:'):
+            if key and any(self.insight_entry(self.account_id, row['id'], key, items) for row in rows):
+                self.insight_note.set(('Số hôm nay chưa đủ ngày; Facebook cập nhật chậm vài chục phút đến vài giờ. '
+                                       if self.insight_key == 'today' else '')
+                                      + 'Đang xem số liệu đã lưu (cột “Lấy lúc” là lúc lấy). Bấm “Lấy số liệu…” để lấy số mới nhất của mọi khoảng.')
+            else:
+                self.insight_note.set('Chưa có số liệu khoảng này: bấm “Lấy số liệu Page đã chọn” hoặc “Lấy số liệu cả tài khoản” '
+                                      '(lấy một lần cho mọi khoảng, các lần sau chọn khoảng là hiện ngay).')
+            return False
+        row = self.selected_page()
+        if row is None:
+            self.insight_note.set('Chọn một Page trong bảng để lấy số liệu khoảng tùy chọn này.')
+            return False
+        if key and store.get(self.account_id, row['id'], key, items):
+            self.insight_note.set('Đang xem số liệu đã lưu của khoảng tùy chọn này. Bấm “Lấy số liệu…” để lấy số mới nhất.')
+            return False
+        if not str(row.get('page_id', '')).isdigit():
+            self.insight_note.set('Page này chưa có Page ID: Load Page hoặc Sửa Page để có ID rồi mới lấy số liệu.')
+            return False
+        return self.request_insights(self.account_id, [row['id']], [self.insight_key])
+
+    def button_ranges(self):
+        """Every standard range Facebook can answer today, plus the custom range on screen."""
+        keys = []
+        for key in INSIGHT_STANDARD:
+            try:
+                parse_range(key)
+            except ValueError:
+                continue
+            keys.append(key)
+        if self.insight_key.startswith('custom:'):
+            keys.append(self.insight_key)
+        return keys
+
+    def read_insights_selected(self):
+        row = self.selected_page()
+        if row is None:
+            return
+        if not str(row.get('page_id', '')).isdigit():
+            self.insight_note.set('Page này chưa có Page ID: Load Page hoặc Sửa Page để có ID rồi mới lấy số liệu.')
+            return
+        self.request_insights(self.account_id, [row['id']], self.button_ranges())
+
+    def read_insights_account(self):
+        pages = [row['id'] for row in self.data['pages'] if row['account_id'] == self.account_id and str(row.get('page_id', '')).isdigit()]
+        if not pages:
+            self.insight_note.set('Tài khoản này chưa có Page nào có Page ID.')
+            return
+        self.request_insights(self.account_id, pages, self.button_ranges())
+
+    def request_insights(self, account_id, page_keys, range_keys, *, auto=False):
+        """Queue a read-only read of the Views numbers in this account's Chrome. auto=True (after a post): only when Chrome is already
+        open and idle, and it must already be on that Page. Returns True when it was queued."""
+        if self.destroyed or self.studio.closing or self.studio.closed or getattr(self.studio, 'restart_draining', False):
+            return False
+        session = self.sessions.get(account_id)
+        busy = bool(session and session.pending and (session.loading_pages or session.finished.is_set() or session.cancel.is_set()
+                                                      or session.insights_running))
+        if auto:
+            if not (session and session.pending and session.opened and not busy):
+                return False
+        elif busy:
+            self.insight_note.set('Chrome của tài khoản đang bận (đang đăng bài, Load Page hoặc lấy số liệu); '
+                                  'bảng đang hiện số đã lưu. Bấm “Lấy số liệu…” sau khi xong.')
+            return False
+        command = dict(action='read_insights', data_dir=str(self.studio.data_dir), account_id=account_id,
+                       page_keys=list(page_keys), ranges=list(range_keys), switch=not auto)
+        if session and session.pending:
+            session.commands.put(command)
+        else:
+            if not self.open_browser(FACEBOOK_HOME, account_id=account_id):
+                return False
+            session = self.sessions[account_id]
+            session.auto_close = True
+            session.commands.put(command)
+        session.insights_running += 1
+        if account_id == self.account_id:
+            self.insight_note.set('Đang lấy số liệu Lượt xem từ Facebook (%d khoảng × %d Page, khoảng 10 giây mỗi khoảng)…'
+                                  % (len(range_keys), len(page_keys)))
+        self.refresh_buttons()
+        return True
+
+    def schedule_busy_within(self, account_id, minutes=AUTO_CLOSE_KEEP_MINUTES):
+        """True when a schedule of this account is being worked on or falls due within `minutes`. Unknown counts as busy."""
+        try:
+            rows = self.get_page_scheduler().store.list(account_id)
+        except Exception:
+            return True
+        horizon = time.time()+minutes*60
+        for row in rows:
+            if row['state'] in {'preparing', 'submitting', 'verifying'}:
+                return True
+            if row['state'] == 'armed' and row['due_at'] <= horizon:
+                return True
+        return False
+
+    def close_if_idle(self, account_id):
+        """Close the Chrome Tèo opened for its own work once nothing is left to do in it. Returns True when it was told to close."""
+        session = self.sessions.get(account_id)
+        if (not session or not session.auto_close or not session.pending or not session.opened
+                or session.finished.is_set() or session.cancel.is_set()):
+            return False
+        if session.loading_pages or session.insights_running or not session.commands.empty():
+            return False
+        if any(item['state'] in {'queued', 'running', 'verifying'} for item in session.post_actions.values()):
+            return False
+        if any(item['state'] not in {'opened', 'error'} for item in session.navigation.values()):
+            return False
+        if self.schedule_busy_within(account_id):
+            return False
+        return self.finish_browser(account_id)
+
+    def after_page_published(self, account_id, page_key):
+        """A scheduled post was confirmed: read the usual ranges for this Page unless they were read in the last half hour."""
+        try:
+            store = PageInsights(self.studio.data_dir)
+            items = store.load()
+            wanted = []
+            for key in AFTER_POST:
+                try:
+                    parse_range(key)
+                except ValueError:
+                    continue
+                dated = parse_range(key)['key']  # 'Hôm nay' is stored by its date.
+                age = store.age_minutes(account_id, page_key, dated, items)
+                if age is None or age >= AFTER_POST_MIN_MINUTES or (key == 'yesterday' and not is_complete(dated, store.get(account_id, page_key, dated, items))):
+                    wanted.append(key)
+            queued = bool(wanted) and self.request_insights(account_id, [page_key], wanted, auto=True)
+            if not queued:
+                self.close_if_idle(account_id)  # Nothing more to read: the post is done.
+        except Exception:  # Numbers are a courtesy; they never get in the way of posting.
+            pass
 
     def selected_page(self):
         selection = self.tree.selection()
@@ -808,6 +1068,7 @@ class FacebookTab(ttk.Frame):
                 self.status.set('Chrome đang khởi động; đợi trình duyệt sẵn sàng rồi mở trang.' if not session.opened else
                                 'Đang Load Page; đợi đọc xong rồi mở trang để giữ lượt đang đọc.')
                 return False
+            session.auto_close = False  # The owner (or the web portal) is using this Chrome now: it stays open.
             command = dict(action='open_url',url=url,request_id=request_id,
                 cancel_request=navigation_cancel, expires_at=navigation_expires_at) if request_id else url
             if page_navigation:
@@ -1001,6 +1262,11 @@ class FacebookTab(ttk.Frame):
             button.configure(state='normal' if idle and selected else 'disabled')
         self.open_page_button.configure(state='normal' if usable and selected and not self.studio.closing else 'disabled')
         self.manage_page_button.configure(state='normal' if ready and selected and not self.studio.closed else 'disabled')
+        reading = ready and not self.studio.closed and bool(self.account_id) and not (session and session.pending and (
+            session.insights_running or session.loading_pages or session.finished.is_set()))
+        self.insight_one_button.configure(state='normal' if reading and selected else 'disabled')
+        self.insight_all_button.configure(state='normal' if reading and any(
+            row['account_id'] == self.account_id for row in self.data['pages']) else 'disabled')
         active = []
         failed = []
         for value in self.sessions.values():
@@ -1017,7 +1283,7 @@ class FacebookTab(ttk.Frame):
         self.sync_account_list()
         for key in self.tree.get_children():
             values = list(self.tree.item(key, 'values'))
-            if len(values) == 4:
+            if len(values) == len(INSIGHT_ALL_COLUMNS):
                 api = values[-1].partition(' · ')[2] or 'API chưa kết nối'
                 current = self.browser_state(self.account_id)+' · '+api
                 if values[-1] != current:
@@ -1037,6 +1303,7 @@ class FacebookTab(ttk.Frame):
                     session.restart_error = str(value)
                 elif kind in ('done', 'error'):
                     session.stalled = {}
+                    session.insights_running = 0
                     if session.loading_pages:
                         session.page_load_status = 'Load Page bị gián đoạn trước khi lưu danh sách. Chọn Load Page lại; Page cũ được giữ.'
                     session.loading_pages = False
@@ -1095,6 +1362,15 @@ class FacebookTab(ttk.Frame):
                         request.update(state=next_state,
                             message=str(value.get('message') or 'Đã nhận phản hồi từ Chrome.'),result=result)
                     session.status = request['message']
+                elif kind == 'insights_done':
+                    session.insights_running = max(0, session.insights_running-1)
+                    if isinstance(value, dict):
+                        session.status = str(value.get('message') or '')[:600]
+                        if account_id == self.account_id:
+                            self.insight_note.set(session.status)
+                            self.display_pages()
+                            self.refresh_buttons()
+                    self.close_if_idle(account_id)
                 elif kind == 'navigation':
                     if isinstance(value, dict) and value.get('request_id') in session.navigation:
                         request = session.navigation[value['request_id']]
