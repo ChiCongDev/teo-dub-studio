@@ -752,5 +752,42 @@ class TodayTests(InsightUITests):
         self.assertIn('today', self.session.commands.get_nowait()['ranges'])
 
 
+class SubmittedTests(InsightUITests):
+    """20/11/2026: percents with a thousands comma; a post that ends 'Đã gửi' also reads numbers and closes Chrome."""
+
+    def run(self, result=None):  # Only the tests below, not the inherited ones.
+        if self._testMethodName.startswith('test_sub_'):
+            return super().run(result)
+        return unittest.TestResult() if result is None else result
+
+    def test_sub_vietnamese_percent_with_a_thousands_comma(self):
+        for text, expected in (('29,469', 29469), ('1.238', 1238), ('1,5', 1.5), ('12', 12), ('103,906', 103906), ('1.200', 1200)):
+            self.assertEqual(pi._percent(text), expected, text)
+        self.assertEqual(pi._change_of(['Tăng 29,469%']), 29469)
+        self.assertEqual(pi._change_of(['Giảm 1,5%']), -1.5)
+
+    def test_sub_submitted_post_waits_then_reads_numbers(self):
+        account, row = self.page()
+        self.session.auto_close = True
+        with patch.object(self.tab, 'after') as later:
+            self.tab.after_page_submitted(account, row['id'])
+        self.assertEqual(later.call_args[0][0], 180000)
+        self.assertTrue(self.session.commands.empty())  # Nothing at once.
+        self.assertFalse(self.tab.close_if_idle(account))  # Chrome stays open while waiting.
+        later.call_args[0][1]()
+        self.assertEqual(self.session.commands.get_nowait()['action'], 'read_insights')
+
+    def test_sub_submitted_post_with_nothing_to_read_closes_chrome(self):
+        account, row = self.page()
+        self.session.auto_close = True
+        at = datetime.datetime.now().isoformat(timespec='seconds')
+        for key in pi.AFTER_POST:
+            pi.PageInsights(self.studio.data_dir).save(account, row['id'], pi.parse_range(key)['key'], 'x', {}, at=at)
+        with patch.object(self.tab, 'after') as later:
+            self.tab.after_page_submitted(account, row['id'])
+        later.call_args[0][1]()
+        self.assertTrue(self.session.finished.is_set())
+
+
 if __name__ == '__main__':
     unittest.main()

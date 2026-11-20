@@ -155,6 +155,13 @@ class ScheduleTests(unittest.TestCase):
         self.owner.after_page_published.assert_called_once_with(self.account,self.page)
         self.assertIs(self.owner.sessions[self.account].auto_close,True)  # Tèo opened this Chrome for the schedule.
 
+    def test_submitted_without_verification_still_tells_the_owner_for_the_numbers(self):
+        row = self.ready_for_validation(self.schedule())
+        self.owner.after_page_submitted = Mock()
+        self.controller._finish_without_verification(self.store.get(row['id']))
+        self.assertEqual(self.store.get(row['id'])['state'], 'submitted')
+        self.owner.after_page_submitted.assert_called_once_with(self.account, self.page)
+
     def test_changed_body_blocks_publish_and_error_no_auto_retry(self):
         row = self.ready_for_validation(self.schedule())
         self.reply(row,'done','review')

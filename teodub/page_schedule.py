@@ -712,6 +712,9 @@ class PageScheduleController:
         self.store.update(row['id'], state='submitted', finished_at=row['finished_at'] or now(),
             message='Đã gửi một lần tới Facebook. Kiểm tra trạng thái đang tạm tắt; chưa xác minh đã đăng.')
         self.release(row['id'])
+        hook = getattr(self.owner, 'after_page_submitted', None)  # 20/11: numbers + closing Chrome, after a short wait.
+        if hook:
+            hook(row['account_id'], row['page_key'])
 
     def guard(self, ident):
         if not re.fullmatch(r'[0-9a-f]{32}',ident):

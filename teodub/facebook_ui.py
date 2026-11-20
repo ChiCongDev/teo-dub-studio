@@ -46,6 +46,7 @@ def create_page_bridge(owner):
 # Owner 18/11/2026: Chrome that Tèo opened by itself (a scheduled post, or reading numbers) closes when its work is done, unless another
 # post of that account is due this soon. Chrome the owner opened is never closed by Tèo.
 AUTO_CLOSE_KEEP_MINUTES = 10
+SUBMITTED_WAIT_SECONDS = 180  # 20/11: with the result check off nobody confirms the post, so wait before reading numbers / closing.
 INSIGHT_ALL_COLUMNS = ('name', 'views', 'v3', 'v60', 'watch', 'span', 'at', 'page_id', 'url', 'state')
 INSIGHT_SIMPLE_COLUMNS = ('name', 'views', 'v3', 'v60', 'watch', 'span', 'at')
 
@@ -91,6 +92,7 @@ class FacebookTab(ttk.Frame):
         self.page_scheduler = None
         self.page_bridge = None
         self.destroyed = False
+        self.waiting_after_post = {}  # account -> posts waiting for their numbers / closing
         self.timer = None
         self.advanced_visible = False
         self.page_link_visible = False
@@ -884,9 +886,25 @@ class FacebookTab(ttk.Frame):
             return False
         if any(item['state'] not in {'opened', 'error'} for item in session.navigation.values()):
             return False
-        if self.schedule_busy_within(account_id):
+        if self.schedule_busy_within(account_id) or self.waiting_after_post.get(account_id):
             return False
         return self.finish_browser(account_id)
+
+    def after_page_submitted(self, account_id, page_key):
+        """A scheduled post ended as 'Đã gửi' (result check off). Wait a few minutes for Facebook to take it, then do what happens
+        after a confirmed post: read the Views numbers and close the Chrome Tèo opened. Chrome stays open meanwhile."""
+        if self.destroyed:
+            return
+        self.waiting_after_post[account_id] = self.waiting_after_post.get(account_id, 0)+1
+
+        def later():
+            self.waiting_after_post[account_id] = max(0, self.waiting_after_post.get(account_id, 1)-1)
+            if not self.destroyed:
+                self.after_page_published(account_id, page_key)
+        try:
+            self.after(SUBMITTED_WAIT_SECONDS*1000, later)
+        except Exception:
+            self.waiting_after_post[account_id] = max(0, self.waiting_after_post.get(account_id, 1)-1)
 
     def after_page_published(self, account_id, page_key):
         """A scheduled post was confirmed: read the usual ranges for this Page unless they were read in the last half hour."""

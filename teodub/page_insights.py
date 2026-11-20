@@ -111,8 +111,8 @@ def _clean(text):
 def _percent(text, language='vi'):
     if language == 'en':
         number = float(text.replace(',', ''))
-    elif re.fullmatch(r'[0-9]{1,3}(\.[0-9]{3})+', text):
-        number = int(text.replace('.', ''))
+    elif re.fullmatch(r'[0-9]{1,3}([.,][0-9]{3})+', text):  # 20/11: Facebook writes 'Tăng 29,469%' (comma = thousands) too.
+        number = int(text.replace('.', '').replace(',', ''))
     else:
         number = float(text.replace(',', '.'))
     return int(number) if number == int(number) else number
