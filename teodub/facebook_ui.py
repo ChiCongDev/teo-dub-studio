@@ -874,21 +874,47 @@ class FacebookTab(ttk.Frame):
                 return True
         return False
 
+    def chrome_log(self, account_id, message):
+        """Owner 21/11/2026: page-publishing/chrome-log.txt, one line per step of the Chrome Tèo uses for posts and numbers
+        (newest last, the last 1000 lines kept). Never raises: a log must not get in the way of posting."""
+        try:
+            from datetime import datetime
+            session = self.sessions.get(account_id)
+            name = getattr(session, 'account_name', '') or next(
+                (row['name'] for row in self.store.load()['accounts'] if row['id'] == account_id), account_id)
+            path = Path(self.studio.data_dir)/'page-publishing'/'chrome-log.txt'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            lines = path.read_text(encoding='utf-8').splitlines() if path.exists() else []
+            lines = lines[-999:]+[f'{datetime.now().isoformat(sep=" ", timespec="seconds")} · {name} · {message}']
+            path.write_text('\n'.join(lines)+'\n', encoding='utf-8')
+        except Exception:
+            pass
+
     def close_if_idle(self, account_id):
         """Close the Chrome Tèo opened for its own work once nothing is left to do in it. Returns True when it was told to close."""
         session = self.sessions.get(account_id)
         if (not session or not session.auto_close or not session.pending or not session.opened
                 or session.finished.is_set() or session.cancel.is_set()):
             return False
-        if session.loading_pages or session.insights_running or not session.commands.empty():
+        reason = ''
+        if session.loading_pages:
+            reason = 'đang Load Page'
+        elif session.insights_running or not session.commands.empty():
+            reason = 'còn việc lấy số liệu'
+        elif any(item['state'] in {'queued', 'running', 'verifying'} for item in session.post_actions.values()):
+            reason = 'còn bài đang đăng'
+        elif any(item['state'] not in {'opened', 'error'} for item in session.navigation.values()):
+            reason = 'còn trang đang mở dở'
+        elif self.schedule_busy_within(account_id):
+            reason = 'có lịch đăng khác trong %d phút tới' % AUTO_CLOSE_KEEP_MINUTES
+        elif self.waiting_after_post.get(account_id):
+            reason = 'còn bài vừa gửi đang chờ lấy số liệu'
+        if reason:
+            self.chrome_log(account_id, 'Giữ Chrome mở: '+reason+'.')
             return False
-        if any(item['state'] in {'queued', 'running', 'verifying'} for item in session.post_actions.values()):
-            return False
-        if any(item['state'] not in {'opened', 'error'} for item in session.navigation.values()):
-            return False
-        if self.schedule_busy_within(account_id) or self.waiting_after_post.get(account_id):
-            return False
-        return self.finish_browser(account_id)
+        closing = self.finish_browser(account_id)
+        self.chrome_log(account_id, 'Tự đóng Chrome: đã xong việc.' if closing else 'Muốn tự đóng Chrome nhưng không đóng được.')
+        return closing
 
     def after_page_submitted(self, account_id, page_key):
         """A scheduled post ended as 'Đã gửi' (result check off). Wait a few minutes for Facebook to take it, then do what happens
@@ -896,6 +922,7 @@ class FacebookTab(ttk.Frame):
         if self.destroyed:
             return
         self.waiting_after_post[account_id] = self.waiting_after_post.get(account_id, 0)+1
+        self.chrome_log(account_id, 'Bài đã gửi (%s): chờ %d phút rồi lấy số liệu.' % (self.page_name(page_key), SUBMITTED_WAIT_SECONDS//60))
 
         def later():
             self.waiting_after_post[account_id] = max(0, self.waiting_after_post.get(account_id, 1)-1)
@@ -922,10 +949,20 @@ class FacebookTab(ttk.Frame):
                 if age is None or age >= AFTER_POST_MIN_MINUTES or (key == 'yesterday' and not is_complete(dated, store.get(account_id, page_key, dated, items))):
                     wanted.append(key)
             queued = bool(wanted) and self.request_insights(account_id, [page_key], wanted, auto=True)
-            if not queued:
+            if queued:
+                self.chrome_log(account_id, 'Lấy số liệu %s: %d khoảng.' % (self.page_name(page_key), len(wanted)))
+            else:
+                self.chrome_log(account_id, ('Không lấy số liệu %s (Chrome không mở sẵn hoặc đang bận).' if wanted
+                                             else 'Số liệu %s vừa lấy gần đây, không lấy lại.') % self.page_name(page_key))
                 self.close_if_idle(account_id)  # Nothing more to read: the post is done.
         except Exception:  # Numbers are a courtesy; they never get in the way of posting.
             pass
+
+    def page_name(self, page_key):
+        try:
+            return next((row['name'] for row in self.store.load()['pages'] if row['id'] == page_key), page_key)
+        except Exception:
+            return page_key
 
     def selected_page(self):
         selection = self.tree.selection()
@@ -1332,6 +1369,7 @@ class FacebookTab(ttk.Frame):
                         session.status = 'Chưa mở/giữ được phiên Facebook của '+session.account_name+': '+value
                     else:
                         session.status = 'Đã đóng Chrome của '+session.account_name+' và giữ hồ sơ. '
+                        self.chrome_log(account_id, 'Chrome đã đóng%s.' % (' (Tèo tự mở và tự đóng)' if session.auto_close else ''))
                         session.status += 'Mở Facebook lần sau để kiểm tra phiên. '
                         session.status += 'Tèo chưa tự xác nhận tài khoản đã đăng nhập hay quyền trên Page.'
                     if session.page_load_status:

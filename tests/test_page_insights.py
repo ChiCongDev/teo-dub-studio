@@ -789,5 +789,53 @@ class SubmittedTests(InsightUITests):
         self.assertTrue(self.session.finished.is_set())
 
 
+class ChromeLogTests(InsightUITests):
+    """21/11/2026: page-publishing/chrome-log.txt tells what happened to the Chrome Tèo opened after a post."""
+
+    def run(self, result=None):  # Only the tests below, not the inherited ones.
+        if self._testMethodName.startswith('test_log_'):
+            return super().run(result)
+        return unittest.TestResult() if result is None else result
+
+    def log(self):
+        path = Path(self.studio.data_dir)/'page-publishing'/'chrome-log.txt'
+        return path.read_text(encoding='utf-8') if path.exists() else ''
+
+    def test_log_sent_post_waiting_reading_then_closing(self):
+        account, row = self.page()
+        self.session.auto_close = True
+        with patch.object(self.tab, 'after') as later:
+            self.tab.after_page_submitted(account, row['id'])
+        self.assertIn('Bài đã gửi', self.log())
+        self.assertIn('chờ 3 phút', self.log())
+        later.call_args[0][1]()
+        self.assertIn('Lấy số liệu', self.log())
+        self.session.commands.get_nowait()
+        self.session.insights_running = 1
+        self.session.messages.put(('insights_done', dict(account_id=account, message='Đã lấy.', ok=True)))
+        self.drain()
+        self.assertIn('Tự đóng Chrome: đã xong việc.', self.log())
+
+    def test_log_says_why_chrome_is_kept(self):
+        account, row = self.page()
+        self.session.auto_close = True
+        self.session.loading_pages = True
+        self.assertFalse(self.tab.close_if_idle(account))
+        self.assertIn('Giữ Chrome mở: đang Load Page.', self.log())
+
+    def test_log_keeps_only_the_last_lines(self):
+        account, row = self.page()
+        for number in range(1010):
+            self.tab.chrome_log(account, 'dòng %d' % number)
+        lines = self.log().splitlines()
+        self.assertEqual(len(lines), 1000)
+        self.assertTrue(lines[-1].endswith('dòng 1009'))
+
+    def test_log_never_raises(self):
+        account, row = self.page()
+        with patch.object(Path, 'write_text', side_effect=OSError('disk full')):
+            self.tab.chrome_log(account, 'x')  # No exception.
+
+
 if __name__ == '__main__':
     unittest.main()
