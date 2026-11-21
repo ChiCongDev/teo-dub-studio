@@ -347,11 +347,11 @@ class InsightUITests(unittest.TestCase):
 
     def test_row_shows_saved_numbers_and_dashes_for_a_range_not_read(self):
         account, row = self.page()
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1:7], ['—', '—', '—', '—', '', 'chưa có'])
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3:9], ['—', '—', '—', '—', '', 'chưa có'])
         self.save(account, row)
         self.tab.display_pages()
         values = self.tab.tree.item(row['id'])['values']
-        self.assertEqual(values[1:7], ['11.596 ▲100%', '5.272 ▲100%', '664 ▲100%', '3 ngày 15 giờ ▲100%',
+        self.assertEqual(values[3:9], ['11.596 ▲100%', '5.272 ▲100%', '664 ▲100%', '3 ngày 15 giờ ▲100%',
                                        '21 Tháng 10 - 17 Tháng 11', '18/11 09:30'])
         self.assertEqual(self.tab.tree.selection(), (row['id'],))  # The refresh keeps the selected Page.
 
@@ -360,10 +360,10 @@ class InsightUITests(unittest.TestCase):
         self.save(account, row)
         self.tab.insight_picker.current(self.tab.insight_keys.index('7d'))  # Nothing read for it.
         self.tab.choose_range()
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '—')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '—')
         self.tab.insight_picker.current(self.tab.insight_keys.index('28d'))
         self.tab.choose_range()
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '11.596 ▲100%')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '11.596 ▲100%')
 
     def test_custom_range_is_offered_and_kept_in_the_list(self):
         account, row = self.page()
@@ -374,7 +374,7 @@ class InsightUITests(unittest.TestCase):
                 setattr(self.tab, 'insight_key', key), self.tab.fill_range_picker(), True)[-1]):
             self.tab.insight_picker.current(len(self.tab.insight_keys))  # The last entry: pick dates.
             self.tab.choose_range()
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '11.596 ▲100%')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '11.596 ▲100%')
         self.assertIn(key, self.tab.insight_keys)
 
     def test_cancelled_custom_dialog_keeps_the_previous_range(self):
@@ -400,7 +400,7 @@ class InsightUITests(unittest.TestCase):
                          ('read_insights', expected, [row['id']], False))
         self.assertEqual(self.session.insights_running, 1)
 
-    def test_after_a_post_nothing_is_queued_when_chrome_is_not_open_busy_or_numbers_are_fresh(self):
+    def test_after_a_post_nothing_is_queued_when_chrome_is_not_open_or_busy_but_fresh_numbers_are_read_again(self):
         account, row = self.page()
         self.session.opened = False
         self.tab.after_page_published(account, row['id'])
@@ -412,8 +412,10 @@ class InsightUITests(unittest.TestCase):
         self.session.loading_pages = False
         for key in pi.AFTER_POST:
             pi.PageInsights(self.studio.data_dir).save(account, row['id'], pi.parse_range(key)['key'], 'x', {})  # Saved just now.
-        self.tab.after_page_published(account, row['id'])
-        self.assertTrue(self.session.commands.empty())
+        self.tab.after_page_published(account, row['id'])  # Owner 21/11: every post reads everything again.
+        self.assertEqual(len(self.session.commands.get_nowait()['ranges']), len(pi.AFTER_POST))
+        self.tab.after_page_published(account, row['id'])  # Queued behind the read that is still running.
+        self.assertEqual(self.session.insights_running, 2)
 
     def test_failure_inside_the_hook_never_reaches_the_caller(self):
         account, row = self.page()
@@ -450,7 +452,7 @@ class InsightUITests(unittest.TestCase):
         self.drain()
         self.assertEqual(self.session.insights_running, 0)
         self.assertEqual(self.tab.insight_note.get(), 'Đã lấy 1 số liệu.')
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '11.596 ▲100%')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '11.596 ▲100%')
 
 
 def standard():
@@ -511,11 +513,11 @@ class ChoosingShowsSavedTests(InsightUITests):
         pi.PageInsights(self.studio.data_dir).save(account, row['id'], '7d', label, metrics, at='2026-10-01T08:00:00')  # Even old.
         self.pick('7d')
         self.assertTrue(self.session.commands.empty())
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '11.596 ▲100%')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '11.596 ▲100%')
         self.assertIn('đã lưu', self.tab.insight_note.get())
         self.pick('14d')  # Never read: still no Chrome, the note says which button.
         self.assertTrue(self.session.commands.empty())
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '—')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '—')
         self.assertIn('Chưa có số liệu', self.tab.insight_note.get())
 
     def test_choosing_a_new_custom_range_reads_it_once_for_the_selected_page(self):
@@ -529,7 +531,7 @@ class ChoosingShowsSavedTests(InsightUITests):
         self.pick('7d')
         self.custom(key)  # Saved now: shown at once.
         self.assertTrue(self.session.commands.empty())
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '11.596 ▲100%')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '11.596 ▲100%')
 
     def test_choosing_a_custom_range_without_a_page_or_while_chrome_is_busy_reads_nothing(self):
         account, row = self.page()
@@ -622,11 +624,14 @@ class AutoCloseTests(InsightUITests):
         with unittest.mock.patch.object(self.tab, 'get_page_scheduler', side_effect=RuntimeError('db')):
             self.assertFalse(self.tab.close_if_idle(account))
 
-    def test_close_after_a_post_when_there_is_nothing_to_read(self):
+    def test_close_after_a_post_even_when_the_numbers_were_fresh(self):
         account, row = self.idle_session()
         for key in pi.AFTER_POST:
             pi.PageInsights(self.studio.data_dir).save(account, row['id'], pi.parse_range(key)['key'], 'x', {})  # Read just now.
         self.tab.after_page_published(account, row['id'])
+        self.assertEqual(self.session.commands.get_nowait()['action'], 'read_insights')  # Read again anyway.
+        self.session.messages.put(('insights_done', dict(account_id=account, message='ok', ok=True)))
+        self.drain()
         self.assertTrue(self.session.finished.is_set())
 
     def test_close_after_a_post_waits_for_the_numbers_read_it_queues(self):
@@ -645,12 +650,29 @@ class AutoCloseTests(InsightUITests):
         self.tab.after_page_published(account, row['id'])
         self.assertFalse(self.session.finished.is_set())
 
-    def test_close_the_owner_using_an_auto_chrome_takes_it_over(self):
+    def test_close_the_owner_using_an_auto_chrome_keeps_it_only_a_while(self):
         account, row = self.idle_session()
         self.session.opened = True
         with unittest.mock.patch.object(self.tab.store, 'profile_directory', return_value=Path(self.temp.name)):
             self.tab.open_browser('https://www.facebook.com/', account_id=account)
-        self.assertFalse(self.session.auto_close)
+        self.assertTrue(self.session.auto_close)  # Still Tèo's Chrome …
+        self.session.commands.get_nowait()
+        with unittest.mock.patch.object(self.tab, 'after') as later:
+            self.assertFalse(self.tab.close_if_idle(account))  # … but kept while the owner may be using it,
+            self.assertFalse(self.tab.close_if_idle(account))
+        self.assertEqual(later.call_count, 1)  # one re-check planned, not one per look.
+        log = (Path(self.studio.data_dir)/'page-publishing'/'chrome-log.txt').read_text(encoding='utf-8')
+        self.assertIn('Anh mở trang trong Chrome này', log)
+        self.assertIn('anh vừa mở trang trong Chrome này', log)
+        self.session.owner_used_at -= 11*60  # Ten minutes later the re-check closes it.
+        later.call_args[0][1]()
+        self.assertTrue(self.session.finished.is_set())
+
+    def test_close_says_why_when_the_owner_opened_the_chrome(self):
+        account, row = self.idle_session(auto=False)
+        self.assertFalse(self.tab.close_if_idle(account))
+        log = (Path(self.studio.data_dir)/'page-publishing'/'chrome-log.txt').read_text(encoding='utf-8')
+        self.assertIn('Chrome này do anh mở', log)
 
     def test_close_chrome_opened_for_the_numbers_by_the_button_is_marked_to_close(self):
         account, row = self.page()
@@ -698,13 +720,13 @@ class TodayTests(InsightUITests):
         account, row = self.page()
         self.pick('today')
         self.assertTrue(self.session.commands.empty())
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '—')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '—')
         self.assertIn('Chưa có số liệu', self.tab.insight_note.get())
         self.save_day(account, row, pi.parse_range('today')['key'], datetime.datetime.now().isoformat(timespec='seconds'))
         self.pick('7d')
         self.pick('today')
         self.assertTrue(self.session.commands.empty())
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '11.596 ▲100%')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '11.596 ▲100%')
         self.assertIn('chưa đủ ngày', self.tab.insight_note.get())
 
     def test_day_yesterday_shows_only_numbers_read_after_that_day_ended(self):
@@ -715,27 +737,21 @@ class TodayTests(InsightUITests):
         self.save_day(account, row, key, datetime.datetime.combine(yesterday, datetime.time(15, 0)).isoformat())
         self.pick('yesterday')
         self.assertTrue(self.session.commands.empty())
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '—')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '—')
         self.assertIn('Chưa có số liệu', self.tab.insight_note.get())
         # Read today, after yesterday was over: its own numbers.
         self.save_day(account, row, key, datetime.datetime.now().isoformat(timespec='seconds'))
         self.pick('7d')
         self.pick('yesterday')
         self.assertTrue(self.session.commands.empty())
-        self.assertEqual(self.tab.tree.item(row['id'])['values'][1], '11.596 ▲100%')
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][3], '11.596 ▲100%')
 
-    def test_day_after_a_post_reads_yesterday_again_when_it_holds_only_part_of_the_day(self):
+    def test_day_after_a_post_reads_today_and_yesterday_again_every_time(self):
         account, row = self.page()
         for key in pi.AFTER_POST:
             pi.PageInsights(self.studio.data_dir).save(account, row['id'], pi.parse_range(key)['key'], 'x', {})  # All read just now.
         self.tab.after_page_published(account, row['id'])
-        self.assertTrue(self.session.commands.empty())  # Fresh: nothing to read.
-        key = pi.parse_range('yesterday')['key']
-        yesterday = datetime.date.today()-datetime.timedelta(days=1)
-        pi.PageInsights(self.studio.data_dir).save(account, row['id'], key, 'x', {},
-                                                  at=datetime.datetime.combine(yesterday, datetime.time(23, 55)).isoformat())
-        self.tab.after_page_published(account, row['id'])
-        self.assertEqual(self.session.commands.get_nowait()['ranges'], ['yesterday'])
+        self.assertEqual(self.session.commands.get_nowait()['ranges'][:2], ['today', 'yesterday'])
 
     def test_day_completeness_rule(self):
         self.assertTrue(pi.is_complete('custom:2026-11-17:2026-11-17', dict(at='2026-11-18T00:05:00')))
@@ -777,7 +793,7 @@ class SubmittedTests(InsightUITests):
         later.call_args[0][1]()
         self.assertEqual(self.session.commands.get_nowait()['action'], 'read_insights')
 
-    def test_sub_submitted_post_with_nothing_to_read_closes_chrome(self):
+    def test_sub_submitted_post_reads_then_closes_chrome(self):
         account, row = self.page()
         self.session.auto_close = True
         at = datetime.datetime.now().isoformat(timespec='seconds')
@@ -786,8 +802,10 @@ class SubmittedTests(InsightUITests):
         with patch.object(self.tab, 'after') as later:
             self.tab.after_page_submitted(account, row['id'])
         later.call_args[0][1]()
+        self.assertEqual(self.session.commands.get_nowait()['action'], 'read_insights')
+        self.session.messages.put(('insights_done', dict(account_id=account, message='ok', ok=True)))
+        self.drain()
         self.assertTrue(self.session.finished.is_set())
-
 
 class ChromeLogTests(InsightUITests):
     """21/11/2026: page-publishing/chrome-log.txt tells what happened to the Chrome Tèo opened after a post."""
@@ -835,6 +853,172 @@ class ChromeLogTests(InsightUITests):
         account, row = self.page()
         with patch.object(Path, 'write_text', side_effect=OSError('disk full')):
             self.tab.chrome_log(account, 'x')  # No exception.
+
+
+# What the real Audience pages said (probe of 21/11/2026), word for word.
+AUDIENCE_EN_CARD = ('Audience overview\ufeff\nLast 30 days: Oct 22 - Nov 20\n3,612 Follows\ufeff\n+180,500.0% from previous 30 days\nOct 22\nOct 27\n'
+                    '0\n200\n400\n600\n3,512\nNet follows\n100\nUnfollows\n3,545\nTotal followers\nNet follows by content type\nLifetime')
+AUDIENCE_EN_HEADLINE = ('Audience overview\ufeff\nLast 30 days: Oct 22 - Nov 20\n1 Total followers\ufeff\n0% from previous 30 days\nOct 22\n1\n0\nNet follows\n'
+                        '0\nUnfollows\nNet follows by content type')
+AUDIENCE_VI_CARD = ('Tổng quan về đối tượng\ufeff\n28 ngày qua: 24 Tháng 10 - 20 Tháng 11\n4 Lượt theo dõi\ufeff\n+100.0% từ 28 ngày trước\n0\n1\n'
+                    '4\nSố người theo dõi thực\n0\nLượt bỏ theo dõi\n4\nTổng số người theo dõi\nSố người theo dõi thực theo loại nội dung')
+AUDIENCE_VI_HEADLINE = ('Tổng quan về đối tượng\ufeff\n28 ngày qua: 24 Tháng 10 - 20 Tháng 11\n4 Tổng số người theo dõi\ufeff\n0% từ 28 ngày trước\n'
+                        '4\n5\n0\nSố người theo dõi thực\n1\nLượt bỏ theo dõi\nSố người theo dõi thực theo loại nội dung')
+
+
+class FollowerTests(CollectTests):
+    """21/11/2026: the follower total of the Audience page, and the 'Người theo dõi' / 'Đăng hôm nay' columns."""
+
+    def run(self, result=None):  # Only the tests below, not the inherited ones.
+        if self._testMethodName.startswith('test_fol_'):
+            return super().run(result)
+        return unittest.TestResult() if result is None else result
+
+    def test_fol_the_total_is_read_from_either_form_in_both_languages(self):
+        self.assertEqual(pi.parse_followers_text(AUDIENCE_EN_CARD), '3,545')
+        self.assertEqual(pi.parse_followers_text(AUDIENCE_EN_HEADLINE), '1')
+        self.assertEqual(pi.parse_followers_text(AUDIENCE_VI_CARD), '4')
+        self.assertEqual(pi.parse_followers_text(AUDIENCE_VI_HEADLINE), '4')
+        self.assertEqual(pi.parse_followers_text('Tổng số người theo dõi\nSố người theo dõi thực\n5'), None)  # No number before the label.
+        self.assertIsNone(pi.parse_followers_text('4 Lượt theo dõi\n3 Số người theo dõi thực'))  # Follows / net follows are not the total.
+        self.assertIsNone(pi.parse_followers_text(''))
+
+    def test_fol_followers_are_saved_with_the_ranges_and_never_mistaken_for_one(self):
+        self.texts[pi.BASE_URL+'?date_range=LAST_28D'] = TEXT_28
+        self.texts[pi.AUDIENCE_URL] = AUDIENCE_EN_CARD
+        result = self.collect(['28d'], followers=True)
+        self.assertEqual(result['problems'], [])
+        self.assertEqual(result['saved'], [('Sinh Tồn', '28d'), ('Sinh Tồn', 'followers')])
+        store = pi.PageInsights(self.temp.name)
+        self.assertEqual(store.followers('a'*32, 'b'*32)['value'], '3,545')
+        self.assertIsNone(store.get('a'*32, 'b'*32, 'followers'))  # It is not a range.
+        self.assertEqual(store.get('a'*32, 'b'*32, '28d')['metrics']['views']['value'], '11.596')
+
+    def test_fol_followers_are_not_read_unless_asked(self):
+        self.texts[pi.BASE_URL+'?date_range=LAST_28D'] = TEXT_28
+        self.texts[pi.AUDIENCE_URL] = AUDIENCE_EN_CARD
+        self.collect(['28d'])
+        self.assertIsNone(pi.PageInsights(self.temp.name).followers('a'*32, 'b'*32))
+
+    def test_fol_unreadable_audience_page_keeps_the_ranges_and_reports_it(self):
+        self.texts[pi.BASE_URL+'?date_range=LAST_28D'] = TEXT_28
+        with patch.object(pi, 'WAIT_SECONDS', 0):
+            result = self.collect(['28d'], followers=True)
+        self.assertEqual(result['saved'], [('Sinh Tồn', '28d')])
+        self.assertEqual(len(result['problems']), 1)
+        self.assertIn('Người theo dõi', result['problems'][0])
+
+    def test_fol_a_page_whose_views_cannot_be_read_skips_the_audience_page_too(self):
+        with patch.object(pi, 'WAIT_SECONDS', 0):
+            result = self.collect(['28d'], followers=True)
+        self.assertEqual(len(result['problems']), 1)
+        self.assertNotIn(pi.AUDIENCE_URL, [url for tab in self.tabs for url in tab.opened])
+
+    def test_fol_saving_followers_keeps_the_old_value_until_a_new_read(self):
+        store = pi.PageInsights(self.temp.name)
+        store.save_followers('a'*32, 'b'*32, '10', at='2026-11-20T09:00:00')
+        store.save_followers('a'*32, 'b'*32, '12')
+        self.assertEqual(store.followers('a'*32, 'b'*32)['value'], '12')
+
+
+class PostsTodayTests(InsightUITests):
+    """21/11/2026: 'Đăng hôm nay' counted from Tèo's own schedule."""
+
+    def run(self, result=None):  # Only the tests below, not the inherited ones.
+        if self._testMethodName.startswith('test_posts_'):
+            return super().run(result)
+        return unittest.TestResult() if result is None else result
+
+    def rows(self, *states, day=0):
+        base = datetime.datetime.combine(datetime.date.today(), datetime.time(12, 0)).timestamp()+day*86400
+        return [dict(state=state, due_at=base+number*60) for number, state in enumerate(states)]
+
+    def test_posts_counting_rule(self):
+        from teodub.facebook_ui import posts_today_text
+        start = datetime.datetime.combine(datetime.date.today(), datetime.time.min).timestamp()
+        count = lambda *states, day=0: posts_today_text(self.rows(*states, day=day), start, start+86400)
+        self.assertEqual(count('submitted', 'published', 'needs_attention', 'armed'), '✔ 2 · ✘ 1 · ⏳ 1')
+        self.assertEqual(count('verifying', 'preparing', 'submitting'), '✔ 1 · ⏳ 2')
+        self.assertEqual(count('needs_attention', 'needs_attention'), '✘ 2')
+        self.assertEqual(count('scheduled', 'paused', 'cancelled', 'removed'), '—')  # Not run yet, or dropped by the owner.
+        self.assertEqual(count(), '—')
+        self.assertEqual(count('submitted', day=-1), '—')  # Yesterday's and tomorrow's posts are not today's.
+        self.assertEqual(count('armed', day=1), '—')
+
+    def test_posts_the_table_shows_followers_and_todays_posts_after_the_name(self):
+        account, row = self.page()
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][1:3], ['—', '—'])
+        pi.PageInsights(self.studio.data_dir).save_followers(account, row['id'], '3,545')
+        today = datetime.datetime.combine(datetime.date.today(), datetime.time(12, 0)).timestamp()
+        rows = [dict(account_id=account, page_key=row['id'], state=state, due_at=today) for state in ('submitted', 'needs_attention', 'armed')]
+        with patch('teodub.page_schedule.PageScheduleStore.list', return_value=rows):
+            self.tab.display_pages()
+        values = self.tab.tree.item(row['id'])['values']
+        self.assertEqual(values[1:3], ['3,545', '✔ 1 · ✘ 1 · ⏳ 1'])
+        self.assertEqual(tuple(self.tab.tree['displaycolumns'])[:3], ('name', 'followers', 'posts'))
+
+    def test_posts_refresh_changes_only_that_column_and_a_broken_schedule_never_breaks_the_table(self):
+        account, row = self.page()
+        today = datetime.datetime.combine(datetime.date.today(), datetime.time(12, 0)).timestamp()
+        rows = [dict(account_id=account, page_key=row['id'], state='submitted', due_at=today)]
+        with patch('teodub.page_schedule.PageScheduleStore.list', return_value=rows):
+            self.tab.after_page_submitted(account, row['id'])
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][2], '✔ 1')
+        with patch('teodub.page_schedule.PageScheduleStore.list', side_effect=OSError('locked')):
+            self.tab.display_pages()
+            self.tab.refresh_posts_today()
+        self.assertEqual(self.tab.tree.item(row['id'])['values'][2], '—')
+
+
+class AllPagesAfterPostTests(InsightUITests):
+    """21/11/2026: after a post the numbers of every Page of the account are read, unless another post is due soon."""
+
+    def run(self, result=None):  # Only the tests below, not the inherited ones.
+        if self._testMethodName.startswith('test_all_'):
+            return super().run(result)
+        return unittest.TestResult() if result is None else result
+
+    def two_more_pages(self, account):
+        second = self.tab.store.save_page(account, 'Page Hai', 'facebook.com/profile.php?id=456', '456')
+        no_id = self.tab.store.save_page(account, 'Chưa có ID', 'facebook.com/chuacoid', '')
+        return second, no_id
+
+    def test_all_pages_of_the_account_are_read_after_a_post_the_posted_one_first(self):
+        account, row = self.page()
+        second, no_id = self.two_more_pages(account)
+        with patch.object(self.tab, 'schedule_busy_within', return_value=False):
+            self.tab.after_page_published(account, row['id'])
+        command = self.session.commands.get_nowait()
+        self.assertEqual(command['page_keys'], [row['id'], second['id']])  # A Page without a Page ID cannot be read.
+        self.assertIs(command['switch'], True)  # Chrome goes to each Page, like the 'cả tài khoản' button.
+        self.assertEqual(len(command['ranges']), len(pi.AFTER_POST))
+        log = (Path(self.studio.data_dir)/'page-publishing'/'chrome-log.txt').read_text(encoding='utf-8')
+        self.assertIn('Lấy số liệu 2 Page của tài khoản', log)
+
+    def test_all_only_the_posted_page_when_another_post_is_due_soon(self):
+        account, row = self.page()
+        self.two_more_pages(account)
+        with patch.object(self.tab, 'schedule_busy_within', return_value=True):
+            self.tab.after_page_published(account, row['id'])
+        command = self.session.commands.get_nowait()
+        self.assertEqual((command['page_keys'], command['switch']), ([row['id']], False))
+        log = (Path(self.studio.data_dir)/'page-publishing'/'chrome-log.txt').read_text(encoding='utf-8')
+        self.assertIn('chỉ Page vừa đăng', log)
+
+    def test_all_a_broken_schedule_lookup_still_reads_the_posted_page(self):
+        account, row = self.page()
+        self.two_more_pages(account)
+        with patch.object(self.tab, 'schedule_busy_within', side_effect=RuntimeError('db')):
+            self.tab.after_page_published(account, row['id'])
+        self.assertEqual(self.session.commands.get_nowait()['page_keys'], [row['id']])
+
+    def test_all_pages_of_another_account_are_never_read(self):
+        account, row = self.page()
+        other = self.tab.store.add_account('Nick khác')
+        self.tab.store.save_page(other['id'], 'Page người khác', 'facebook.com/profile.php?id=789', '789')
+        with patch.object(self.tab, 'schedule_busy_within', return_value=False):
+            self.tab.after_page_published(account, row['id'])
+        self.assertEqual(self.session.commands.get_nowait()['page_keys'], [row['id']])
 
 
 if __name__ == '__main__':

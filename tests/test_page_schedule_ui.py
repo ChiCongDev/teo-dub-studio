@@ -84,6 +84,17 @@ class PageScheduleUITests(unittest.TestCase):
         panel.tree.selection_set(row['id'])
         panel.select_row()
 
+    def test_changed_time_tells_the_main_table_once(self):
+        row = self.schedule()
+        self.owner.refresh_posts_today = Mock()
+        panel = self.panel()
+        self.assertEqual(self.owner.refresh_posts_today.call_count, 1)
+        panel.refresh()
+        self.assertEqual(self.owner.refresh_posts_today.call_count, 1)  # Nothing changed: not told again.
+        self.store.reschedule(row['id'], time.time()+9000)
+        panel.refresh()
+        self.assertEqual(self.owner.refresh_posts_today.call_count, 2)
+
     def test_mount_loads_initial_page_template_without_creating_or_starting(self):
         self.assertEqual((self.dialog.account_id, self.dialog.page_key), (self.a, self.p))
         self.assertEqual(self.dialog.caption.get('1.0', 'end-1c'), 'Caption A nguyên văn\nDòng hai')

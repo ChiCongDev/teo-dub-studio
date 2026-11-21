@@ -21,6 +21,10 @@ import time
 from teodub.common import Cancelled, check_cancel
 
 BASE_URL = 'https://www.facebook.com/professional_dashboard/profile_insights/views/'
+# 21/11/2026 (probe): the Audience page shows 'Tổng số người theo dõi' / 'Total followers' - the same number for every range. It is either
+# its own card (number line, then the label line) or, for a Page with no new follows, the headline ('4 Tổng số người theo dõi').
+AUDIENCE_URL = 'https://www.facebook.com/professional_dashboard/profile_insights/audience/'
+FOLLOWER_LABELS = ('Tổng số người theo dõi', 'Total followers')
 FIXED = {'7d': 7, '14d': 14, '28d': 28, '60d': 60, '90d': 90}
 # Owner 18/11/2026: 'Hôm nay' too. Facebook answers a one-day custom range for today (part of the day so far, probe of 18/11).
 CHOICES = [('today', 'Hôm nay'), ('yesterday', 'Hôm qua'), ('7d', '7 ngày qua'), ('14d', '14 ngày qua'), ('28d', '28 ngày qua'), ('60d', '60 ngày qua'), ('90d', '90 ngày qua'),
@@ -182,6 +186,18 @@ def is_complete(key, entry):
         return False
 
 
+def parse_followers_text(text):
+    """The visible text of the Audience page -> the total number of followers exactly as Facebook writes it ('3,545', '4'), or None."""
+    lines = [line for line in (_clean(item) for item in str(text).splitlines()) if line]
+    for position, line in enumerate(lines):
+        match = re.fullmatch(r'([0-9][0-9.,]*) (?:Tổng số người theo dõi|Total followers)', line)
+        if match:
+            return match.group(1)
+        if line in FOLLOWER_LABELS and position and re.fullmatch(r'[0-9][0-9.,]*', lines[position-1]):
+            return lines[position-1]
+    return None
+
+
 def label_matches(label, spec):
     """Did Facebook apply the range that was asked (it silently falls back to 28 days for unknown ones)?"""
     if spec['kind'] == 'fixed':
@@ -238,18 +254,33 @@ class PageInsights:
             customs = sorted((k for k in page if k.startswith('custom:')), key=lambda k: page[k].get('at', ''))
             for old in customs[:-KEEP_CUSTOM]:
                 del page[old]
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temp = tempfile.mkstemp(dir=str(self.path.parent), prefix='page-insights-', suffix='.tmp')
+            self._write(items)
+
+    def followers(self, account_id, page_key, items=None):
+        """{at, value} of the last read of the follower total, or None."""
+        entry = ((items if items is not None else self.load()).get(account_id+':'+page_key) or {}).get('followers')
+        return entry if isinstance(entry, dict) and isinstance(entry.get('value'), str) else None
+
+    def save_followers(self, account_id, page_key, value, *, at=None):
+        with self.lock:
+            items = self.load()
+            items.setdefault(account_id+':'+page_key, {})['followers'] = dict(
+                at=at or datetime.datetime.now().isoformat(timespec='seconds'), value=str(value))
+            self._write(items)
+
+    def _write(self, items):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp = tempfile.mkstemp(dir=str(self.path.parent), prefix='page-insights-', suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                json.dump(dict(version=1, items=items), handle, ensure_ascii=False, indent=1)
+            os.replace(temp, self.path)
+        except BaseException:
             try:
-                with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-                    json.dump(dict(version=1, items=items), handle, ensure_ascii=False, indent=1)
-                os.replace(temp, self.path)
-            except BaseException:
-                try:
-                    os.unlink(temp)
-                except OSError:
-                    pass
-                raise
+                os.unlink(temp)
+            except OSError:
+                pass
+            raise
 
     def age_minutes(self, account_id, page_key, key, items=None, now=None):
         entry = self.get(account_id, page_key, key, items)
@@ -288,7 +319,26 @@ def read_range(tab, spec, *, cancel=None, finished=None):
             raise PageUnreadable('Chưa thấy số liệu sau %d giây (Page chưa có Bảng điều khiển số liệu, hoặc mạng chậm).' % WAIT_SECONDS)
 
 
-def collect(context, data_dir, account_id, page_keys, range_keys, *, switch=False, cancel=None, finished=None, progress=None, today=None):
+def read_followers(tab, *, cancel=None, finished=None):
+    """Open the Audience page in `tab` and return the total number of followers as text, once Facebook shows it."""
+    tab.goto(AUDIENCE_URL, wait_until='domcontentloaded', timeout=45000)
+    deadline = time.monotonic()+WAIT_SECONDS
+    while True:
+        check_cancel(cancel)
+        if finished is not None and finished.is_set():
+            raise Cancelled('Đã dừng lấy số liệu để đóng trình duyệt.')
+        tab.wait_for_timeout(1000)
+        if 'professional_dashboard' not in tab.url:
+            raise PageUnreadable('Facebook không mở trang Khán giả (đang ở '+tab.url[:80]+').')
+        value = parse_followers_text(tab.evaluate('document.body.innerText'))
+        if value is not None:
+            return value
+        if time.monotonic() >= deadline:
+            raise PageUnreadable('Chưa thấy số người theo dõi sau %d giây.' % WAIT_SECONDS)
+
+
+def collect(context, data_dir, account_id, page_keys, range_keys, *, switch=False, cancel=None, finished=None, progress=None, today=None,
+            followers=False):
     """Read `range_keys` for each Page and save what verified. Never raises for one Page or range; only a stop request ends it.
     switch=False (after a post): the Chrome identity must already be that Page. switch=True (owner pressed the button): Tèo may switch to
     the Page the way it does when opening one. Returns dict(saved=[(page name, range key)], problems=[text])."""
@@ -327,6 +377,7 @@ def collect(context, data_dir, account_id, page_keys, range_keys, *, switch=Fals
             else:
                 verify_page_actor(context, target, cancel=cancel, finished=finished)
             tab = context.new_page()
+            gave_up = False
             try:
                 for number, spec in enumerate(specs):
                     check_cancel(cancel)
@@ -339,6 +390,7 @@ def collect(context, data_dir, account_id, page_keys, range_keys, *, switch=Fals
                     except PageUnreadable as exc:
                         if number == 0:  # Its first range cannot be read: the others would fail the same way, so do not wait for them.
                             out['problems'].append(name+': '+str(exc)[:200]+' Bỏ qua các khoảng còn lại của Page này.')
+                            gave_up = True
                             break
                         out['problems'].append(name+' · '+spec['name']+': '+str(exc)[:160])
                         continue
@@ -347,6 +399,17 @@ def collect(context, data_dir, account_id, page_keys, range_keys, *, switch=Fals
                         continue
                     store.save(account_id, page_key, spec['key'], label, metrics)
                     out['saved'].append((name, spec['key']))
+                if followers and not gave_up:  # 21/11/2026: the follower total of the Audience page, once per Page.
+                    check_cancel(cancel)
+                    if progress:
+                        progress('Đang lấy số người theo dõi của '+name+'…')
+                    try:
+                        store.save_followers(account_id, page_key, read_followers(tab, cancel=cancel, finished=finished))
+                        out['saved'].append((name, 'followers'))
+                    except Cancelled:
+                        raise
+                    except Exception as exc:
+                        out['problems'].append(name+' · Người theo dõi: '+(str(exc) or type(exc).__name__)[:160])
             finally:
                 try:
                     tab.close()

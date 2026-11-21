@@ -160,7 +160,7 @@ def open_facebook_browser(profile_dir, *, url=FACEBOOK_HOME, cancel=None, finish
                         raise ValueError('Yêu cầu thuộc hồ sơ/tài khoản khác; chưa lấy số liệu.')
                     from teodub.page_insights import collect
                     result = collect(context, data_dir, fields['account_id'], keys, [str(r) for r in ranges],
-                                     switch=command.get('switch') is True, cancel=cancel, finished=finished,
+                                     switch=command.get('switch') is True, cancel=cancel, finished=finished, followers=True,
                                      progress=lambda message: notify('progress', message))
                     problems = result['problems']
                     message = ('Đã lấy %d số liệu.' % len(result['saved'])) + (' Chưa lấy được: '+' | '.join(problems)[:600] if problems else '')

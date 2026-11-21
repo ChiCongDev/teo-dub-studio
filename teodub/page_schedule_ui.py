@@ -573,6 +573,7 @@ class PageSchedulePanel(ttk.Frame):
             return
         try:
             rows = self.store.list(self.manager.account_id, self.manager.page_key)
+            self.tell_owner_if_changed(rows)
             if not self.show_removed.get():
                 rows = [row for row in rows if row['state'] != 'removed']
             selected = self.tree.selection()
@@ -591,6 +592,20 @@ class PageSchedulePanel(ttk.Frame):
             self.select_row()
         except (OSError, ValueError) as exc:
             self.status.set(str(exc))
+
+    def tell_owner_if_changed(self, rows):
+        """21/11/2026: a time or state changed here (or by the scheduler) -> the 'Đăng hôm nay' column of the main table follows at once.
+        Only when something changed, not on every one-second refresh."""
+        signature = tuple((row['id'], row['state'], row['due_at']) for row in rows)
+        if signature == getattr(self, 'posts_signature', None):
+            return
+        self.posts_signature = signature
+        refresh = getattr(self.manager.owner, 'refresh_posts_today', None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception:
+                pass
 
     def selected(self):
         selected = self.tree.selection()

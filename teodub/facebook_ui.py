@@ -46,9 +46,28 @@ def create_page_bridge(owner):
 # Owner 18/11/2026: Chrome that Tèo opened by itself (a scheduled post, or reading numbers) closes when its work is done, unless another
 # post of that account is due this soon. Chrome the owner opened is never closed by Tèo.
 AUTO_CLOSE_KEEP_MINUTES = 10
+OWNER_KEEP_MINUTES = 10  # 21/11: the owner opened a page in a Chrome Tèo opened: kept this long after that, then Tèo may close it.
 SUBMITTED_WAIT_SECONDS = 180  # 20/11: with the result check off nobody confirms the post, so wait before reading numbers / closing.
-INSIGHT_ALL_COLUMNS = ('name', 'views', 'v3', 'v60', 'watch', 'span', 'at', 'page_id', 'url', 'state')
-INSIGHT_SIMPLE_COLUMNS = ('name', 'views', 'v3', 'v60', 'watch', 'span', 'at')
+INSIGHT_ALL_COLUMNS = ('name', 'followers', 'posts', 'views', 'v3', 'v60', 'watch', 'span', 'at', 'page_id', 'url', 'state')
+INSIGHT_SIMPLE_COLUMNS = ('name', 'followers', 'posts', 'views', 'v3', 'v60', 'watch', 'span', 'at')
+# 21/11/2026 'Đăng hôm nay': states of today's schedule counted as posted / needing a check / still waiting. Everything else is not counted.
+POSTED_STATES = {'submitted', 'published', 'verifying'}
+FAILED_STATES = {'needs_attention'}
+WAITING_STATES = {'armed', 'preparing', 'submitting'}
+POSTS_REFRESH_SECONDS = 15  # Also follows schedules changed elsewhere (campaign tabs).
+
+
+def posts_today_text(rows, start, end):
+    """'✔ 2 · ✘ 1 · ⏳ 1' for the schedule rows (dicts with state and due_at) whose time falls in [start, end); '—' when none counts."""
+    counts = [0, 0, 0]
+    for row in rows:
+        if not start <= float(row['due_at']) < end:
+            continue
+        for slot, states in enumerate((POSTED_STATES, FAILED_STATES, WAITING_STATES)):
+            if row['state'] in states:
+                counts[slot] += 1
+    parts = [mark+' '+str(number) for mark, number in zip(('✔', '✘', '⏳'), counts) if number]
+    return ' · '.join(parts) if parts else '—'
 
 
 @dataclass
@@ -74,6 +93,8 @@ class BrowserSession:
     stalled: dict = field(default_factory=dict)  # A started request that timed out and has not reported back.
     insights_running: int = 0  # Views-number reads queued or running in this account's Chrome.
     auto_close: bool = False  # Tèo opened this Chrome for its own work; it closes it when that work is done.
+    owner_used_at: float = 0.0  # time.monotonic() of the owner's last 'open this page' in this Chrome (0: never).
+    close_retry: bool = False  # A later re-check of closing is already planned.
 
 
 class FacebookTab(ttk.Frame):
@@ -93,6 +114,7 @@ class FacebookTab(ttk.Frame):
         self.page_bridge = None
         self.destroyed = False
         self.waiting_after_post = {}  # account -> posts waiting for their numbers / closing
+        self.posts_refreshed = time.monotonic()
         self.timer = None
         self.advanced_visible = False
         self.page_link_visible = False
@@ -251,7 +273,8 @@ class FacebookTab(ttk.Frame):
         self.page_hint_label.grid(row=1, column=0, sticky='w', pady=(0, 8))
         columns = INSIGHT_ALL_COLUMNS
         self.tree = ttk.Treeview(table, columns=columns, show='headings', selectmode='browse', height=10)
-        for key, text, width in [('name', 'Tên Page', 200), ('views', 'Lượt xem', 105), ('v3', 'Xem ≥3 giây', 105),
+        for key, text, width in [('name', 'Tên Page', 200), ('followers', 'Người theo dõi', 110), ('posts', 'Đăng hôm nay', 120),
+                                 ('views', 'Lượt xem', 105), ('v3', 'Xem ≥3 giây', 105),
                                  ('v60', 'Xem ≥1 phút', 105), ('watch', 'Thời gian xem', 140), ('span', 'Khoảng ngày', 150),
                                  ('at', 'Lấy lúc', 90), ('page_id', 'Page ID', 105),
                                  ('url', 'Link Page', 220), ('state', 'Trình duyệt / API', 220)]:
@@ -657,6 +680,7 @@ class FacebookTab(ttk.Frame):
         self.tree.delete(*self.tree.get_children())
         rows = [row for row in self.data['pages'] if row['account_id'] == self.account_id]
         insights, range_key = PageInsights(self.studio.data_dir).load(), self.insight_range_key()
+        posts = self.posts_today()
         for row in rows:
             state = self.browser_state(row['account_id'])+' · API chưa kết nối'
             from teodub.page_activity import PageActivity
@@ -668,7 +692,9 @@ class FacebookTab(ttk.Frame):
                              if connection['status'] == 'reconnect' or connection['page_id'] != row.get('page_id')
                              else 'Đã kết nối đọc API')
             shown = row['name']+(f' (tên mới trên Facebook: {row["facebook_name"]})' if row.get('facebook_name') else '')
-            self.tree.insert('', 'end', iid=row['id'], values=(shown, *self.insight_cells(row, insights, range_key),
+            followers = (insights.get(row['account_id']+':'+row['id']) or {}).get('followers')
+            self.tree.insert('', 'end', iid=row['id'], values=(shown, (followers or {}).get('value', '—'),
+                             posts.get((row['account_id'], row['id']), '—'), *self.insight_cells(row, insights, range_key),
                              row.get('page_id') or '—', row['url'], state))
         if select and self.tree.exists(select):
             self.tree.selection_set(select)
@@ -695,6 +721,31 @@ class FacebookTab(ttk.Frame):
         if entry and self.insight_key == 'yesterday' and not is_complete(key, entry):
             return None
         return entry
+
+    def posts_today(self):
+        """{(account, page): '✔ 2 · ✘ 1 · ⏳ 1'} from Tèo's own schedule (no Chrome, no Facebook). Never raises: a column must not break the table."""
+        try:
+            from teodub.page_schedule import PageScheduleStore
+            start = datetime.datetime.combine(datetime.date.today(), datetime.time.min).timestamp()
+            grouped = {}
+            for row in PageScheduleStore(self.studio.data_dir).list():
+                grouped.setdefault((row['account_id'], row['page_key']), []).append(row)
+            return {key: posts_today_text(rows, start, start+86400) for key, rows in grouped.items()}
+        except Exception:
+            return {}
+
+    def refresh_posts_today(self):
+        """Update only the 'Đăng hôm nay' cells (a post finished, failed, or a minute went by)."""
+        try:
+            if self.destroyed or not self.tree.get_children():
+                return
+            posts = self.posts_today()
+            for iid in self.tree.get_children():
+                row = next((item for item in self.data['pages'] if item['id'] == iid), None)
+                if row:
+                    self.tree.set(iid, 'posts', posts.get((row['account_id'], iid), '—'))
+        except Exception:
+            pass
 
     def insight_cells(self, row, insights, range_key):
         entry = self.insight_entry(row['account_id'], row['id'], range_key, insights)
@@ -828,7 +879,7 @@ class FacebookTab(ttk.Frame):
             return
         self.request_insights(self.account_id, pages, self.button_ranges())
 
-    def request_insights(self, account_id, page_keys, range_keys, *, auto=False):
+    def request_insights(self, account_id, page_keys, range_keys, *, auto=False, switch=None):
         """Queue a read-only read of the Views numbers in this account's Chrome. auto=True (after a post): only when Chrome is already
         open and idle, and it must already be on that Page. Returns True when it was queued."""
         if self.destroyed or self.studio.closing or self.studio.closed or getattr(self.studio, 'restart_draining', False):
@@ -837,14 +888,15 @@ class FacebookTab(ttk.Frame):
         busy = bool(session and session.pending and (session.loading_pages or session.finished.is_set() or session.cancel.is_set()
                                                       or session.insights_running))
         if auto:
-            if not (session and session.pending and session.opened and not busy):
+            blocked = bool(session and (session.loading_pages or session.finished.is_set() or session.cancel.is_set()))
+            if not (session and session.pending and session.opened and not blocked):
                 return False
         elif busy:
             self.insight_note.set('Chrome của tài khoản đang bận (đang đăng bài, Load Page hoặc lấy số liệu); '
                                   'bảng đang hiện số đã lưu. Bấm “Lấy số liệu…” sau khi xong.')
             return False
         command = dict(action='read_insights', data_dir=str(self.studio.data_dir), account_id=account_id,
-                       page_keys=list(page_keys), ranges=list(range_keys), switch=not auto)
+                       page_keys=list(page_keys), ranges=list(range_keys), switch=(not auto) if switch is None else bool(switch))
         if session and session.pending:
             session.commands.put(command)
         else:
@@ -893,10 +945,16 @@ class FacebookTab(ttk.Frame):
     def close_if_idle(self, account_id):
         """Close the Chrome Tèo opened for its own work once nothing is left to do in it. Returns True when it was told to close."""
         session = self.sessions.get(account_id)
-        if (not session or not session.auto_close or not session.pending or not session.opened
-                or session.finished.is_set() or session.cancel.is_set()):
+        if not session or not session.pending:
+            return False
+        if not session.auto_close:
+            self.chrome_log(account_id, 'Không tự đóng: Chrome này do anh mở, không phải Tèo mở.')
+            return False
+        if not session.opened or session.finished.is_set() or session.cancel.is_set():
+            self.chrome_log(account_id, 'Không tự đóng lúc này: Chrome đang khởi động hoặc đang đóng.')
             return False
         reason = ''
+        kept = OWNER_KEEP_MINUTES*60-(time.monotonic()-session.owner_used_at) if session.owner_used_at else 0
         if session.loading_pages:
             reason = 'đang Load Page'
         elif session.insights_running or not session.commands.empty():
@@ -909,6 +967,9 @@ class FacebookTab(ttk.Frame):
             reason = 'có lịch đăng khác trong %d phút tới' % AUTO_CLOSE_KEEP_MINUTES
         elif self.waiting_after_post.get(account_id):
             reason = 'còn bài vừa gửi đang chờ lấy số liệu'
+        elif kept > 0:
+            reason = 'anh vừa mở trang trong Chrome này; Tèo thử đóng lại sau %d phút nữa' % max(1, round(kept/60))
+            self.retry_close_later(account_id, session, kept)
         if reason:
             self.chrome_log(account_id, 'Giữ Chrome mở: '+reason+'.')
             return False
@@ -916,11 +977,27 @@ class FacebookTab(ttk.Frame):
         self.chrome_log(account_id, 'Tự đóng Chrome: đã xong việc.' if closing else 'Muốn tự đóng Chrome nhưng không đóng được.')
         return closing
 
+    def retry_close_later(self, account_id, session, seconds):
+        """Look again once the owner's keep time is over (one planned re-check per Chrome)."""
+        if session.close_retry:
+            return
+        session.close_retry = True
+
+        def again():
+            session.close_retry = False
+            if not self.destroyed and self.sessions.get(account_id) is session:
+                self.close_if_idle(account_id)
+        try:
+            self.after(int(seconds*1000)+1000, again)
+        except Exception:
+            session.close_retry = False
+
     def after_page_submitted(self, account_id, page_key):
         """A scheduled post ended as 'Đã gửi' (result check off). Wait a few minutes for Facebook to take it, then do what happens
         after a confirmed post: read the Views numbers and close the Chrome Tèo opened. Chrome stays open meanwhile."""
         if self.destroyed:
             return
+        self.refresh_posts_today()
         self.waiting_after_post[account_id] = self.waiting_after_post.get(account_id, 0)+1
         self.chrome_log(account_id, 'Bài đã gửi (%s): chờ %d phút rồi lấy số liệu.' % (self.page_name(page_key), SUBMITTED_WAIT_SECONDS//60))
 
@@ -934,29 +1011,43 @@ class FacebookTab(ttk.Frame):
             self.waiting_after_post[account_id] = max(0, self.waiting_after_post.get(account_id, 1)-1)
 
     def after_page_published(self, account_id, page_key):
-        """A scheduled post was confirmed: read the usual ranges for this Page unless they were read in the last half hour."""
+        """A scheduled post went out: read ALL the usual ranges and the followers of this Page again (owner 21/11/2026: every post)."""
+        self.refresh_posts_today()
         try:
-            store = PageInsights(self.studio.data_dir)
-            items = store.load()
             wanted = []
             for key in AFTER_POST:
                 try:
                     parse_range(key)
                 except ValueError:
                     continue
-                dated = parse_range(key)['key']  # 'Hôm nay' is stored by its date.
-                age = store.age_minutes(account_id, page_key, dated, items)
-                if age is None or age >= AFTER_POST_MIN_MINUTES or (key == 'yesterday' and not is_complete(dated, store.get(account_id, page_key, dated, items))):
-                    wanted.append(key)
-            queued = bool(wanted) and self.request_insights(account_id, [page_key], wanted, auto=True)
+                wanted.append(key)
+            pages, only_this = self.pages_after_post(account_id, page_key)
+            # Other Pages need Chrome switched to them (as the 'cả tài khoản' button does); the posted Page alone is only checked.
+            queued = bool(wanted) and self.request_insights(account_id, pages, wanted, auto=True, switch=len(pages) > 1)
             if queued:
-                self.chrome_log(account_id, 'Lấy số liệu %s: %d khoảng.' % (self.page_name(page_key), len(wanted)))
+                if len(pages) > 1:
+                    self.chrome_log(account_id, 'Lấy số liệu %d Page của tài khoản (%s trước): %d khoảng mỗi Page.'
+                                    % (len(pages), self.page_name(page_key), len(wanted)))
+                else:
+                    self.chrome_log(account_id, 'Lấy số liệu %s: %d khoảng%s.' % (self.page_name(page_key), len(wanted), only_this))
             else:
-                self.chrome_log(account_id, ('Không lấy số liệu %s (Chrome không mở sẵn hoặc đang bận).' if wanted
-                                             else 'Số liệu %s vừa lấy gần đây, không lấy lại.') % self.page_name(page_key))
+                self.chrome_log(account_id, 'Không lấy số liệu %s (Chrome không mở sẵn, đang Load Page hoặc đang đóng).'
+                                % self.page_name(page_key))
                 self.close_if_idle(account_id)  # Nothing more to read: the post is done.
         except Exception:  # Numbers are a courtesy; they never get in the way of posting.
             pass
+
+    def pages_after_post(self, account_id, page_key):
+        """Owner 21/11/2026: after a post the numbers of every Page of the account (with a Page ID) are read, the posted one first.
+        Only the posted Page when another post of the account is due soon. Returns (page keys, note for the log)."""
+        try:
+            if self.schedule_busy_within(account_id):
+                return [page_key], ' (chỉ Page vừa đăng: có lịch đăng khác trong %d phút tới)' % AUTO_CLOSE_KEEP_MINUTES
+            others = [row['id'] for row in self.store.load()['pages']
+                      if row['account_id'] == account_id and row['id'] != page_key and str(row.get('page_id', '')).isdigit()]
+            return [page_key]+others, ''
+        except Exception:
+            return [page_key], ''
 
     def page_name(self, page_key):
         try:
@@ -1123,7 +1214,10 @@ class FacebookTab(ttk.Frame):
                 self.status.set('Chrome đang khởi động; đợi trình duyệt sẵn sàng rồi mở trang.' if not session.opened else
                                 'Đang Load Page; đợi đọc xong rồi mở trang để giữ lượt đang đọc.')
                 return False
-            session.auto_close = False  # The owner (or the web portal) is using this Chrome now: it stays open.
+            session.owner_used_at = time.monotonic()  # The owner (or the web portal) is using this Chrome now: kept a while.
+            if session.auto_close:
+                self.chrome_log(current_account, 'Anh mở trang trong Chrome này: Tèo giữ Chrome ít nhất %d phút rồi mới tự đóng.'
+                                % OWNER_KEEP_MINUTES)
             command = dict(action='open_url',url=url,request_id=request_id,
                 cancel_request=navigation_cancel, expires_at=navigation_expires_at) if request_id else url
             if page_navigation:
@@ -1348,6 +1442,9 @@ class FacebookTab(ttk.Frame):
     def poll(self):
         if self.destroyed:
             return
+        if time.monotonic()-self.posts_refreshed >= POSTS_REFRESH_SECONDS:
+            self.posts_refreshed = time.monotonic()
+            self.refresh_posts_today()
         for account_id, session in self.sessions.items():
             while True:
                 try:
