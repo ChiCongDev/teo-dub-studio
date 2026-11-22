@@ -143,7 +143,8 @@ def open_facebook_browser(profile_dir, *, url=FACEBOOK_HOME, cancel=None, finish
                 except Exception as exc:
                     # Every request receives its own meaningful failure; no retry,
                     # relaunch, account switch or silent swallowing of DOM errors.
-                    event('post_error', str(exc) or type(exc).__name__)
+                    from teodub.chrome_errors import brief
+                    event('post_error', brief(str(exc)) or type(exc).__name__)
 
             def page_insights(command):
                 """Owner 18/11/2026: read the Page's Views numbers (read only) and save them; the table refreshes from the saved file."""

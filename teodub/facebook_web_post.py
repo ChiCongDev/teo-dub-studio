@@ -49,6 +49,21 @@ OPENER_WAIT_SECONDS = 20  # 02/11/2026: how long the Page's "Tạo bài viết" 
 PAGE_READY_SECONDS = 30  # 02/11/2026: was 12; the Page name/header of a slow Facebook page.
 REEL_WAIT_SECONDS = 30  # 02/11/2026: was 20; each reel wizard step.
 REEL_NEXT_CLICK_SECONDS = 30  # 02/11/2026: was 5; Facebook's overlay (a notice bar) can cover "Tiếp" for a while.
+# 22/11/2026: the same bar covered the final "Đăng" at 17:20 on 21/11 (it waited 5 s). Waited for, read only; never clicked under it.
+PUBLISH_COVER_WAIT_SECONDS = 30
+POST_SCREENSHOTS_KEPT = 30
+# Read only: what lies on top at the middle of the button (as Playwright checks before clicking), and the text of its fixed layer.
+COVER_SCRIPT = r"""(button) => {
+  const box = button.getBoundingClientRect();
+  if (!(box.width > 0 && box.height > 0)) return {covered: false, text: ''};
+  const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  if (!hit || hit === button || button.contains(hit)) return {covered: false, text: ''};
+  let layer = hit;
+  for (let node = hit; node && node !== document.body && node !== document.documentElement; node = node.parentElement)
+    if (getComputedStyle(node).position === 'fixed') layer = node;
+  const text = (layer.innerText || layer.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  return {covered: true, text};
+}"""
 INSPECT_RESULT_NAVIGATION_SECONDS = 15
 FINISHED_TAB_SECONDS = 3*60  # A post tab is closed (at the next post's start) this long after its Publish click.
 
@@ -702,6 +717,46 @@ class BrowserPagePublisher:
 
     def _result_checks_guard(self):
         return result_checks_guard(self.store.accounts.directory.parent)
+
+    def _wait_until_uncovered(self, tab, button, *, cancel=None, finished=None, progress=None):
+        """Read only, nothing is clicked (22/11/2026): while something of Facebook lies over the final button (a notice bar at the
+        bottom of the window), wait for it to go, up to PUBLISH_COVER_WAIT_SECONDS. Returns '' when the button is free (or when this
+        cannot be told: the click itself still refuses a covered button), else the text of what still covers it."""
+        deadline = time.monotonic()+PUBLISH_COVER_WAIT_SECONDS
+        told = False
+        while True:
+            self._cancel(cancel, finished)
+            try:
+                button.scroll_into_view_if_needed(timeout=5000)
+                seen = button.evaluate(COVER_SCRIPT)
+            except Exception:
+                return ''
+            if not isinstance(seen, dict) or not seen.get('covered'):
+                return ''
+            if progress and not told:
+                progress('Nút Đăng đang bị một ô của Facebook che; Tèo chờ ô đó tự tắt (tối đa %d giây), chưa bấm gì…'
+                         % PUBLISH_COVER_WAIT_SECONDS)
+                told = True
+            if time.monotonic() >= deadline:
+                return str(seen.get('text') or '').strip() or '(không đọc được chữ)'
+            try:
+                tab.wait_for_timeout(500)
+            except Exception:
+                time.sleep(0.5)
+
+    def _save_screenshot(self, tab, post_id):
+        """Best effort: a picture of the Chrome tab when the final button stayed covered (page-publishing/post-screenshots, the last
+        POST_SCREENSHOTS_KEPT kept). Returns its path, or '' when it could not be taken."""
+        try:
+            folder = Path(self.store.accounts.directory)/'post-screenshots'
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder/(datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+str(post_id)[:8]+'.png')
+            tab.screenshot(path=str(path), timeout=10000)
+            for old in sorted(folder.glob('*.png'))[:-POST_SCREENSHOTS_KEPT]:
+                old.unlink(missing_ok=True)
+            return str(path)
+        except Exception:
+            return ''
 
     def _dismiss_call_prompt(self, tab, cancel, finished, progress, *, seconds):
         """Press only "Not now" on Facebook's "add a Call Now button" prompt.
@@ -1729,6 +1784,12 @@ class BrowserPagePublisher:
                 button = _one_visible(dialog.get_by_role('button', name=PUBLISH_NAMES), 'nút Đăng cuối cùng')
                 if not button.is_enabled():
                     raise ValueError('Nút Đăng không còn sẵn sàng; giữ Chrome để kiểm tra.')
+                cover = self._wait_until_uncovered(tab, button, cancel=cancel, finished=finished, progress=progress)
+                if cover:  # Still covered: stop before the click, so the post is certainly not sent.
+                    shot = self._save_screenshot(tab, post_id)
+                    raise ValueError(f'Chưa bấm Đăng: nút Đăng bị một ô của Facebook che hơn {PUBLISH_COVER_WAIT_SECONDS} giây '
+                                     f'(chữ trên ô: «{cover[:120]}»). Bài CHƯA gửi lên Facebook; xem Chrome rồi đặt lại giờ đăng.'
+                                     + (f' Ảnh chụp: {shot}' if shot else ''))
                 baseline = (tab.evaluate(RESULT_SCRIPT) if self._result_checks_enabled()
                             else dict(statuses=[], articles=[]))
                 self._cancel(cancel, finished)
@@ -1743,7 +1804,8 @@ class BrowserPagePublisher:
                     review=deepcopy(post['browser_review']), baseline=baseline, tab_url=tab.url, references=[], notifications={})
                 self.store.save_browser_tracking(account_id, page_key, post_id, tracking)
                 try:
-                    button.click(timeout=5000)
+                    # Playwright clicks only once the button is free, and at most once: waiting longer cannot post twice.
+                    button.click(timeout=PUBLISH_COVER_WAIT_SECONDS*1000)
                 except Exception as exc:
                     if not _navigation_interrupted(exc):
                         raise

@@ -1,6 +1,7 @@
 """Cooperative browser jobs: every Playwright call stays on its owning thread."""
 from collections import deque
 
+from teodub.chrome_errors import brief
 from teodub.common import check_cancel
 
 
@@ -62,7 +63,7 @@ class BrowserPostTasks:
                 self._close(task)
             except Exception:
                 pass  # The original, scoped failure remains the useful one.
-            task['event']('post_error', str(exc) or type(exc).__name__)
+            task['event']('post_error', brief(str(exc)) or type(exc).__name__)
         else:
             self.order.append(request_id)
 
@@ -74,7 +75,7 @@ class BrowserPostTasks:
             try:
                 self._close(task)
             except Exception as exc:
-                message = str(exc) or type(exc).__name__
+                message = brief(str(exc)) or type(exc).__name__
             else:
                 message = 'Phiên Chrome đã đóng hoặc gián đoạn. Kiểm tra Page trước; không tự gửi lại.'
             task['event']('post_error', message)
