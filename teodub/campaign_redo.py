@@ -4,7 +4,8 @@ A finished video is never touched silently. Here the owner asks for it, and Tèo
 downloaded video and the Vietnamese lines are reused (no download, no AI call); only the voice and the render are made again.
 * A video already posted or sent to a Page (a Page schedule with any attempt) is left alone: Facebook's copy cannot change.
 * A video whose Page schedule has not been sent keeps that schedule: the same time and caption move to the new file when it is
-  ready (`page_schedule_redo`). A schedule due within SOON_SECONDS is not touched, so it is not left half way.
+  ready (`page_schedule_redo`). Owner 22/11/2026: also when it is due soon (no more 30-minute rule): at its time it waits for the new
+  voice and is posted as soon as it is ready (`page_schedule_voice`).
 * The old output is kept as it is; the new one is written beside it ("..._lan-2"). Until the new one is ready the video stays
   "Hoàn tất" with the old file, and if the new one fails the old one simply stays.
 While the link's worker runs it is the only writer of campaign.json, so only a request (`redo-*.json`) is left, applied between
@@ -18,7 +19,7 @@ from teodub.common import atomic_json
 from teodub.pipeline import _job_lock
 
 UNSENT = {'scheduled', 'armed', 'paused', 'needs_attention'}  # With no attempt yet: the rows that can still follow a new file.
-SOON_SECONDS = 30*60
+FOLLOW_FILE = 'redo-follow.json'  # 22/11/2026: the link's saved settings that finished videos must follow ("làm lại" ticked).
 
 
 def schedule_rows(data_dir, campaign_id):
@@ -34,7 +35,8 @@ def schedule_rows(data_dir, campaign_id):
 
 def next_due(data_dir, campaign_id, now=None):
     """Read only (no store is built, nothing initialised): {video number: the soonest FUTURE due time of its saved or armed
-    Page schedule}. Used to make first the finished videos that will be posted first."""
+    Page schedule}. Used to make first the finished videos that will be posted first. 22/11/2026: an ARMED schedule already due
+    counts too (it waits for its new voice), with its time, so its video comes first of all."""
     import re
     from teodub.campaign_posting import _read_schedules
     path = Path(data_dir)/'page-publishing'/'schedules.sqlite3'
@@ -47,7 +49,8 @@ def next_due(data_dir, campaign_id, now=None):
     for row in rows:
         match = re.fullmatch(re.escape(campaign_id)+r':([1-9][0-9]*)', str(row.get('source_key', '')))
         due = row.get('due_at')
-        if match and row.get('state') in ('armed', 'scheduled') and type(due) in (int, float) and due >= now:
+        if (match and type(due) in (int, float)
+                and (row.get('state') == 'armed' or row.get('state') == 'scheduled' and due >= now)):
             number = int(match.group(1))
             result[number] = min(due, result.get(number, due))
     return result
@@ -62,6 +65,55 @@ def redo_priority(directory, manifest, now=None):
         return []
     due = next_due(Path(directory).resolve().parent.parent, manifest['id'], now)
     return sorted((item for item in waiting if item['number'] in due), key=lambda item: (due[item['number']], item['number']))
+
+
+def overdue_redo(directory, manifest, item, now=None):
+    """Owner 22/11/2026: a finished video waiting to be made again whose Page post is already due (its schedule waits for it). It runs
+    even when the link's "Số video mỗi ngày" is reached."""
+    if item.get('status') != 'completed' or not item.get('redo'):
+        return False
+    now = time.time() if now is None else now
+    due = next_due(Path(directory).resolve().parent.parent, manifest['id'], now)
+    return item['number'] in due and due[item['number']] <= now
+
+
+def remember_follow(directory, settings_id):
+    """Owner 22/11/2026: "làm lại" was ticked when `settings_id` was saved (None: not ticked). A video still being made then finishes
+    with the older settings; `follow_after_finish` makes it again. Never raises (only this convenience would be lost)."""
+    try:
+        path = Path(directory)/FOLLOW_FILE
+        if settings_id:
+            atomic_json(path, dict(version=1, settings_id=str(settings_id)))
+        else:
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def follow_settings(directory):
+    try:
+        value = read_json(Path(directory)/FOLLOW_FILE).get('settings_id')
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) and value else None
+
+
+def follow_after_finish(directory, manifest, item, job):
+    """In the worker, right after a video finished: when the link's newest saved settings were saved with "làm lại" ticked and this
+    video was made with older ones (it was being made then), it is marked to be made again. Returns True when marked; never raises."""
+    try:
+        wanted = follow_settings(directory)
+        if not wanted:
+            return False
+        from teodub.campaign_settings import next_settings
+        current = next_settings(directory)
+        if not current or current['id'] != wanted:
+            return False
+        if read_json(Path(job)/'config.json').get('campaign_settings_version') == wanted:
+            return False
+        return bool(mark_redo(manifest, [item['number']]))
+    except Exception:  # Only this extra remake is missed; the finished video stays as it is.
+        return False
 
 
 def build_plan(directory, *, settings_id=None, now=None, unchanged=None, blocked=None,
@@ -90,8 +142,6 @@ def build_plan(directory, *, settings_id=None, now=None, unchanged=None, blocked
             entry['reason'] = 'Chưa có thành phẩm.'
         elif any(row['attempted_at'] or row['request_id'] or row['finished_at'] or row['state'] not in UNSENT for row in found):
             entry['reason'] = 'Đã đăng hoặc đã gửi lên Page; bản trên Facebook không đổi được.'
-        elif any(row['state'] == 'armed' and row['due_at'] < now+SOON_SECONDS for row in found):
-            entry['reason'] = 'Sắp đến giờ đăng (dưới 30 phút); để Tèo đăng bản hiện có.'
         elif settings_id and _uses(directory, item, settings_id):
             entry['reason'] = 'Đã làm bằng giọng này.'
         elif blocked is not None and _answer(directory, item, blocked):

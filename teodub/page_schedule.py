@@ -553,6 +553,8 @@ class PageScheduleController:
         self.last_tick = 0
         self.redo_checked = 0
         self.dropped_checked = 0
+        self.voice_checked = {}  # 22/11/2026: schedule id -> clock of the last look at its link while it waits for its new voice
+        self.holds_tidied = 0
         # Only a continuously observed, locally owned wait can extend the
         # lateness allowance. These witnesses are deliberately never persisted.
         self.queue_waits = {}
@@ -583,7 +585,12 @@ class PageScheduleController:
         was down moves to the Page's next free daily time (the `free_slots` of the bulk re-plan), or stays paused with the
         reason when the Page has no daily times. `tick` still re-checks the snapshot before anything is sent."""
         from teodub.page_schedule_replan import free_slots, page_times
+        from teodub.page_schedule_voice import is_waiting, read_holds
         wall = time.time()
+        try:
+            holds = read_holds(self.store)
+        except (OSError, ValueError, TypeError):
+            holds = {}
         groups = {}
         for row in self.store.list():
             if (row['state'] == 'paused' and not row['attempted_at'] and not row['request_id']
@@ -592,7 +599,7 @@ class PageScheduleController:
         for (account_id,page_key),rows in groups.items():
             rows.sort(key=lambda row:(row['due_at'],row['source'].get('number',0),row['id']))
             late = [row for row in rows if row['due_at'] <= wall+RESUME_MARGIN_SECONDS
-                    and row['source'].get('kind') != 'text' and row['source'].get('path')]
+                    and row['source'].get('kind') != 'text' and row['source'].get('path') and not is_waiting(row, holds)]
             slots = {}
             times = page_times(self.store.data_dir,account_id,page_key) if late else []
             if times:
@@ -605,6 +612,11 @@ class PageScheduleController:
             for row in rows:
                 ident = row['id']
                 try:
+                    if is_waiting(row, holds):  # 22/11/2026 (owner): it waited for its new voice; it goes on waiting, then is posted.
+                        self.start(ident, waiting=True)
+                        self.store.update(ident, message='Tèo bị dừng ngang; đã tự bật lại, tiếp tục chờ bản giọng mới (giờ cũ '
+                                          +display_time(row['due_at'])+', UTC+7).')
+                        continue
                     if ident in slots:
                         self.store.reschedule(ident,slots[ident])
                     elif row['due_at'] <= wall+RESUME_MARGIN_SECONDS:
@@ -764,7 +776,7 @@ class PageScheduleController:
                 results['skipped'][ident] = str(exc)
         return results
 
-    def start(self, ident):
+    def start(self, ident, *, waiting=False):
         if self.closed:
             raise ValueError('Tèo đang đóng; mở lại để tiếp tục lịch chưa gửi.')
         row = self.store.get(ident)
@@ -772,7 +784,7 @@ class PageScheduleController:
             return row
         if row['attempted_at']:
             raise ValueError('Lịch đã có lượt thao tác; kiểm tra Facebook trước, không tự gửi lại.')
-        if row['due_at']<=time.time():
+        if row['due_at']<=time.time() and not waiting:  # waiting: it waits for its new voice past its time (22/11/2026).
             raise ValueError('Giờ đăng đã qua; đổi giờ mới để tránh dồn bài.')
         guard = self.guard(ident)
         guard.__enter__()
@@ -1199,12 +1211,31 @@ class PageScheduleController:
         from teodub.page_schedule_voice import blocked_reason
         return blocked_reason(row, manifests)
 
-    def _hold_or_swap(self, row, reason):
-        from teodub.page_schedule_voice import hold_or_swap
+    def _hold_for_voice(self, row, reason, clock):
+        from teodub.page_schedule_voice import hold_or_pause
         try:
-            hold_or_swap(self, row, reason)
+            hold_or_pause(self, row, reason, clock)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.owner.status.set('Lịch đăng cần kiểm tra: '+str(exc))
+
+    def _end_voice_wait(self, row):
+        """True when this due row waited for its new voice and was just given the time now (or could not be: looked at again)."""
+        from teodub.page_schedule_voice import end_wait
+        try:
+            return end_wait(self, row)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.owner.status.set('Lịch đăng cần kiểm tra: '+str(exc))
+            return True
+
+    def _tidy_voice_waits(self, clock):
+        if clock-self.holds_tidied < 60:
+            return
+        self.holds_tidied = clock
+        from teodub.page_schedule_voice import tidy_holds
+        try:
+            tidy_holds(self.store)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass  # Only bookkeeping: tried again in a minute.
 
     def _apply_dropped_videos(self, clock):
         """Every few seconds: the schedules of videos whose remake failed 3 times are removed, and the next ready video takes the time."""
@@ -1242,6 +1273,7 @@ class PageScheduleController:
             self._observe_queue(clock)
             self._follow_redone_videos(clock)
             self._apply_dropped_videos(clock)
+            self._tidy_voice_waits(clock)
             while True:
                 try:
                     ident,error = self.validation.get_nowait()
@@ -1360,8 +1392,10 @@ class PageScheduleController:
                         continue
                     # Owner 16/11/2026: a video whose new voice is not ready is never posted with the old one.
                     reason = self._voice_block(row)
-                    if reason:
-                        self._hold_or_swap(row, reason)
+                    if reason:  # 22/11/2026 (owner): still being made again: it waits (armed), posted as soon as it is ready.
+                        self._hold_for_voice(row, reason, clock)
+                        continue
+                    if self._end_voice_wait(row):  # Its new voice came after its time: given the time now, posted from the next look.
                         continue
                     try:
                         if self._wait_for_account(row, time.time(), clock):

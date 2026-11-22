@@ -64,7 +64,7 @@ def picking_order(directory, manifest):
     video: finished videos waiting to be made again whose Page schedule is soonest first (by due time), then the link's usual
     `run_order`. Each video is given once per run. `manifest` is edited in place by the caller, so videos marked for a redo while
     the link runs are seen here too."""
-    taken = set()
+    taken, again = set(), set()
     while True:
         absorb_redo(directory, manifest)  # A redo asked for while the link runs is part of the order for the very next video.
         absorb_priority(directory, manifest)  # 13/11/2026: so is a "Chạy video đã chọn" asked for while the link runs.
@@ -76,9 +76,11 @@ def picking_order(directory, manifest):
             first = []
         urgent = {item['number'] for item in first}|{item['number'] for item in chosen}
         item = next((item for item in [*chosen, *first, *(x for x in run_order(manifest) if x['number'] not in urgent)]
-                     if item['number'] not in taken), None)
+                     if item['number'] not in taken or (item.get('redo') and item['number'] not in again)), None)
         if item is None:
             return
+        if item['number'] in taken:  # 22/11/2026: finished in this run with older settings, now to be made again: once more.
+            again.add(item['number'])
         taken.add(item['number'])
         yield item
 
@@ -680,7 +682,10 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 from teodub.campaign_daily import rest_for
                 # 13/11/2026 (owner, "Chạy video đã chọn"): a video the owner chose runs now even when the day's number is reached; the
                 # normal videos after it still follow the limit.
-                rest = None if item['number'] in chosen_numbers(manifest) else rest_for(directory, manifest)
+                # 22/11/2026 (owner): so does a video made again for a Page post that is already due (the post waits for it).
+                from teodub.campaign_redo import overdue_redo
+                rest = (None if item['number'] in chosen_numbers(manifest) or overdue_redo(directory, manifest, item)
+                        else rest_for(directory, manifest))
                 if rest is not None:
                     break
                 # Another campaign's turn: never in the middle of a video, only before the next one starts. Only a
@@ -747,6 +752,9 @@ def _run_campaign_locked(directory, retry_failed=False, runner=None, *, external
                 item.update(status=result['status'], message=str(result.get('message') or ''), outputs=result.get('outputs', {}))
                 if result.get('google_drive') is not None:
                     item['google_drive'] = result['google_drive']
+                if item['status'] == 'completed':  # 22/11/2026: made with older settings while "làm lại" was asked: made again.
+                    from teodub.campaign_redo import follow_after_finish
+                    follow_after_finish(directory, manifest, item, job)
                 # No download service is usable: not this video's fault, so no red error; wait and try it again.
                 waiting_source = item['status'] == 'failed' and item['message'].startswith(WAITING_SOURCE)
                 if waiting_source:

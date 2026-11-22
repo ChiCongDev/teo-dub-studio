@@ -223,6 +223,7 @@ class ChangeVoiceDialog(tk.Toplevel):
         try:
             record = save_next_link_settings(self.studio.data_dir, self.directory, selection=selection, original_gain=original,
                                              voice_gain=voice, allow_finished=self.redo.get(), what='thay đổi mới')
+            campaign_redo.remember_follow(self.directory, record['id'] if self.redo.get() else None)  # 22/11/2026
             changed = ' và '.join(part for part, used in (('giọng', selection is not None),
                                                           ('âm lượng', original is not None or voice is not None)) if used)
             message = f'Đã đổi {changed} của "{self.name}" cho video chưa làm, từ video chạy tiếp theo.'

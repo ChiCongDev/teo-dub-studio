@@ -1,7 +1,8 @@
 """16/11/2026 (owner): a video whose new voice is not ready is never posted with the old one.
 * a remake that fails is tried 3 times in all, at once; failed every time, the video is dropped for good and the link goes on;
-* at the due time of a video without its new voice the Page's nearest later ready video takes the time (and the other takes its time);
-  nothing ready later: the schedule is paused and nothing is posted; not even "Dang ngay" posts the old voice;
+* 22/11/2026: at the due time of a video still being made again the schedule waits (armed) and is posted as soon as the new voice is
+  ready (test_voice_wait); a later ready video keeps its own time; a video whose last remake failed is paused; not even "Đăng ngay"
+  posts the old voice;
 * a dropped video's Page schedule is removed and the nearest later ready video takes its time.
 Local fixtures only: no worker process, Chrome, Facebook or AI."""
 import time
@@ -151,51 +152,35 @@ class BlockedTests(Gate):
         self.assertEqual(self.store.get(first), row)  # Nothing changed.
 
 
-class SwapTests(Gate):
-    def test_a_due_video_without_its_voice_swaps_places_with_the_nearest_later_ready_video(self):
+class WaitGateTests(Gate):
+    def test_a_due_video_still_being_made_again_waits_armed_and_a_later_ready_video_keeps_its_time(self):
         a = self.finished(4)
         first, second, third, fourth = self.armed(a, 4, (5, 6, 7, 8))
-        times = {i: self.store.get(i)['due_at'] for i in (first, second, third, fourth)}
+        times = {i: self.store.get(i)['due_at'] for i in (second, third, fourth)}
         self.mark(a, 1, redo=True)
-        self.mark(a, 2, redo=True)  # The next one is not ready either: the third is the nearest ready one.
+        self.mark(a, 2, redo=True)
         self.due_now(first)
+        due = self.store.get(first)['due_at']
         self.tick()
-        was, took = self.store.get(first), self.store.get(third)
-        self.assertEqual(was['due_at'], times[third])  # Video 1 moved to the time of video 3.
-        self.assertLessEqual(took['due_at'], time.time())  # Video 3 takes the time that is due now.
-        self.assertEqual(self.store.get(second)['due_at'], times[second])
-        self.assertEqual(self.store.get(fourth)['due_at'], times[fourth])
-        self.assertEqual((was['state'], took['state']), ('armed', 'armed'))
-        self.assertIn('Video 3', was['message'])
-        self.assertIn('Video 1', took['message'])
-        self.assertEqual((took['source']['number'], took['body'] != was['body']), (3, True))  # Each keeps its own video and caption.
+        row = self.store.get(first)
+        self.assertEqual((row['state'], row['due_at']), ('armed', due))  # Waits where it is …
+        self.assertIn('Đang chờ bản giọng mới của Video 1', row['message'])
+        for ident in (second, third, fourth):
+            self.assertEqual(self.store.get(ident)['due_at'], times[ident])  # … and nothing else moves (no swap any more).
         self.controller.owner.submit_page_browser.assert_not_called()
 
-    def test_nothing_ready_later_pauses_the_schedule_and_posts_nothing(self):
-        a = self.finished(3)
-        first, second, third = self.armed(a, 3, (5, 6, 7))
-        for n in (1, 2, 3):
-            self.mark(a, n, redo=True)
+    def test_a_video_whose_last_remake_failed_is_paused_and_nothing_is_posted(self):
+        a = self.finished(2)
+        first, second = self.armed(a, 2, (5, 6))
+        self.mark(a, 1, redo_failed=dict(at='2026-11-15T10:00:00+07:00', message='Codex dịch thiếu hoặc thừa câu'))
         self.due_now(first)
         self.tick()
         row = self.store.get(first)
         self.assertEqual(row['state'], 'paused')
         self.assertIn('không đăng bản giọng cũ', row['message'])
         self.assertNotIn(first, self.controller.guards)
-        self.assertEqual(self.store.get(second)['state'], 'armed')  # The others wait for their own time.
+        self.assertEqual(self.store.get(second)['state'], 'armed')
         self.controller.owner.submit_page_browser.assert_not_called()
-
-    def test_only_an_armed_untouched_later_appointment_of_the_same_page_is_a_partner(self):
-        a = self.finished(4)
-        first, second, third = self.armed(a, 3, (5, 6, 7))
-        fourth = self.schedule(a, 4, 8)  # Saved, never switched on: not armed.
-        self.store.update(second, state='paused')  # Paused: not a partner either.
-        self.mark(a, 1, redo=True)
-        self.due_now(first)
-        self.tick()
-        self.assertEqual(self.store.get(first)['state'], 'armed')
-        self.assertLessEqual(self.store.get(third)['due_at'], time.time())
-        self.assertEqual(self.store.get(fourth)['state'], 'scheduled')
 
     def test_a_ready_video_is_posted_as_before(self):
         a = self.finished(2)

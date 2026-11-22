@@ -915,14 +915,22 @@ class FacebookTab(ttk.Frame):
     def schedule_busy_within(self, account_id, minutes=AUTO_CLOSE_KEEP_MINUTES):
         """True when a schedule of this account is being worked on or falls due within `minutes`. Unknown counts as busy."""
         try:
-            rows = self.get_page_scheduler().store.list(account_id)
+            store = self.get_page_scheduler().store
+            rows = store.list(account_id)
         except Exception:
             return True
+        holds = {}
+        try:
+            from teodub.page_schedule_voice import read_holds
+            holds = read_holds(store)
+        except Exception:
+            pass  # No wait known: every armed row counts, as before.
         horizon = time.time()+minutes*60
         for row in rows:
             if row['state'] in {'preparing', 'submitting', 'verifying'}:
                 return True
-            if row['state'] == 'armed' and row['due_at'] <= horizon:
+            # 22/11/2026: a schedule waiting for its new voice past its time does not keep Chrome open (it may wait for hours).
+            if row['state'] == 'armed' and row['due_at'] <= horizon and holds.get(row.get('id'), {}).get('due_at') != row['due_at']:
                 return True
         return False
 

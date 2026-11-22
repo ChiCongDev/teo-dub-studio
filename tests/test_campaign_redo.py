@@ -195,7 +195,7 @@ class PageFixture(Redo):
 
 
 class PageTests(PageFixture):
-    def test_the_plan_leaves_sent_and_soon_videos_alone_and_counts_unsent_schedules(self):
+    def test_the_plan_leaves_sent_videos_alone_makes_soon_ones_again_and_counts_unsent_schedules(self):
         a = self.finished(6)
         armed, saved, sent, soon, _ = (self.schedule(a, n, h) for n, h in ((1, 5), (2, 6), (3, 7), (4, .2), (5, 8)))
         self.controller.start(armed)
@@ -206,13 +206,13 @@ class PageTests(PageFixture):
         atomic_json(a/'campaign.json', manifest)
         plan = campaign_redo.build_plan(a)
         kinds = {e['number']: (e['kind'], e['scheduled']) for e in plan['entries']}
-        self.assertEqual(kinds, {1: ('redo', True), 2: ('redo', True), 3: ('skip', False), 4: ('skip', False),
+        # 22/11/2026: a video due within 30 minutes is made again too (its post waits for the new voice).
+        self.assertEqual(kinds, {1: ('redo', True), 2: ('redo', True), 3: ('skip', False), 4: ('redo', True),
                                  5: ('redo', True), 6: ('skip', False)})
         reasons = {e['number']: e['reason'] for e in plan['entries']}
         self.assertIn('Đã đăng hoặc đã gửi', reasons[3])
-        self.assertIn('Sắp đến giờ đăng', reasons[4])
         self.assertIn('Không đăng', reasons[6])
-        self.assertEqual((plan['numbers'], plan['scheduled']), ([1, 2, 5], 3))
+        self.assertEqual((plan['numbers'], plan['scheduled']), ([1, 2, 4, 5], 4))
 
     def test_a_schedule_never_sent_follows_the_new_file_with_the_same_time_and_caption(self):
         a = self.finished(3)

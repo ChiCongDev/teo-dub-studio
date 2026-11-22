@@ -572,6 +572,7 @@ class LinkConfigDialog(tk.Toplevel):
         try:
             keep = config_presets.preset_settings(self.capture())
             record = save_next_settings(self.data_dir, self.directory, merged, allow_finished=self.redo.get())
+            campaign_redo.remember_follow(self.directory, record['id'] if self.redo.get() else None)  # 22/11/2026
             try:
                 write_redo_choice(self.directory, self.redo.get())  # Remembered for the next time the window opens.
             except OSError:
@@ -609,6 +610,7 @@ class LinkConfigDialog(tk.Toplevel):
             if not update:
                 self.status.set('Chưa đổi gì: link chưa có cấu hình đã lưu; sửa một ô rồi bấm Lưu chỉnh sửa.')
                 return
+            campaign_redo.remember_follow(self.directory, update['id'])  # 22/11/2026: ticked for the saved settings.
             plan = self.plan(settings, update['id'])
             if not plan['numbers']:
                 self.status.set('Chưa đổi gì và không có video đã xong nào cần làm lại.')
