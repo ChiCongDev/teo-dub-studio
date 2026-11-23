@@ -5,6 +5,20 @@ import subprocess
 import sys
 
 
+def quiet_error_boxes():
+    """23/11/2026 (owner): Windows must never stop a Tèo process with a "Bad Image" box that waits for someone to press OK.
+    Smart App Control on a staff PC blocked llvmlite.dll (error 0xc0e90002) while VieNeu trimmed a "Giọng từ mẫu" sample, and the
+    video stood at "Tạo giọng" until OK was pressed. With SEM_FAILCRITICALERRORS such a load just fails, quietly, and VieNeu uses
+    its own trim (as it did after OK). Workers, ffmpeg and Chrome started from here inherit the mode. Never raises."""
+    if sys.platform != 'win32':
+        return
+    try:
+        import msvcrt
+        msvcrt.SetErrorMode(msvcrt.GetErrorMode() | msvcrt.SEM_FAILCRITICALERRORS)
+    except (ImportError, AttributeError, OSError):
+        pass
+
+
 def bootstrap_environment(args, project=None):
     """Reopen source launches in the project's installed runtime, before imports."""
     if getattr(sys, 'frozen', False):
@@ -29,6 +43,7 @@ def bootstrap_environment(args, project=None):
 
 def main(args=None):
     args = list(sys.argv[1:] if args is None else args)
+    quiet_error_boxes()  # First: the runtime a source launch reopens in inherits it too.
     redirected = bootstrap_environment(args)
     if redirected is not None:
         return redirected
