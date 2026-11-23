@@ -57,15 +57,30 @@ WAITING_STATES = {'armed', 'preparing', 'submitting'}
 POSTS_REFRESH_SECONDS = 15  # Also follows schedules changed elsewhere (campaign tabs).
 
 
-def posts_today_text(rows, start, end):
-    """'✔ 2 · ✘ 1 · ⏳ 1' for the schedule rows (dicts with state and due_at) whose time falls in [start, end); '—' when none counts."""
+def posts_today_text(rows, start, end, label_of=None):
+    """'✔ 2 · ✘ 1 · ⏳ 1' for the schedule rows (dicts with state and due_at) whose time falls in [start, end); '—' when none counts.
+    Owner 23/11/2026: counted by what the schedule table SHOWS. ✘ only for "Cần kiểm tra" and "Dừng trước khi bấm Đăng — Facebook
+    chưa nhận bài"; "Chưa xác minh đã đăng" is ✔; "Đã tạm dừng" is not counted. `label_of(row)` is the table's label of an attempt
+    (page_schedule_recovery.attempt_label) or None."""
+    from teodub.page_schedule_recovery import STOPPED_BEFORE_PUBLISH, UNVERIFIED
     counts = [0, 0, 0]
     for row in rows:
         if not start <= float(row['due_at']) < end:
             continue
-        for slot, states in enumerate((POSTED_STATES, FAILED_STATES, WAITING_STATES)):
-            if row['state'] in states:
-                counts[slot] += 1
+        special = label_of(row) if label_of else None
+        if special == STOPPED_BEFORE_PUBLISH:
+            slot = 1
+        elif special == UNVERIFIED:
+            slot = 0
+        elif row['state'] in FAILED_STATES:  # Shown as "Cần kiểm tra".
+            slot = 1
+        elif row['state'] in POSTED_STATES:
+            slot = 0
+        elif row['state'] in WAITING_STATES:
+            slot = 2
+        else:
+            continue
+        counts[slot] += 1
     parts = [mark+' '+str(number) for mark, number in zip(('✔', '✘', '⏳'), counts) if number]
     return ' · '.join(parts) if parts else '—'
 
@@ -726,11 +741,14 @@ class FacebookTab(ttk.Frame):
         """{(account, page): '✔ 2 · ✘ 1 · ⏳ 1'} from Tèo's own schedule (no Chrome, no Facebook). Never raises: a column must not break the table."""
         try:
             from teodub.page_schedule import PageScheduleStore
+            from teodub.page_schedule_recovery import attempt_label
             start = datetime.datetime.combine(datetime.date.today(), datetime.time.min).timestamp()
+            store = PageScheduleStore(self.studio.data_dir)
             grouped = {}
-            for row in PageScheduleStore(self.studio.data_dir).list():
+            for row in store.list():
                 grouped.setdefault((row['account_id'], row['page_key']), []).append(row)
-            return {key: posts_today_text(rows, start, start+86400) for key, rows in grouped.items()}
+            return {key: posts_today_text(rows, start, start+86400, lambda row: attempt_label(store, row))
+                    for key, rows in grouped.items()}
         except Exception:
             return {}
 

@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from teodub.page_schedule import STATE_LABELS, display_time, parse_time
-from teodub.page_schedule_recovery import stopped_before_publish
+from teodub.page_schedule_recovery import attempt_label, stopped_before_publish
 from teodub.page_publish_settings import result_checks_enabled
 from teodub.table_sort import TableSort
 
@@ -628,17 +628,8 @@ class PageSchedulePanel(ttk.Frame):
             if row['id'] not in self.controller.active:
                 return 'Đã gửi — chờ kiểm tra lại'
             return 'Đã gửi — đang xác minh'
-        if row['state'] in {'paused', 'needs_attention'} and row['attempted_at'] and row['phase'] in {'publish', 'verify'}:
-            try:
-                post = self.store.activity.post(row['account_id'], row['page_key'], row['post_id'])
-                if post['state'] == 'unknown':
-                    # 02/11/2026: stopped at the last checks, before the Publish click was ever made.
-                    if stopped_before_publish(row, post, self.store.activity.events(row['account_id'], row['page_key'], row['post_id'])):
-                        return 'Dừng trước khi bấm Đăng — Facebook chưa nhận bài'
-                    return 'Chưa xác minh đã đăng'
-            except (OSError, ValueError):
-                pass
-        return label
+        # 02/11/2026: an attempt that ended unknown says whether Publish was clicked. Shared with 'Đăng hôm nay' (23/11/2026).
+        return attempt_label(self.store, row) or label
 
     def select_row(self, event=None):
         selected = self.tree.selection()

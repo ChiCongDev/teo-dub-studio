@@ -38,6 +38,27 @@ def _target(store, row, post):
     return target
 
 
+STOPPED_BEFORE_PUBLISH = 'Dừng trước khi bấm Đăng — Facebook chưa nhận bài'
+UNVERIFIED = 'Chưa xác minh đã đăng'
+
+
+def attempt_label(store, row):
+    """What the schedule table shows for a paused / needs-attention row whose publish attempt ended unknown (02/11/2026):
+    STOPPED_BEFORE_PUBLISH when the Publish click was never made, UNVERIFIED when it may have been; None for any other row (the
+    table then shows the plain state). Shared with the 'Đăng hôm nay' column (owner 23/11/2026). Never raises for a missing post."""
+    if row['state'] not in {'paused', 'needs_attention'} or not row.get('attempted_at') or row.get('phase') not in {'publish', 'verify'}:
+        return None
+    try:
+        post = store.activity.post(row['account_id'], row['page_key'], row['post_id'])
+        if post['state'] != 'unknown':
+            return None
+        if stopped_before_publish(row, post, store.activity.events(row['account_id'], row['page_key'], row['post_id'])):
+            return STOPPED_BEFORE_PUBLISH
+        return UNVERIFIED
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def stopped_before_publish(row, post, events):
     """02/11/2026: a post prepared in Chrome (preview 'review') that stopped at the last checks, before Tèo ever moved it to
     'submitting': the Publish click was never made. Anything that reached submitting/processing/published is NOT this."""
