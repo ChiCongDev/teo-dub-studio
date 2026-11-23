@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import re
+import shutil
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit, urlunsplit
 import uuid
 
@@ -305,6 +306,28 @@ class FacebookAccounts:
             if row is None:
                 raise ValueError('Không còn Page này trong tài khoản. Bấm Làm mới.')
             value['pages'].remove(row)
+
+    def remove_account(self, account_id):
+        """Owner 23/11/2026: forget an account and its Pages (Tèo's list only; nothing on Facebook). Returns (account, its pages)."""
+        with self._edit() as value:
+            row = self._account(value, account_id)
+            pages = [page for page in value['pages'] if page['account_id'] == account_id]
+            value['accounts'].remove(row)
+            value['pages'] = [page for page in value['pages'] if page['account_id'] != account_id]
+            if value.get('selected_account_id') == account_id:
+                value['selected_account_id'] = value['accounts'][0]['id'] if value['accounts'] else ''
+        return row, pages
+
+    def remove_profile(self, account_id):
+        """The Chrome profile of a removed account (its Facebook sign-in on this machine). Returns what could not be deleted (a file
+        still in use); [] when all is gone or there was nothing."""
+        root = (self.directory/'browser-profiles').resolve()
+        path = (root/_id(account_id)).resolve()
+        if path.parent != root or not path.exists():
+            return []
+        failed = []
+        shutil.rmtree(path, onexc=lambda _function, name, _error: failed.append(str(name)))
+        return failed or ([str(path)] if path.exists() else [])
 
     def merge_discovered_pages(self, account_id, items, *, message='', status='observed', rename_ok=None, in_use=None, rename=None):
         """Merge one browser scan atomically. Partial scans never delete saved Pages.

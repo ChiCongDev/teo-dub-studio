@@ -241,10 +241,10 @@ class FacebookTab(ttk.Frame):
         account_table = ttk.LabelFrame(self.lists, text='Danh sách tài khoản Facebook', padding=8)
         account_table.columnconfigure(0, weight=1)
         account_table.rowconfigure(0, weight=1)
-        self.account_tree = ttk.Treeview(account_table, columns=('name', 'pages', 'browser'),
+        self.account_tree = ttk.Treeview(account_table, columns=('name', 'pages', 'browser', 'delete'),
                                         show='headings', selectmode='browse', height=10)
         for key, text, width in [('name', 'Tài khoản', 145), ('pages', 'Page đã lưu', 85),
-                                 ('browser', 'Trình duyệt', 125)]:
+                                 ('browser', 'Trình duyệt', 125), ('delete', 'Xóa', 70)]:
             self.account_tree.heading(key, text=text)
             self.account_tree.column(key, width=width, minwidth=45, stretch=key == 'name')
         self.account_tree.grid(row=0, column=0, sticky='nsew')
@@ -257,8 +257,10 @@ class FacebookTab(ttk.Frame):
         self.account_tree.bind('<Double-1>', self.open_selected_account)
         self.account_tree.bind('<Return>', lambda _: self.open_selected_account())
         self.account_tree.bind('<Button-3>', self.show_account_menu)
+        self.account_tree.bind('<ButtonRelease-1>', self.click_account_cell, add='+')  # 23/11/2026: the "✕ Xóa" cell.
         self.account_menu = tk.Menu(self, tearoff=False)
         self.account_menu.add_command(label='Load Page', command=lambda: self.load_pages(self.context_account_id))
+        self.account_menu.add_command(label='Xóa tài khoản…', command=lambda: self.delete_account(self.context_account_id))
         ttk.Label(account_table, textvariable=self.account_count, wraplength=310).grid(
             row=2, column=0, sticky='w', pady=(6, 0))
         self.lists.add(account_table, weight=1)
@@ -496,6 +498,52 @@ class FacebookTab(ttk.Frame):
         finally:
             self.account_menu.grab_release()
 
+    def click_account_cell(self, event):
+        """A click on the "✕ Xóa" cell of an account row."""
+        if (self.destroyed or self.account_tree.identify_region(event.x, event.y) != 'cell'
+                or self.account_tree.identify_column(event.x) != '#4'):
+            return
+        row = self.account_tree.identify_row(event.y)
+        if row:
+            self.delete_account(row)
+
+    def delete_account(self, account_id=None):
+        """Owner 23/11/2026: Xóa tài khoản — Tèo's list only, nothing on Facebook (facebook_account_removal). Returns True when done."""
+        account_id = account_id or self.account_id
+        if self.destroyed or self.studio.closing or self.studio.closed or account_id not in self.account_ids:
+            return False
+        from teodub import facebook_account_removal as removal
+        session = self.sessions.get(account_id)
+        if session and session.pending:
+            self.status.set('Chrome của tài khoản này đang mở. Đóng Chrome (Đóng trình duyệt / Lưu phiên) và đợi đóng xong rồi xóa.')
+            return False
+        try:
+            plan = removal.removal_plan(self.studio.data_dir, account_id, self.get_page_scheduler().store)
+        except (OSError, ValueError) as exc:
+            self.status.set('Chưa xóa được tài khoản: '+str(exc))
+            return False
+        if plan['busy']:
+            self.status.set('Tài khoản đang có bài chuẩn bị/gửi/xác minh. Đợi xong rồi xóa.')
+            return False
+        if not messagebox.askyesno('Xóa tài khoản', removal.confirm_text(plan), icon='warning', default='no', parent=self):
+            return False
+        for page in plan['pages']:
+            window = self.manager_windows.pop(page['id'], None)
+            if window is not None and window.winfo_exists():
+                window.destroy()
+        try:
+            result = removal.remove(self.get_page_scheduler(), self.studio.data_dir, account_id, plan)
+        except (OSError, ValueError) as exc:
+            self.status.set('Chưa xóa được tài khoản: '+str(exc))
+            self.reload()
+            return False
+        self.sessions.pop(account_id, None)
+        if self.account_id == account_id:
+            self.account_id = ''
+        self.reload()
+        self.status.set(removal.done_text(plan, result))
+        return True
+
     def load_pages(self, account_id=None, *, request_id=None):
         account_id = account_id or self.account_id
         if self.destroyed or self.studio.closing or self.studio.closed:
@@ -625,7 +673,7 @@ class FacebookTab(ttk.Frame):
                 state = 'Có lỗi'
             else:
                 state = 'Đã đóng' if session else 'Chưa mở'
-            values = (row['name'], counts[row['id']], state)
+            values = (row['name'], counts[row['id']], state, '✕ Xóa')
             if not self.account_tree.exists(row['id']):
                 self.account_tree.insert('', 'end', iid=row['id'], values=values)
             elif tuple(self.account_tree.item(row['id'], 'values')) != tuple(str(value) for value in values):
