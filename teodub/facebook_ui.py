@@ -12,6 +12,7 @@ import tkinter as tk
 import uuid
 from tkinter import messagebox, simpledialog, ttk
 
+from teodub import after_post_numbers
 from teodub.facebook_accounts import BUSINESS_SUITE, FACEBOOK_HOME, FACEBOOK_PAGES, META_APPS, FacebookAccounts, facebook_browser_url
 from teodub.page_publish_settings import result_checks_enabled, set_result_checks_enabled
 from teodub.page_insights import (AFTER_POST, AFTER_POST_MIN_MINUTES, STANDARD as INSIGHT_STANDARD, CHOICES as INSIGHT_CHOICES, PageInsights, custom_key, parse_date_text,
@@ -48,6 +49,8 @@ def create_page_bridge(owner):
 AUTO_CLOSE_KEEP_MINUTES = 10
 OWNER_KEEP_MINUTES = 10  # 21/11: the owner opened a page in a Chrome Tèo opened: kept this long after that, then Tèo may close it.
 SUBMITTED_WAIT_SECONDS = 180  # 20/11: with the result check off nobody confirms the post, so wait before reading numbers / closing.
+NUMBERS_CHECK_SECONDS = 5  # 24/11/2026: how often the after-post reads still to do are looked at.
+NUMBERS_STARTUP_GRACE = 60  # A read caught up after Tèo opened again waits this long: the schedules come first.
 INSIGHT_ALL_COLUMNS = ('name', 'followers', 'posts', 'views', 'v3', 'v60', 'watch', 'span', 'at', 'page_id', 'url', 'state')
 INSIGHT_SIMPLE_COLUMNS = ('name', 'followers', 'posts', 'views', 'v3', 'v60', 'watch', 'span', 'at')
 # 21/11/2026 'Đăng hôm nay': states of today's schedule counted as posted / needing a check / still waiting. Everything else is not counted.
@@ -128,7 +131,10 @@ class FacebookTab(ttk.Frame):
         self.page_scheduler = None
         self.page_bridge = None
         self.destroyed = False
-        self.waiting_after_post = {}  # account -> posts waiting for their numbers / closing
+        # 24/11/2026 (owner): after EVERY post the numbers are read; the reads still to do live in after_post_numbers' file.
+        self.numbers_run = uuid.uuid4().hex  # This Tèo's mark on the reads it hands to Chrome.
+        self.numbers_started = time.time()
+        self.numbers_checked = 0.0
         self.posts_refreshed = time.monotonic()
         self.timer = None
         self.advanced_visible = False
@@ -1039,8 +1045,8 @@ class FacebookTab(ttk.Frame):
             reason = 'còn trang đang mở dở'
         elif self.schedule_busy_within(account_id):
             reason = 'có lịch đăng khác trong %d phút tới' % AUTO_CLOSE_KEEP_MINUTES
-        elif self.waiting_after_post.get(account_id):
-            reason = 'còn bài vừa gửi đang chờ lấy số liệu'
+        elif self.numbers_waiting(account_id):
+            reason = 'còn bài vừa đăng đang chờ lấy số liệu'
         elif kept > 0:
             reason = 'anh vừa mở trang trong Chrome này; Tèo thử đóng lại sau %d phút nữa' % max(1, round(kept/60))
             self.retry_close_later(account_id, session, kept)
@@ -1067,61 +1073,132 @@ class FacebookTab(ttk.Frame):
             session.close_retry = False
 
     def after_page_submitted(self, account_id, page_key):
-        """A scheduled post ended as 'Đã gửi' (result check off). Wait a few minutes for Facebook to take it, then do what happens
-        after a confirmed post: read the Views numbers and close the Chrome Tèo opened. Chrome stays open meanwhile."""
-        if self.destroyed:
-            return
-        self.refresh_posts_today()
-        self.waiting_after_post[account_id] = self.waiting_after_post.get(account_id, 0)+1
-        self.chrome_log(account_id, 'Bài đã gửi (%s): chờ %d phút rồi lấy số liệu.' % (self.page_name(page_key), SUBMITTED_WAIT_SECONDS//60))
-
-        def later():
-            self.waiting_after_post[account_id] = max(0, self.waiting_after_post.get(account_id, 1)-1)
-            if not self.destroyed:
-                self.after_page_published(account_id, page_key)
-        try:
-            self.after(SUBMITTED_WAIT_SECONDS*1000, later)
-        except Exception:
-            self.waiting_after_post[account_id] = max(0, self.waiting_after_post.get(account_id, 1)-1)
+        """A scheduled post ended as 'Đã gửi' (result check off): Facebook takes a few minutes to take it, so its numbers are read
+        SUBMITTED_WAIT_SECONDS later. Chrome stays open meanwhile."""
+        self.numbers_after_post(account_id, page_key, 'đã gửi', SUBMITTED_WAIT_SECONDS)
 
     def after_page_published(self, account_id, page_key):
-        """A scheduled post went out: read ALL the usual ranges and the followers of this Page again (owner 21/11/2026: every post)."""
-        self.refresh_posts_today()
+        """A scheduled post was confirmed on the Page: its numbers are read at once."""
+        self.numbers_after_post(account_id, page_key, 'đã đăng', 0)
+
+    def after_page_ended(self, account_id, page_key):
+        """24/11/2026 (owner): a post that ended any other way ('Chưa xác minh đã đăng', 'Cần kiểm tra', 'Dừng trước khi bấm Đăng')
+        has its numbers read all the same, a few minutes later."""
+        self.numbers_after_post(account_id, page_key, 'kết thúc chưa rõ kết quả hoặc bị lỗi', SUBMITTED_WAIT_SECONDS)
+
+    def numbers_after_post(self, account_id, page_key, ended, delay):
+        """Owner 21/11 + 24/11/2026: after EVERY post Tèo ran, whatever it ended as, the numbers of all Pages of the account are read
+        (the posted Page first). The read is written down first (page-publishing/numbers-after-post.json): a Tèo closed meanwhile
+        does it when it opens again. Never raises: numbers never get in the way of posting."""
         try:
-            wanted = []
-            for key in AFTER_POST:
-                try:
-                    parse_range(key)
-                except ValueError:
-                    continue
-                wanted.append(key)
-            pages, only_this = self.pages_after_post(account_id, page_key)
-            # Other Pages need Chrome switched to them (as the 'cả tài khoản' button does); the posted Page alone is only checked.
-            queued = bool(wanted) and self.request_insights(account_id, pages, wanted, auto=True, switch=len(pages) > 1)
-            if queued:
-                if len(pages) > 1:
-                    self.chrome_log(account_id, 'Lấy số liệu %d Page của tài khoản (%s trước): %d khoảng mỗi Page.'
-                                    % (len(pages), self.page_name(page_key), len(wanted)))
-                else:
-                    self.chrome_log(account_id, 'Lấy số liệu %s: %d khoảng%s.' % (self.page_name(page_key), len(wanted), only_this))
+            self.refresh_posts_today()
+        except Exception:
+            pass
+        try:
+            after_post_numbers.add(self.studio.data_dir, account_id, page_key, delay=delay)
+            self.chrome_log(account_id, 'Bài %s (%s): %s.' % (ended, self.page_name(page_key), 'lấy số liệu ngay' if delay <= 0
+                                                              else 'chờ %d phút rồi lấy số liệu' % max(1, round(delay/60))))
+            self.run_numbers_after_post()
+        except Exception:
+            pass
+
+    def numbers_waiting(self, account_id):
+        """True while an after-post read of the account is still to do or running: Tèo keeps the Chrome it opened meanwhile."""
+        try:
+            return after_post_numbers.waiting(self.studio.data_dir, account_id)
+        except Exception:
+            return False
+
+    def posting_now(self, account_id):
+        """A post of the account is being worked on (it goes before any numbers). Unknown counts as yes."""
+        try:
+            return any(row['state'] in {'preparing', 'submitting', 'verifying'} for row in self.get_page_scheduler().store.list(account_id))
+        except Exception:
+            return True
+
+    def run_numbers_after_post(self):
+        """Hand the after-post reads whose time has come to Chrome (from poll every NUMBERS_CHECK_SECONDS, and right after a post).
+        A read waits while its account's Chrome is busy or one of its posts is being worked on. A closed Chrome is opened for it, and
+        closed again once nothing is left. Never raises."""
+        self.numbers_checked = time.monotonic()
+        if self.destroyed or self.studio.closing or self.studio.closed or getattr(self.studio, 'restart_draining', False):
+            return
+        try:
+            entries = after_post_numbers.due(self.studio.data_dir, self.numbers_run)
+            if not entries:
+                return
+            accounts = {row['id'] for row in self.store.load()['accounts']}
+        except Exception:
+            return
+        for account_id, entry in entries:
+            try:
+                self.start_numbers_read(account_id, entry, accounts)
+            except Exception:
+                continue
+
+    def start_numbers_read(self, account_id, entry, accounts):
+        data_dir = self.studio.data_dir
+        if account_id not in accounts:  # The account was removed from Tèo.
+            after_post_numbers.drop(data_dir, account_id)
+            return
+        if entry['added_at'] < self.numbers_started and time.time() < self.numbers_started+NUMBERS_STARTUP_GRACE:
+            return  # Left by the Tèo before this one: the schedules go first, a minute after opening.
+        session = self.sessions.get(account_id)
+        open_now = bool(session and session.pending)
+        if open_now and (not session.opened or session.loading_pages or session.finished.is_set() or session.cancel.is_set()
+                         or session.insights_running
+                         or any(item['state'] in {'queued', 'running', 'verifying'} for item in session.post_actions.values())):
+            return  # Chrome is busy (or starting/closing): looked at again in a few seconds.
+        if self.posting_now(account_id):
+            return
+        wanted = []
+        for key in AFTER_POST:
+            try:
+                parse_range(key)
+            except ValueError:
+                continue
+            wanted.append(key)
+        pages, note = self.pages_after_post(account_id, entry['pages'])
+        if not self.request_insights(account_id, pages, wanted, auto=open_now, switch=True):
+            if after_post_numbers.try_again(data_dir, account_id, entry):
+                self.chrome_log(account_id, 'Chưa mở được Chrome để lấy số liệu; thử lại sau %d phút.'
+                                % (after_post_numbers.RETRY_SECONDS//60))
             else:
-                self.chrome_log(account_id, 'Không lấy số liệu %s (Chrome không mở sẵn, đang Load Page hoặc đang đóng).'
-                                % self.page_name(page_key))
-                self.close_if_idle(account_id)  # Nothing more to read: the post is done.
-        except Exception:  # Numbers are a courtesy; they never get in the way of posting.
+                self.chrome_log(account_id, 'Bỏ lượt lấy số liệu: %d lần không mở được Chrome.' % after_post_numbers.MAX_TRIES)
+            return
+        after_post_numbers.handed_over(data_dir, account_id, entry, self.numbers_run)
+        self.chrome_log(account_id, 'Lấy số liệu %d Page (%s trước): %d khoảng mỗi Page%s.'
+                        % (len(pages), self.page_name(pages[0]), len(wanted), note))
+
+    def numbers_read_ended(self, account_id):
+        """The read Tèo handed to this account's Chrome reported back: it is done, whatever it could read (the log says what)."""
+        try:
+            after_post_numbers.finished(self.studio.data_dir, account_id, self.numbers_run)
+        except Exception:
+            pass
+
+    def numbers_chrome_closed(self, account_id):
+        """The account's Chrome closed before the read it was given reported back: it is tried again a little later."""
+        try:
+            if not after_post_numbers.try_again(self.studio.data_dir, account_id, None, run=self.numbers_run):
+                self.chrome_log(account_id, 'Bỏ lượt lấy số liệu: Chrome đóng giữa chừng %d lần.' % after_post_numbers.MAX_TRIES)
+        except Exception:
             pass
 
     def pages_after_post(self, account_id, page_key):
-        """Owner 21/11/2026: after a post the numbers of every Page of the account (with a Page ID) are read, the posted one first.
-        Only the posted Page when another post of the account is due soon. Returns (page keys, note for the log)."""
+        """Owner 21/11/2026: after a post the numbers of every Page of the account (with a Page ID) are read, the posted ones first
+        (`page_key`: one key or a list, latest first). Only the posted Pages when another post of the account is due soon.
+        Returns (page keys, note for the log)."""
+        posted = list(dict.fromkeys([page_key] if isinstance(page_key, str) else page_key))
         try:
             if self.schedule_busy_within(account_id):
-                return [page_key], ' (chỉ Page vừa đăng: có lịch đăng khác trong %d phút tới)' % AUTO_CLOSE_KEEP_MINUTES
-            others = [row['id'] for row in self.store.load()['pages']
-                      if row['account_id'] == account_id and row['id'] != page_key and str(row.get('page_id', '')).isdigit()]
-            return [page_key]+others, ''
+                return posted, ' (chỉ Page vừa đăng: có lịch đăng khác trong %d phút tới)' % AUTO_CLOSE_KEEP_MINUTES
+            rows = [row for row in self.store.load()['pages'] if row['account_id'] == account_id and row['id'] not in posted]
+            others = [row['id'] for row in rows if str(row.get('page_id', '')).isdigit()]
+            missing = [row['name'] for row in rows if not str(row.get('page_id', '')).isdigit()]
+            return posted+others, (' (bỏ qua Page chưa có Page ID: '+', '.join(missing)+')' if missing else '')
         except Exception:
-            return [page_key], ''
+            return posted, ''
 
     def page_name(self, page_key):
         try:
@@ -1529,6 +1606,8 @@ class FacebookTab(ttk.Frame):
                     session.restart_error = str(value)
                 elif kind in ('done', 'error'):
                     session.stalled = {}
+                    if session.insights_running:
+                        self.numbers_chrome_closed(account_id)
                     session.insights_running = 0
                     if session.loading_pages:
                         session.page_load_status = 'Load Page bị gián đoạn trước khi lưu danh sách. Chọn Load Page lại; Page cũ được giữ.'
@@ -1593,10 +1672,13 @@ class FacebookTab(ttk.Frame):
                     session.insights_running = max(0, session.insights_running-1)
                     if isinstance(value, dict):
                         session.status = str(value.get('message') or '')[:600]
+                        self.chrome_log(account_id, 'Kết quả lấy số liệu: '+session.status)  # 24/11/2026: why a Page was not read.
                         if account_id == self.account_id:
                             self.insight_note.set(session.status)
                             self.display_pages()
                             self.refresh_buttons()
+                    if not session.insights_running:
+                        self.numbers_read_ended(account_id)
                     self.close_if_idle(account_id)
                 elif kind == 'navigation':
                     if isinstance(value, dict) and value.get('request_id') in session.navigation:
@@ -1699,6 +1781,8 @@ class FacebookTab(ttk.Frame):
                             session.loading_pages = False
                             session.page_load_active = ''
         self.refresh_buttons()
+        if time.monotonic()-self.numbers_checked >= NUMBERS_CHECK_SECONDS:
+            self.run_numbers_after_post()
         if self.page_scheduler is not None:
             self.page_scheduler.tick()
         if self.page_bridge is not None:

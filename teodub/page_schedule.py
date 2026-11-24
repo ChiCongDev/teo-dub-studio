@@ -22,6 +22,8 @@ LOCAL_TIME = timezone(timedelta(hours=7))
 INTERRUPTED = 'Phiên Tèo trước đã dừng.'  # Starts the message of a row paused because Tèo was lost (crash, shutdown, restart).
 CLOSED = 'Tèo đã đóng;'  # Starts the message `close` leaves on an armed row. Both marks are re-armed; a hand pause has neither.
 RESUME_MARGIN_SECONDS = 60  # A time closer than this at reopening counts as passed.
+# 24/11/2026 (owner): a post Tèo was working on (these states) that ends, whatever the end, has the account's numbers read afterwards.
+RUN_STATES = frozenset({'preparing', 'submitting', 'verifying'})
 STATE_LABELS = {'scheduled':'Đã lưu, chưa bật', 'armed':'Đang chờ giờ đăng', 'paused':'Đã tạm dừng',
     'preparing':'Đang chuẩn bị trong Chrome', 'submitting':'Đang gửi tới Facebook',
     'verifying':'Đã gửi — đang xác minh', 'published':'Đã xác nhận đăng',
@@ -572,6 +574,8 @@ class PageScheduleController:
                             state='needs_attention' if row['attempted_at'] else 'paused',
                             message=INTERRUPTED+(' Kiểm tra kết quả nếu đã có lượt gửi; chưa tự chạy lại.' if row['attempted_at']
                                 else ' Chưa gửi lần nào; Tèo sẽ tự bật lại.'))
+                    if row['state'] in RUN_STATES:  # 24/11/2026: lost mid-post (crash): its numbers are read a little later.
+                        self._numbers_later(row)
                 except (OSError,ValueError):
                     pass  # Another process still owns the schedule.
         self._resume_interrupted()
@@ -1025,11 +1029,28 @@ class PageScheduleController:
             self.release(ident)
 
     def fail(self, ident, message):
+        row = None
         try:
-            self.cancel_request(self.store.get(ident))
+            row = self.store.get(ident)
+            self.cancel_request(row)
             self.store.update(ident,state='needs_attention',message=str(message)[:10000])
         finally:
             self.release(ident)
+        if row['state'] in RUN_STATES:  # 24/11/2026 (owner): a post that ended unclear or failed has its numbers read all the same.
+            hook = getattr(self.owner, 'after_page_ended', None)
+            if hook:
+                try:
+                    hook(row['account_id'], row['page_key'])
+                except Exception:  # Numbers never get in the way of the schedules.
+                    pass
+
+    def _numbers_later(self, row):
+        """24/11/2026: a post lost mid-way (Tèo closed or crashed) has the account's numbers read when Tèo runs again. Never raises."""
+        try:
+            from teodub.after_post_numbers import WAIT_SECONDS, add
+            add(self.store.data_dir, row['account_id'], row['page_key'], delay=WAIT_SECONDS)
+        except Exception:
+            pass
 
     def cancel(self, ident):
         if ident in self.guards:
@@ -1441,6 +1462,8 @@ class PageScheduleController:
                 self.cancel_request(row)
                 self.store.update(ident,state='needs_attention' if row['attempted_at'] else 'paused',
                     message='Tèo đã đóng; chưa tự chạy lại. Kiểm tra Page nếu đã có lượt thao tác.')
+                if row['state'] in RUN_STATES:  # 24/11/2026: closed mid-post: its numbers are read when Tèo opens again.
+                    self._numbers_later(row)
             except (OSError,ValueError):
                 pass
             self.release(ident)

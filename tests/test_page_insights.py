@@ -341,6 +341,14 @@ class InsightUITests(unittest.TestCase):
         self.tab.sessions[account] = self.session
         return account, row
 
+    def time_passes(self, account):
+        """24/11/2026: the after-post read waiting in numbers-after-post.json is due now; Tèo looks at it."""
+        from teodub import after_post_numbers as apn
+        items = apn.load(self.studio.data_dir)
+        items[account]['due_at'] = time.time()-1
+        apn._write(self.studio.data_dir, items)
+        self.tab.run_numbers_after_post()
+
     def save(self, account, row, key='28d', text=TEXT_28):
         label, metrics = pi.parse_page_text(text)
         pi.PageInsights(self.studio.data_dir).save(account, row['id'], key, label, metrics, at='2026-11-18T09:30:00')
@@ -385,7 +393,7 @@ class InsightUITests(unittest.TestCase):
         self.assertEqual(self.tab.insight_key, '28d')
         self.assertEqual(self.tab.insight_picker.current(), self.tab.insight_keys.index('28d'))
 
-    def test_after_a_post_the_usual_ranges_are_queued_without_switching_identity(self):
+    def test_after_a_post_the_usual_ranges_are_queued_and_chrome_may_go_to_the_page(self):
         account, row = self.page()
         self.tab.after_page_published(account, row['id'])
         command = self.session.commands.get_nowait()
@@ -396,8 +404,9 @@ class InsightUITests(unittest.TestCase):
                 expected.append(key)
             except ValueError:
                 pass
+        # 24/11/2026: switch, as the buttons do: after a failed post Chrome may not be on that Page.
         self.assertEqual((command['action'], command['ranges'], command['page_keys'], command['switch']),
-                         ('read_insights', expected, [row['id']], False))
+                         ('read_insights', expected, [row['id']], True))
         self.assertEqual(self.session.insights_running, 1)
 
     def test_after_a_post_nothing_is_queued_when_chrome_is_not_open_or_busy_but_fresh_numbers_are_read_again(self):
@@ -414,8 +423,14 @@ class InsightUITests(unittest.TestCase):
             pi.PageInsights(self.studio.data_dir).save(account, row['id'], pi.parse_range(key)['key'], 'x', {})  # Saved just now.
         self.tab.after_page_published(account, row['id'])  # Owner 21/11: every post reads everything again.
         self.assertEqual(len(self.session.commands.get_nowait()['ranges']), len(pi.AFTER_POST))
-        self.tab.after_page_published(account, row['id'])  # Queued behind the read that is still running.
-        self.assertEqual(self.session.insights_running, 2)
+        # 24/11/2026: a post that ends while a read runs is read once more after it, not queued on top of it.
+        self.tab.after_page_published(account, row['id'])
+        self.assertEqual(self.session.insights_running, 1)
+        self.assertTrue(self.session.commands.empty())
+        self.session.messages.put(('insights_done', dict(account_id=account, message='Đã lấy 9 số liệu.', ok=True)))
+        self.drain()
+        self.tab.run_numbers_after_post()
+        self.assertEqual(self.session.commands.get_nowait()['action'], 'read_insights')
 
     def test_failure_inside_the_hook_never_reaches_the_caller(self):
         account, row = self.page()
@@ -783,14 +798,14 @@ class SubmittedTests(InsightUITests):
         self.assertEqual(pi._change_of(['Giảm 1,5%']), -1.5)
 
     def test_sub_submitted_post_waits_then_reads_numbers(self):
+        from teodub import after_post_numbers as apn
         account, row = self.page()
         self.session.auto_close = True
-        with patch.object(self.tab, 'after') as later:
-            self.tab.after_page_submitted(account, row['id'])
-        self.assertEqual(later.call_args[0][0], 180000)
+        self.tab.after_page_submitted(account, row['id'])
+        self.assertAlmostEqual(apn.load(self.studio.data_dir)[account]['due_at']-time.time(), 180, delta=10)
         self.assertTrue(self.session.commands.empty())  # Nothing at once.
         self.assertFalse(self.tab.close_if_idle(account))  # Chrome stays open while waiting.
-        later.call_args[0][1]()
+        self.time_passes(account)
         self.assertEqual(self.session.commands.get_nowait()['action'], 'read_insights')
 
     def test_sub_submitted_post_reads_then_closes_chrome(self):
@@ -799,9 +814,8 @@ class SubmittedTests(InsightUITests):
         at = datetime.datetime.now().isoformat(timespec='seconds')
         for key in pi.AFTER_POST:
             pi.PageInsights(self.studio.data_dir).save(account, row['id'], pi.parse_range(key)['key'], 'x', {}, at=at)
-        with patch.object(self.tab, 'after') as later:
-            self.tab.after_page_submitted(account, row['id'])
-        later.call_args[0][1]()
+        self.tab.after_page_submitted(account, row['id'])
+        self.time_passes(account)
         self.assertEqual(self.session.commands.get_nowait()['action'], 'read_insights')
         self.session.messages.put(('insights_done', dict(account_id=account, message='ok', ok=True)))
         self.drain()
@@ -822,16 +836,15 @@ class ChromeLogTests(InsightUITests):
     def test_log_sent_post_waiting_reading_then_closing(self):
         account, row = self.page()
         self.session.auto_close = True
-        with patch.object(self.tab, 'after') as later:
-            self.tab.after_page_submitted(account, row['id'])
+        self.tab.after_page_submitted(account, row['id'])
         self.assertIn('Bài đã gửi', self.log())
         self.assertIn('chờ 3 phút', self.log())
-        later.call_args[0][1]()
+        self.time_passes(account)
         self.assertIn('Lấy số liệu', self.log())
         self.session.commands.get_nowait()
-        self.session.insights_running = 1
         self.session.messages.put(('insights_done', dict(account_id=account, message='Đã lấy.', ok=True)))
         self.drain()
+        self.assertIn('Kết quả lấy số liệu: Đã lấy.', self.log())  # 24/11/2026: the result stays in the log.
         self.assertIn('Tự đóng Chrome: đã xong việc.', self.log())
 
     def test_log_says_why_chrome_is_kept(self):
@@ -993,7 +1006,8 @@ class AllPagesAfterPostTests(InsightUITests):
         self.assertIs(command['switch'], True)  # Chrome goes to each Page, like the 'cả tài khoản' button.
         self.assertEqual(len(command['ranges']), len(pi.AFTER_POST))
         log = (Path(self.studio.data_dir)/'page-publishing'/'chrome-log.txt').read_text(encoding='utf-8')
-        self.assertIn('Lấy số liệu 2 Page của tài khoản', log)
+        self.assertIn('Lấy số liệu 2 Page (Sinh Tồn trước)', log)
+        self.assertIn('bỏ qua Page chưa có Page ID: Chưa có ID', log)  # 24/11/2026: a Page left out is named.
 
     def test_all_only_the_posted_page_when_another_post_is_due_soon(self):
         account, row = self.page()
@@ -1001,7 +1015,7 @@ class AllPagesAfterPostTests(InsightUITests):
         with patch.object(self.tab, 'schedule_busy_within', return_value=True):
             self.tab.after_page_published(account, row['id'])
         command = self.session.commands.get_nowait()
-        self.assertEqual((command['page_keys'], command['switch']), ([row['id']], False))
+        self.assertEqual((command['page_keys'], command['switch']), ([row['id']], True))
         log = (Path(self.studio.data_dir)/'page-publishing'/'chrome-log.txt').read_text(encoding='utf-8')
         self.assertIn('chỉ Page vừa đăng', log)
 
