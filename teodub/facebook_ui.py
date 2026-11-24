@@ -221,6 +221,9 @@ class FacebookTab(ttk.Frame):
         self.facebook_button.pack(side='left', padx=(0, 6))
         self.load_pages_button = ttk.Button(browser, text='Load Page của tài khoản', command=self.load_pages)
         self.load_pages_button.pack(side='left', padx=(0, 6))
+        # Owner 24/11/2026: deleting an account is this button (it was a "✕ Xóa" column in the account list).
+        self.delete_account_button = ttk.Button(browser, text='Xóa tài khoản…', command=self.delete_account)
+        self.delete_account_button.pack(side='left', padx=(0, 6))
         self.business_button = ttk.Button(browser, text='Mở Business Suite', command=self.open_business)
         self.business_button.pack(side='left', padx=(0, 6))
         self.developers_button = ttk.Button(browser, text='Mở Meta Developers', command=self.open_developers)
@@ -247,10 +250,9 @@ class FacebookTab(ttk.Frame):
         account_table = ttk.LabelFrame(self.lists, text='Danh sách tài khoản Facebook', padding=8)
         account_table.columnconfigure(0, weight=1)
         account_table.rowconfigure(0, weight=1)
-        self.account_tree = ttk.Treeview(account_table, columns=('name', 'pages', 'browser', 'delete'),
+        self.account_tree = ttk.Treeview(account_table, columns=('name', 'pages', 'browser'),
                                         show='headings', selectmode='browse', height=10)
-        for key, text, width in [('name', 'Tài khoản', 145), ('pages', 'Page đã lưu', 85),
-                                 ('browser', 'Trình duyệt', 125), ('delete', 'Xóa', 70)]:
+        for key, text, width in [('name', 'Tài khoản', 145), ('pages', 'Page đã lưu', 85), ('browser', 'Trình duyệt', 125)]:
             self.account_tree.heading(key, text=text)
             self.account_tree.column(key, width=width, minwidth=45, stretch=key == 'name')
         self.account_tree.grid(row=0, column=0, sticky='nsew')
@@ -263,7 +265,6 @@ class FacebookTab(ttk.Frame):
         self.account_tree.bind('<Double-1>', self.open_selected_account)
         self.account_tree.bind('<Return>', lambda _: self.open_selected_account())
         self.account_tree.bind('<Button-3>', self.show_account_menu)
-        self.account_tree.bind('<ButtonRelease-1>', self.click_account_cell, add='+')  # 23/11/2026: the "✕ Xóa" cell.
         self.account_menu = tk.Menu(self, tearoff=False)
         self.account_menu.add_command(label='Load Page', command=lambda: self.load_pages(self.context_account_id))
         self.account_menu.add_command(label='Xóa tài khoản…', command=lambda: self.delete_account(self.context_account_id))
@@ -504,15 +505,6 @@ class FacebookTab(ttk.Frame):
         finally:
             self.account_menu.grab_release()
 
-    def click_account_cell(self, event):
-        """A click on the "✕ Xóa" cell of an account row."""
-        if (self.destroyed or self.account_tree.identify_region(event.x, event.y) != 'cell'
-                or self.account_tree.identify_column(event.x) != '#4'):
-            return
-        row = self.account_tree.identify_row(event.y)
-        if row:
-            self.delete_account(row)
-
     def delete_account(self, account_id=None):
         """Owner 23/11/2026: Xóa tài khoản — Tèo's list only, nothing on Facebook (facebook_account_removal). Returns True when done."""
         account_id = account_id or self.account_id
@@ -679,7 +671,7 @@ class FacebookTab(ttk.Frame):
                 state = 'Có lỗi'
             else:
                 state = 'Đã đóng' if session else 'Chưa mở'
-            values = (row['name'], counts[row['id']], state, '✕ Xóa')
+            values = (row['name'], counts[row['id']], state)
             if not self.account_tree.exists(row['id']):
                 self.account_tree.insert('', 'end', iid=row['id'], values=values)
             elif tuple(self.account_tree.item(row['id'], 'values')) != tuple(str(value) for value in values):
@@ -1547,6 +1539,8 @@ class FacebookTab(ttk.Frame):
         for button in (self.advanced_button, self.page_link_button):
             button.configure(state='normal' if ready and not self.studio.closed else 'disabled')
         self.rename_account_button.configure(state='normal' if idle and self.account_id else 'disabled')
+        self.delete_account_button.configure(state='normal' if ready and not self.studio.closed and self.account_id
+                                             else 'disabled')
         self.facebook_button.configure(state='normal' if usable and not self.studio.closing else 'disabled')
         load_usable = (manual and not (session and session.pending and
             (session.loading_pages or session.finished.is_set() or session.cancel.is_set()

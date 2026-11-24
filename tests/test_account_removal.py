@@ -127,15 +127,35 @@ class RemovalUITests(unittest.TestCase):
             self.assertTrue(self.tab.add_account())
         return self.tab.account_id
 
-    def test_every_row_has_a_delete_cell_and_yes_removes_the_account(self):
+    def test_the_button_deletes_the_chosen_account_and_yes_removes_it(self):
+        # Owner 24/11/2026: a button after "Load Page của tài khoản", no "✕ Xóa" column in the list any more.
         first, second = self.account('Một'), self.account('Hai')
-        self.assertEqual(self.tab.account_tree.item(first)['values'][3], '✕ Xóa')
+        self.assertEqual(tuple(self.tab.account_tree['columns']), ('name', 'pages', 'browser'))
+        self.assertEqual(len(self.tab.account_tree.item(first)['values']), 3)
+        buttons = self.tab.load_pages_button.master.pack_slaves()
+        self.assertEqual(buttons.index(self.tab.delete_account_button), buttons.index(self.tab.load_pages_button)+1)
+        self.assertEqual(self.tab.delete_account_button.cget('text'), 'Xóa tài khoản…')
+        self.assertEqual(self.tab.account_id, second)
+        self.tab.refresh_buttons()
+        self.assertEqual(str(self.tab.delete_account_button.cget('state')), 'normal')
         with patch('teodub.facebook_ui.messagebox.askyesno', return_value=True) as ask:
-            self.assertTrue(self.tab.delete_account(second))
+            self.tab.delete_account_button.invoke()
         self.assertIn('Xóa tài khoản "Hai" khỏi Tèo?', ask.call_args[0][1])
         self.assertEqual(self.tab.account_tree.get_children(), (first,))
         self.assertEqual(self.tab.account_id, first)
         self.assertIn('Đã xóa tài khoản "Hai"', self.tab.status.get())
+
+    def test_the_button_stays_when_advanced_is_hidden_or_shown_and_is_off_without_an_account(self):
+        self.assertIn(self.tab.delete_account_button, self.tab.load_pages_button.master.pack_slaves())  # Simple view.
+        self.tab.refresh_buttons()
+        self.assertEqual(str(self.tab.delete_account_button.cget('state')), 'disabled')  # No account yet.
+        self.account('Một')
+        self.tab.set_advanced_visible(True)
+        buttons = self.tab.load_pages_button.master.pack_slaves()
+        self.assertEqual(buttons.index(self.tab.delete_account_button), buttons.index(self.tab.load_pages_button)+1)
+        self.tab.set_advanced_visible(False)
+        buttons = self.tab.load_pages_button.master.pack_slaves()
+        self.assertEqual(buttons.index(self.tab.delete_account_button), buttons.index(self.tab.load_pages_button)+1)
 
     def test_no_keeps_everything(self):
         first = self.account('Một')
