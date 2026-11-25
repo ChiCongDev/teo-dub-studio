@@ -1257,6 +1257,21 @@ class PageScheduleController:
             tidy_holds(self.store)
         except (OSError, ValueError, KeyError, TypeError):
             pass  # Only bookkeeping: tried again in a minute.
+        from teodub import page_schedule_shopee
+        try:
+            page_schedule_shopee.tidy_holds(self.store)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass  # Only bookkeeping: tried again in a minute.
+
+    def _shopee_wait(self, row, wall):
+        """25/11/2026 (owner): True while this due row waits for the account's "Mở Shopee" Chrome to close (or was just given the time
+        now because it closed). Any trouble here: False, the usual path goes on (its Chrome then cannot open: stopped before Publish)."""
+        from teodub.page_schedule_shopee import wait_or_go
+        try:
+            return wait_or_go(self, row, wall)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.owner.status.set('Lịch đăng cần kiểm tra: '+str(exc))
+            return False
 
     def _apply_dropped_videos(self, clock):
         """Every few seconds: the schedules of videos whose remake failed 3 times are removed, and the next ready video takes the time."""
@@ -1417,6 +1432,8 @@ class PageScheduleController:
                         self._hold_for_voice(row, reason, clock)
                         continue
                     if self._end_voice_wait(row):  # Its new voice came after its time: given the time now, posted from the next look.
+                        continue
+                    if self._shopee_wait(row, time.time()):  # 25/11/2026 (owner): the account's "Mở Shopee" Chrome is open.
                         continue
                     try:
                         if self._wait_for_account(row, time.time(), clock):

@@ -127,6 +127,8 @@ class FacebookTab(ttk.Frame):
         self.link_account_id = ''
         self.page_link_drafts = {}
         self.sessions = {}
+        self.shopee_asks = {}  # 25/11/2026: account id -> the open "Tới giờ đăng bài" question (shopee_ui.ShopeeAsk)
+        self.shopee_snooze = {}  # account id -> monotonic time before which it is not asked again ("Không")
         self.manager_windows = {}
         self.page_scheduler = None
         self.page_bridge = None
@@ -224,6 +226,9 @@ class FacebookTab(ttk.Frame):
         # Owner 24/11/2026: deleting an account is this button (it was a "✕ Xóa" column in the account list).
         self.delete_account_button = ttk.Button(browser, text='Xóa tài khoản…', command=self.delete_account)
         self.delete_account_button.pack(side='left', padx=(0, 6))
+        # Owner 25/11/2026: the account's own profile in a plain Chrome at Shopee (shopee_ui; affiliate links).
+        self.shopee_button = ttk.Button(browser, text='Mở Shopee', command=self.open_shopee)
+        self.shopee_button.pack(side='left', padx=(0, 6))
         self.business_button = ttk.Button(browser, text='Mở Business Suite', command=self.open_business)
         self.business_button.pack(side='left', padx=(0, 6))
         self.developers_button = ttk.Button(browser, text='Mở Meta Developers', command=self.open_developers)
@@ -505,6 +510,20 @@ class FacebookTab(ttk.Frame):
         finally:
             self.account_menu.grab_release()
 
+    def open_shopee(self):
+        from teodub import shopee_ui
+        return shopee_ui.open_shopee(self)
+
+    def shopee_waiting(self, account_id):
+        """Called by the schedule controller while a due post of the account waits for its "Mở Shopee" Chrome."""
+        from teodub import shopee_ui
+        shopee_ui.waiting(self, account_id)
+
+    def shopee_open(self, account_id):
+        """A Chrome that is not Tèo's own session holds the account's profile (the "Mở Shopee" one, or one opened by hand)."""
+        from teodub.page_schedule_shopee import outside_chrome
+        return outside_chrome(self, account_id)
+
     def delete_account(self, account_id=None):
         """Owner 23/11/2026: Xóa tài khoản — Tèo's list only, nothing on Facebook (facebook_account_removal). Returns True when done."""
         account_id = account_id or self.account_id
@@ -512,7 +531,7 @@ class FacebookTab(ttk.Frame):
             return False
         from teodub import facebook_account_removal as removal
         session = self.sessions.get(account_id)
-        if session and session.pending:
+        if session and session.pending or self.shopee_open(account_id):
             self.status.set('Chrome của tài khoản này đang mở. Đóng Chrome (Đóng trình duyệt / Lưu phiên) và đợi đóng xong rồi xóa.')
             return False
         try:
@@ -1143,6 +1162,8 @@ class FacebookTab(ttk.Frame):
             return  # Chrome is busy (or starting/closing): looked at again in a few seconds.
         if self.posting_now(account_id):
             return
+        if not open_now and self.shopee_open(account_id):
+            return  # 25/11/2026: its "Mở Shopee" Chrome holds the profile: the read waits (not counted as a failed try).
         wanted = []
         for key in AFTER_POST:
             try:
@@ -1383,6 +1404,9 @@ class FacebookTab(ttk.Frame):
         except (OSError, ValueError) as exc:
             self.status.set(str(exc))
             return False
+        if self.shopee_open(current_account):  # 25/11/2026: one Chrome at a time per profile; its launch would fail anyway.
+            self.status.set('Chrome Shopee (hoặc một Chrome khác) đang mở tài khoản này. Tắt Chrome đó (bấm X) rồi thử lại.')
+            return False
         # Capture the account/session, never the mutable GUI selection, in the worker.
         account_name = next((row['name'] for row in self.store.load()['accounts'] if row['id'] == current_account), self.account_label.get())
         session = BrowserSession(current_account, account_name)
@@ -1541,6 +1565,7 @@ class FacebookTab(ttk.Frame):
         self.rename_account_button.configure(state='normal' if idle and self.account_id else 'disabled')
         self.delete_account_button.configure(state='normal' if ready and not self.studio.closed and self.account_id
                                              else 'disabled')
+        self.shopee_button.configure(state='normal' if manual else 'disabled')  # Refusals are explained in a box (shopee_ui).
         self.facebook_button.configure(state='normal' if usable and not self.studio.closing else 'disabled')
         load_usable = (manual and not (session and session.pending and
             (session.loading_pages or session.finished.is_set() or session.cancel.is_set()
